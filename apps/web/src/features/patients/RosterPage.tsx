@@ -132,7 +132,7 @@ export function RosterPage() {
                   >
                     <div
                       aria-hidden
-                      className="grid h-12 w-12 place-items-center rounded-full bg-eggshell-600 font-serif italic text-xl text-foreground"
+                      className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-space-400 font-serif italic text-xl text-foreground"
                     >
                       {initials(p.full_name)}
                     </div>

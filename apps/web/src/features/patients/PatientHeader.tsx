@@ -39,7 +39,7 @@ export function PatientHeader({ patient }: { patient: Patient }) {
         <div className="flex items-center gap-4">
           <div
             aria-hidden
-            className="grid h-14 w-14 place-items-center rounded-full bg-eggshell-600 font-serif italic text-2xl text-foreground"
+            className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-space-400 font-serif italic text-2xl text-foreground"
           >
             {initials(patient.full_name)}
           </div>

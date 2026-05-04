@@ -5,15 +5,16 @@
 /*
   ENG40011 caregiver dashboard palette.
 
-  Five base colours, each with a 100 (deepest) → 900 (lightest) tint scale.
-  Default (named without a suffix) maps to the 500 step.
+  Five base colours, each on a 100 (deepest) → 900 (lightest) tint scale.
+  Default (no suffix) maps to the 500 step.
 
-  Semantic tokens below pin specific shades for the light theme. Switch
-  to the dark theme via the `.dark` class at the html level.
+  The dashboard runs **dark by default**: ink_black background, eggshell
+  foreground, space-500 cards, denim accent. A `.light` override below is
+  present but intentionally not the default.
 */
 
 @theme {
-  /* ── Ink black ─────────────────────────────────────────────────────── */
+  /* ── Ink black (deep navy, nearly black) ─────────────────────────────── */
   --color-ink-100: #030407;
   --color-ink-200: #05080d;
   --color-ink-300: #080b14;
@@ -73,12 +74,67 @@
   --color-eggshell-900: #fcfbf7;
   --color-eggshell: var(--color-eggshell-500);
 
-  /* Destructive lives outside the brand palette: the five base colours
+  /* Destructive lives outside the brand palette — the five base colours
      are all cool / cream and a warm rust gives alarms the contrast they
      need without breaking the identity. */
   --color-rust: #a04434;
 
-  /* ── Shadcn semantic tokens (light theme) ──────────────────────────── */
+  /* ── Shadcn semantic tokens (DARK THEME — DEFAULT) ─────────────────── */
+
+  /* Surfaces */
+  --color-background: var(--color-ink-500);
+  --color-foreground: var(--color-eggshell-500);
+
+  --color-card: var(--color-space-500);
+  --color-card-foreground: var(--color-eggshell-500);
+
+  --color-popover: var(--color-space-400);
+  --color-popover-foreground: var(--color-eggshell-500);
+
+  /* CTAs */
+  --color-primary: var(--color-denim-500);
+  --color-primary-foreground: var(--color-ink-500);
+
+  --color-secondary: var(--color-slate-500);
+  --color-secondary-foreground: var(--color-eggshell-500);
+
+  /* Subtle backgrounds + softer text */
+  --color-muted: var(--color-space-400);
+  --color-muted-foreground: var(--color-denim-600);
+
+  /* Highlights (hover, brand dot, live pulses) */
+  --color-accent: var(--color-denim-500);
+  --color-accent-foreground: var(--color-ink-500);
+
+  /* Alarms */
+  --color-destructive: var(--color-rust);
+  --color-destructive-foreground: var(--color-eggshell-500);
+
+  /* Borders + inputs sit a step away from the surface they live on */
+  --color-border: var(--color-space-400);
+  --color-input: var(--color-space-400);
+  --color-ring: var(--color-denim-500);
+
+  /* Sidebar parity */
+  --color-sidebar: var(--color-space-500);
+  --color-sidebar-foreground: var(--color-eggshell-500);
+  --color-sidebar-primary: var(--color-denim-500);
+  --color-sidebar-primary-foreground: var(--color-ink-500);
+  --color-sidebar-accent: var(--color-denim-500);
+  --color-sidebar-accent-foreground: var(--color-ink-500);
+  --color-sidebar-border: var(--color-space-400);
+  --color-sidebar-ring: var(--color-denim-500);
+
+  --radius: 0.625rem;
+
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-serif: 'Fraunces', 'Century Schoolbook', 'New Century Schoolbook', Georgia, serif;
+}
+
+/* ── Light theme override ─────────────────────────────────────────────
+   Opt-in via class="light" on <html>. Inverts the surface tones so the
+   eggshell becomes the background and ink-500 reads as text. */
+.light {
   --color-background: var(--color-eggshell-800);
   --color-foreground: var(--color-ink-500);
 
@@ -97,60 +153,15 @@
   --color-muted: var(--color-eggshell-600);
   --color-muted-foreground: var(--color-slate-400);
 
-  --color-accent: var(--color-denim-500);
-  --color-accent-foreground: var(--color-ink-500);
+  --color-accent: var(--color-slate-500);
+  --color-accent-foreground: var(--color-eggshell-800);
 
   --color-destructive: var(--color-rust);
   --color-destructive-foreground: var(--color-eggshell-800);
 
   --color-border: var(--color-eggshell-400);
   --color-input: var(--color-eggshell-400);
-  --color-ring: var(--color-denim-500);
-
-  --color-sidebar: var(--color-eggshell-900);
-  --color-sidebar-foreground: var(--color-ink-500);
-  --color-sidebar-primary: var(--color-ink-500);
-  --color-sidebar-primary-foreground: var(--color-eggshell-800);
-  --color-sidebar-accent: var(--color-denim-500);
-  --color-sidebar-accent-foreground: var(--color-ink-500);
-  --color-sidebar-border: var(--color-eggshell-400);
-  --color-sidebar-ring: var(--color-denim-500);
-
-  --radius: 0.625rem;
-
-  --font-sans: 'Inter', system-ui, sans-serif;
-  --font-serif: 'Fraunces', 'Century Schoolbook', 'New Century Schoolbook', Georgia, serif;
-}
-
-/* ── Dark theme overrides ─────────────────────────────────────────────── */
-.dark {
-  --color-background: var(--color-ink-500);
-  --color-foreground: var(--color-eggshell-800);
-
-  --color-card: var(--color-ink-400);
-  --color-card-foreground: var(--color-eggshell-800);
-
-  --color-popover: var(--color-ink-400);
-  --color-popover-foreground: var(--color-eggshell-800);
-
-  --color-primary: var(--color-denim-500);
-  --color-primary-foreground: var(--color-ink-500);
-
-  --color-secondary: var(--color-slate-500);
-  --color-secondary-foreground: var(--color-eggshell-800);
-
-  --color-muted: var(--color-ink-400);
-  --color-muted-foreground: var(--color-denim-700);
-
-  --color-accent: var(--color-denim-500);
-  --color-accent-foreground: var(--color-ink-500);
-
-  --color-destructive: var(--color-rust);
-  --color-destructive-foreground: var(--color-eggshell-800);
-
-  --color-border: var(--color-ink-300);
-  --color-input: var(--color-ink-300);
-  --color-ring: var(--color-denim-500);
+  --color-ring: var(--color-slate-500);
 }
 
 @layer base {
@@ -164,7 +175,7 @@
     @apply bg-background text-foreground antialiased;
   }
   ::selection {
-    background: var(--color-denim-700);
+    background: var(--color-denim-500);
     color: var(--color-ink-500);
   }
 }
