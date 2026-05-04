@@ -31,28 +31,24 @@ export function PatientDetailPage() {
 
   if (query.isLoading) {
     return (
-      <main className="min-h-screen bg-background p-8">
-        <div className="mx-auto max-w-5xl space-y-4">
-          <Skeleton className="h-6 w-32" />
-          <Skeleton className="h-10 w-64" />
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-40 w-full" />
-        </div>
+      <main className="mx-auto max-w-7xl space-y-4 px-6 py-10">
+        <Skeleton className="h-6 w-32" />
+        <Skeleton className="h-10 w-64" />
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-40 w-full" />
       </main>
     );
   }
 
   if (query.isError) {
     return (
-      <main className="min-h-screen bg-background p-8">
-        <div className="mx-auto max-w-5xl">
-          <Card>
-            <CardHeader>
-              <CardTitle>Couldn't load this patient</CardTitle>
-              <CardDescription>{(query.error as Error).message}</CardDescription>
-            </CardHeader>
-          </Card>
-        </div>
+      <main className="mx-auto max-w-3xl px-6 py-10">
+        <Card>
+          <CardHeader>
+            <CardTitle>Couldn't load this patient</CardTitle>
+            <CardDescription>{(query.error as Error).message}</CardDescription>
+          </CardHeader>
+        </Card>
       </main>
     );
   }
@@ -60,33 +56,29 @@ export function PatientDetailPage() {
   if (!query.data) return <NotFound />;
 
   return (
-    <main className="min-h-screen bg-background p-8">
-      <div className="mx-auto max-w-5xl">
-        <PatientStreamProvider patientId={id}>
-          <PatientHeader patient={query.data} />
-          <PatientTabs />
-        </PatientStreamProvider>
-      </div>
+    <main className="mx-auto max-w-7xl px-6 py-10">
+      <PatientStreamProvider patientId={id}>
+        <PatientHeader patient={query.data} />
+        <PatientTabs />
+      </PatientStreamProvider>
     </main>
   );
 }
 
 function NotFound() {
   return (
-    <main className="min-h-screen bg-background p-8">
-      <div className="mx-auto max-w-md">
-        <Card>
-          <CardHeader>
-            <CardTitle>Patient not found</CardTitle>
-            <CardDescription>This patient doesn't exist or isn't allocated to you.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Link to="/patients" className="text-sm underline-offset-4 hover:underline">
-              ← Back to roster
-            </Link>
-          </CardContent>
-        </Card>
-      </div>
+    <main className="mx-auto max-w-md px-6 py-10">
+      <Card>
+        <CardHeader>
+          <CardTitle>Patient not found</CardTitle>
+          <CardDescription>This patient doesn't exist or isn't allocated to you.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Link to="/patients" className="text-sm underline-offset-4 hover:underline">
+            ← Back to roster
+          </Link>
+        </CardContent>
+      </Card>
     </main>
   );
 }

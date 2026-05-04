@@ -4,6 +4,24 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Caregiver Dashboard · ENG40011</title>
+    <script>
+      // Apply theme before React mounts to avoid a flash of the wrong
+      // palette. Mirrors apps/web/src/lib/theme.ts.
+      (function () {
+        try {
+          var stored = window.localStorage.getItem('alzcare-theme');
+          var theme =
+            stored === 'light' || stored === 'dark'
+              ? stored
+              : window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light';
+          if (theme === 'light') document.documentElement.classList.add('light');
+        } catch (e) {
+          /* default dark — do nothing */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -9,6 +9,7 @@ const profileRow = {
   email: 'jane@example.com',
   full_name: 'Jane Doe',
   role: 'family' as const,
+  company_name: null as string | null,
 };
 
 const singleMock = vi.fn();
@@ -62,16 +63,20 @@ describe('ProfilePage', () => {
   });
 
   it('renders the caregiver profile once loaded', async () => {
-    singleMock.mockResolvedValue({ data: profileRow, error: null });
+    singleMock.mockResolvedValue({
+      data: { ...profileRow, company_name: 'St. Vincent’s' },
+      error: null,
+    });
     renderProfilePage();
 
     expect(await screen.findByDisplayValue('Jane Doe')).toBeInTheDocument();
     expect(screen.getByDisplayValue('jane@example.com')).toBeDisabled();
+    expect(screen.getByDisplayValue(/Vincent/)).toBeInTheDocument();
     const roleSelect = screen.getByLabelText(/role/i) as HTMLSelectElement;
     expect(roleSelect.value).toBe('family');
   });
 
-  it('submits only full_name and role on save (email is read-only)', async () => {
+  it('submits full_name, role and company_name on save (email is read-only)', async () => {
     singleMock.mockResolvedValue({ data: profileRow, error: null });
     updateEqMock.mockResolvedValue({ error: null });
 
@@ -80,13 +85,30 @@ describe('ProfilePage', () => {
     const fullNameInput = await screen.findByDisplayValue('Jane Doe');
     fireEvent.change(fullNameInput, { target: { value: 'Jane Q. Doe' } });
     fireEvent.change(screen.getByLabelText(/role/i), { target: { value: 'professional' } });
+    fireEvent.change(screen.getByLabelText(/company/i), {
+      target: { value: 'Riverside Care' },
+    });
     fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
 
     await waitFor(() => expect(updateMock).toHaveBeenCalledTimes(1));
     expect(updateMock).toHaveBeenCalledWith({
       full_name: 'Jane Q. Doe',
       role: 'professional',
+      company_name: 'Riverside Care',
     });
     expect(updateEqMock).toHaveBeenCalledWith('id', 'user-1');
+  });
+
+  it('persists null when company is left blank', async () => {
+    singleMock.mockResolvedValue({ data: profileRow, error: null });
+    updateEqMock.mockResolvedValue({ error: null });
+
+    renderProfilePage();
+
+    await screen.findByDisplayValue('Jane Doe');
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => expect(updateMock).toHaveBeenCalledTimes(1));
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ company_name: null }));
   });
 });
