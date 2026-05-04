@@ -1,51 +1,62 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import 'tailwindcss';
+@import 'tw-animate-css';
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* ENG40011 brand palette + shadcn semantic tokens. */
+@theme {
+  /* Brand palette */
+  --color-brand-navy: hsl(220 38% 19%);
+  --color-brand-steel: hsl(212 38% 49%);
+  --color-brand-cream: hsl(46 84% 91%);
+  --color-brand-orange: hsl(24 70% 51%);
+
+  /* Shadcn semantic tokens — driven by the brand palette above */
+  --color-background: var(--color-brand-cream);
+  --color-foreground: var(--color-brand-navy);
+
+  --color-card: hsl(46 84% 96%);
+  --color-card-foreground: var(--color-brand-navy);
+
+  --color-popover: hsl(46 84% 96%);
+  --color-popover-foreground: var(--color-brand-navy);
+
+  --color-primary: var(--color-brand-navy);
+  --color-primary-foreground: var(--color-brand-cream);
+
+  --color-secondary: var(--color-brand-steel);
+  --color-secondary-foreground: var(--color-brand-cream);
+
+  --color-muted: hsl(46 30% 85%);
+  --color-muted-foreground: hsl(220 20% 35%);
+
+  --color-accent: var(--color-brand-orange);
+  --color-accent-foreground: var(--color-brand-cream);
+
+  --color-destructive: hsl(0 72% 50%);
+  --color-destructive-foreground: hsl(46 84% 96%);
+
+  --color-border: hsl(220 15% 80%);
+  --color-input: hsl(220 15% 80%);
+  --color-ring: var(--color-brand-steel);
+
+  --color-sidebar: var(--color-card);
+  --color-sidebar-foreground: var(--color-card-foreground);
+  --color-sidebar-primary: var(--color-primary);
+  --color-sidebar-primary-foreground: var(--color-primary-foreground);
+  --color-sidebar-accent: var(--color-accent);
+  --color-sidebar-accent-foreground: var(--color-accent-foreground);
+  --color-sidebar-border: var(--color-border);
+  --color-sidebar-ring: var(--color-ring);
+
+  --radius: 0.5rem;
+
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-serif: 'Century Schoolbook', 'New Century Schoolbook', Georgia, serif;
+}
 
 @layer base {
-  :root {
-    /* Brand palette (raw HSL channels for use inside hsl() / alpha modifiers) */
-    --brand-navy: 220 38% 19%;
-    --brand-steel: 212 38% 49%;
-    --brand-cream: 46 84% 91%;
-    --brand-orange: 24 70% 51%;
-
-    /* Shadcn semantic tokens */
-    --background: var(--brand-cream);
-    --foreground: var(--brand-navy);
-
-    --card: 46 84% 96%;
-    --card-foreground: var(--brand-navy);
-
-    --popover: 46 84% 96%;
-    --popover-foreground: var(--brand-navy);
-
-    --primary: var(--brand-navy);
-    --primary-foreground: var(--brand-cream);
-
-    --secondary: var(--brand-steel);
-    --secondary-foreground: var(--brand-cream);
-
-    --muted: 46 30% 85%;
-    --muted-foreground: 220 20% 35%;
-
-    --accent: var(--brand-orange);
-    --accent-foreground: var(--brand-cream);
-
-    --destructive: 0 72% 50%;
-    --destructive-foreground: 46 84% 96%;
-
-    --border: 220 15% 80%;
-    --input: 220 15% 80%;
-    --ring: var(--brand-steel);
-
-    --radius: 0.5rem;
-  }
-
   * {
-    @apply border-border;
+    @apply border-border outline-ring/50;
   }
   body {
     @apply bg-background text-foreground font-sans antialiased;
