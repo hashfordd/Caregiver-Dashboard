@@ -65,7 +65,7 @@ describe('SensorCard', () => {
     });
 
     expect(screen.getByLabelText(/stale/i)).toBeInTheDocument();
-    expect(screen.getByText(/last updated 3[12]s ago/i)).toBeInTheDocument();
+    expect(screen.getByText(/3[12]s since last reading/i)).toBeInTheDocument();
   });
 
   it('renders different metrics with their respective units', () => {

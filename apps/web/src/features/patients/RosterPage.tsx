@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Plus, Users } from 'lucide-react';
+import { ChevronRight, Plus, Users } from 'lucide-react';
 import type { Patient } from '@alzcare/shared';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/features/auth/AuthProvider';
+import { Brand } from '@/components/Brand';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -19,12 +21,20 @@ async function fetchRoster(): Promise<Patient[]> {
   return (data ?? []) as Patient[];
 }
 
-function ageFromDob(dob: string | null): string {
-  if (!dob) return '';
+function ageFromDob(dob: string | null): number | null {
+  if (!dob) return null;
   const birth = new Date(dob);
-  if (Number.isNaN(birth.getTime())) return '';
-  const years = Math.floor((Date.now() - birth.getTime()) / (1000 * 60 * 60 * 24 * 365.25));
-  return ` · age ${years}`;
+  if (Number.isNaN(birth.getTime())) return null;
+  return Math.floor((Date.now() - birth.getTime()) / (1000 * 60 * 60 * 24 * 365.25));
+}
+
+function initials(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((p) => p[0]?.toUpperCase() ?? '')
+    .join('');
 }
 
 function truncate(text: string, max: number): string {
@@ -34,25 +44,45 @@ function truncate(text: string, max: number): string {
 export function RosterPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const query = useQuery({ queryKey: ['patients', 'roster'], queryFn: fetchRoster });
+  const { user } = useAuth();
+
+  const greeting = user?.user_metadata?.full_name
+    ? `Welcome, ${(user.user_metadata.full_name as string).split(/\s+/)[0]}`
+    : 'Welcome';
 
   return (
-    <main className="min-h-screen bg-background p-8">
-      <div className="mx-auto max-w-5xl">
-        <header className="mb-6 flex items-center justify-between">
-          <div>
-            <h1 className="font-serif italic text-3xl text-foreground">Patient roster</h1>
-            <p className="text-sm text-muted-foreground">Patients you're allocated to.</p>
-          </div>
+    <main className="min-h-screen bg-background">
+      <header className="border-b border-border/60 bg-card/40">
+        <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
+          <Brand size="sm" />
           <div className="flex items-center gap-4">
-            <Link to="/profile" className="text-sm underline-offset-4 hover:underline">
+            <Link to="/profile" className="text-sm text-muted-foreground hover:text-foreground">
               Profile
             </Link>
-            <Button onClick={() => setCreateOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              New patient
-            </Button>
           </div>
-        </header>
+        </div>
+      </header>
+
+      <div className="mx-auto max-w-5xl px-6 py-10">
+        <section className="mb-8 flex items-end justify-between gap-4">
+          <div className="space-y-1">
+            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+              Patient roster
+            </p>
+            <h1 className="font-serif italic text-4xl text-foreground">{greeting}.</h1>
+            <p className="text-sm text-muted-foreground">
+              {query.data?.length === 1
+                ? 'One patient under your care.'
+                : query.data?.length
+                  ? `${query.data.length} patients under your care.`
+                  : "Patients you're allocated to."}
+            </p>
+          </div>
+          <Button onClick={() => setCreateOpen(true)}>
+            <Plus className="h-4 w-4" />
+            New patient
+          </Button>
+        </section>
 
         {query.isLoading && (
           <div className="grid gap-3" data-testid="roster-loading">
@@ -83,7 +113,7 @@ export function RosterPage() {
             description="Create your first patient to start monitoring their vitals and movement."
             action={
               <Button onClick={() => setCreateOpen(true)}>
-                <Plus className="mr-2 h-4 w-4" />
+                <Plus className="h-4 w-4" />
                 Create your first patient
               </Button>
             }
@@ -92,26 +122,38 @@ export function RosterPage() {
 
         {query.isSuccess && query.data.length > 0 && (
           <ul className="grid gap-3" aria-label="Patient roster">
-            {query.data.map((p) => (
-              <li key={p.id}>
-                <Link
-                  to={`/patients/${p.id}`}
-                  className="block rounded-lg border bg-card text-card-foreground shadow-sm transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                >
-                  <div className="p-4">
-                    <h2 className="font-semibold">
-                      {p.full_name}
-                      <span className="text-sm font-normal text-muted-foreground">
-                        {ageFromDob(p.dob)}
-                      </span>
-                    </h2>
-                    {p.notes && (
-                      <p className="mt-1 text-sm text-muted-foreground">{truncate(p.notes, 80)}</p>
-                    )}
-                  </div>
-                </Link>
-              </li>
-            ))}
+            {query.data.map((p) => {
+              const age = ageFromDob(p.dob);
+              return (
+                <li key={p.id}>
+                  <Link
+                    to={`/patients/${p.id}`}
+                    className="group flex items-center gap-4 rounded-lg border border-border/60 bg-card px-5 py-4 text-card-foreground transition-all hover:border-tangerine-400 hover:shadow-sm focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+                  >
+                    <div
+                      aria-hidden
+                      className="grid h-12 w-12 place-items-center rounded-full bg-papaya-600 font-serif italic text-xl text-foreground"
+                    >
+                      {initials(p.full_name)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-baseline gap-2">
+                        <h2 className="truncate font-semibold text-foreground">{p.full_name}</h2>
+                        {age != null && (
+                          <span className="text-xs text-muted-foreground">age {age}</span>
+                        )}
+                      </div>
+                      {p.notes && (
+                        <p className="mt-0.5 truncate text-sm text-muted-foreground">
+                          {truncate(p.notes, 100)}
+                        </p>
+                      )}
+                    </div>
+                    <ChevronRight className="h-5 w-5 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-tangerine-500" />
+                  </Link>
+                </li>
+              );
+            })}
           </ul>
         )}
 

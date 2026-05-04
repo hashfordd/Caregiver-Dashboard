@@ -1,64 +1,165 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:ital,wght@1,400;1,600&display=swap');
 @import 'tailwindcss';
 @import 'tw-animate-css';
 
-/* ENG40011 brand palette + shadcn semantic tokens. */
+/*
+  ENG40011 caregiver dashboard palette.
+
+  Five base colours, each with a 100 (deepest) → 900 (lightest) tint scale.
+  Default (named without a suffix) maps to the 500 step.
+
+  Semantic tokens below pin specific shades for the light theme. Switch
+  to the dark theme via the `.dark` class at the html level.
+*/
+
 @theme {
-  /* Brand palette */
-  --color-brand-navy: hsl(220 38% 19%);
-  --color-brand-steel: hsl(212 38% 49%);
-  --color-brand-cream: hsl(46 84% 91%);
-  --color-brand-orange: hsl(24 70% 51%);
+  /* ── Ink black ─────────────────────────────────────────────────────── */
+  --color-ink-100: #000407;
+  --color-ink-200: #00080e;
+  --color-ink-300: #000c15;
+  --color-ink-400: #00111d;
+  --color-ink-500: #001524;
+  --color-ink-600: #004c83;
+  --color-ink-700: #0083e1;
+  --color-ink-800: #41b0ff;
+  --color-ink-900: #a0d7ff;
+  --color-ink: var(--color-ink-500);
 
-  /* Shadcn semantic tokens — driven by the brand palette above */
-  --color-background: var(--color-brand-cream);
-  --color-foreground: var(--color-brand-navy);
+  /* ── Stormy teal ───────────────────────────────────────────────────── */
+  --color-teal-100: #041315;
+  --color-teal-200: #08262b;
+  --color-teal-300: #0c3940;
+  --color-teal-400: #104c56;
+  --color-teal-500: #15616d;
+  --color-teal-600: #2199ab;
+  --color-teal-700: #3ec5da;
+  --color-teal-800: #7ed9e7;
+  --color-teal-900: #bfecf3;
+  --color-teal: var(--color-teal-500);
 
-  --color-card: hsl(46 84% 96%);
-  --color-card-foreground: var(--color-brand-navy);
+  /* ── Papaya whip (warm cream) ──────────────────────────────────────── */
+  --color-papaya-100: #5d3600;
+  --color-papaya-200: #ba6c00;
+  --color-papaya-300: #ff9f17;
+  --color-papaya-400: #ffc574;
+  --color-papaya-500: #ffecd1;
+  --color-papaya-600: #fff0da;
+  --color-papaya-700: #fff4e3;
+  --color-papaya-800: #fff7ed;
+  --color-papaya-900: #fffbf6;
+  --color-papaya: var(--color-papaya-500);
 
-  --color-popover: hsl(46 84% 96%);
-  --color-popover-foreground: var(--color-brand-navy);
+  /* ── Vivid tangerine ───────────────────────────────────────────────── */
+  --color-tangerine-100: #331900;
+  --color-tangerine-200: #663100;
+  --color-tangerine-300: #994a00;
+  --color-tangerine-400: #cc6300;
+  --color-tangerine-500: #ff7d00;
+  --color-tangerine-600: #ff9633;
+  --color-tangerine-700: #ffb066;
+  --color-tangerine-800: #ffca99;
+  --color-tangerine-900: #ffe5cc;
+  --color-tangerine: var(--color-tangerine-500);
 
-  --color-primary: var(--color-brand-navy);
-  --color-primary-foreground: var(--color-brand-cream);
+  /* ── Brandy (warm rust) ────────────────────────────────────────────── */
+  --color-brandy-100: #180803;
+  --color-brandy-200: #2f1006;
+  --color-brandy-300: #471809;
+  --color-brandy-400: #5e200c;
+  --color-brandy-500: #78290f;
+  --color-brandy-600: #b93f17;
+  --color-brandy-700: #e66235;
+  --color-brandy-800: #ee9679;
+  --color-brandy-900: #f7cbbc;
+  --color-brandy: var(--color-brandy-500);
 
-  --color-secondary: var(--color-brand-steel);
-  --color-secondary-foreground: var(--color-brand-cream);
+  /* ── Shadcn semantic tokens (light theme) ──────────────────────────── */
+  --color-background: var(--color-papaya-800);
+  --color-foreground: var(--color-ink-500);
 
-  --color-muted: hsl(46 30% 85%);
-  --color-muted-foreground: hsl(220 20% 35%);
+  --color-card: var(--color-papaya-900);
+  --color-card-foreground: var(--color-ink-500);
 
-  --color-accent: var(--color-brand-orange);
-  --color-accent-foreground: var(--color-brand-cream);
+  --color-popover: var(--color-papaya-900);
+  --color-popover-foreground: var(--color-ink-500);
 
-  --color-destructive: hsl(0 72% 50%);
-  --color-destructive-foreground: hsl(46 84% 96%);
+  --color-primary: var(--color-ink-500);
+  --color-primary-foreground: var(--color-papaya-800);
 
-  --color-border: hsl(220 15% 80%);
-  --color-input: hsl(220 15% 80%);
-  --color-ring: var(--color-brand-steel);
+  --color-secondary: var(--color-teal-500);
+  --color-secondary-foreground: var(--color-papaya-800);
 
-  --color-sidebar: var(--color-card);
-  --color-sidebar-foreground: var(--color-card-foreground);
-  --color-sidebar-primary: var(--color-primary);
-  --color-sidebar-primary-foreground: var(--color-primary-foreground);
-  --color-sidebar-accent: var(--color-accent);
-  --color-sidebar-accent-foreground: var(--color-accent-foreground);
-  --color-sidebar-border: var(--color-border);
-  --color-sidebar-ring: var(--color-ring);
+  --color-muted: var(--color-papaya-600);
+  --color-muted-foreground: var(--color-teal-400);
 
-  --radius: 0.5rem;
+  --color-accent: var(--color-tangerine-500);
+  --color-accent-foreground: var(--color-ink-500);
+
+  --color-destructive: var(--color-brandy-500);
+  --color-destructive-foreground: var(--color-papaya-800);
+
+  --color-border: var(--color-papaya-400);
+  --color-input: var(--color-papaya-400);
+  --color-ring: var(--color-tangerine-500);
+
+  --color-sidebar: var(--color-papaya-900);
+  --color-sidebar-foreground: var(--color-ink-500);
+  --color-sidebar-primary: var(--color-ink-500);
+  --color-sidebar-primary-foreground: var(--color-papaya-800);
+  --color-sidebar-accent: var(--color-tangerine-500);
+  --color-sidebar-accent-foreground: var(--color-ink-500);
+  --color-sidebar-border: var(--color-papaya-400);
+  --color-sidebar-ring: var(--color-tangerine-500);
+
+  --radius: 0.625rem;
 
   --font-sans: 'Inter', system-ui, sans-serif;
-  --font-serif: 'Century Schoolbook', 'New Century Schoolbook', Georgia, serif;
+  --font-serif: 'Fraunces', 'Century Schoolbook', 'New Century Schoolbook', Georgia, serif;
+}
+
+/* ── Dark theme overrides ─────────────────────────────────────────────── */
+.dark {
+  --color-background: var(--color-ink-500);
+  --color-foreground: var(--color-papaya-800);
+
+  --color-card: var(--color-ink-400);
+  --color-card-foreground: var(--color-papaya-800);
+
+  --color-popover: var(--color-ink-400);
+  --color-popover-foreground: var(--color-papaya-800);
+
+  --color-primary: var(--color-tangerine-500);
+  --color-primary-foreground: var(--color-ink-500);
+
+  --color-secondary: var(--color-teal-600);
+  --color-secondary-foreground: var(--color-papaya-800);
+
+  --color-muted: var(--color-ink-400);
+  --color-muted-foreground: var(--color-teal-700);
+
+  --color-accent: var(--color-tangerine-500);
+  --color-accent-foreground: var(--color-ink-500);
+
+  --color-destructive: var(--color-brandy-700);
+  --color-destructive-foreground: var(--color-papaya-800);
+
+  --color-border: var(--color-ink-300);
+  --color-input: var(--color-ink-300);
+  --color-ring: var(--color-tangerine-500);
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    @apply font-sans;
+  }
   body {
-    @apply bg-background text-foreground font-sans antialiased;
+    @apply bg-background text-foreground antialiased;
+  }
+  ::selection {
+    background: var(--color-tangerine-700);
+    color: var(--color-ink-500);
   }
 }
