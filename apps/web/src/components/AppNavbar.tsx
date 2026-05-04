@@ -119,7 +119,7 @@ function UserMenu({ profile }: { profile: CaregiverProfile | null }) {
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" className="gap-2 px-2">
           <Avatar className="h-7 w-7">
-            <AvatarFallback className="bg-space-400 font-serif italic text-foreground">
+            <AvatarFallback className="bg-space-400 font-serif italic text-eggshell-500">
               {initials(name)}
             </AvatarFallback>
           </Avatar>
