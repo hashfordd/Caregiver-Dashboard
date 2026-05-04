@@ -34,6 +34,8 @@ Format: `- **<area>** — what + why deferred + reference (feature ID / task ID)
 
 - **Caregiver profile page** — name / contact / role / °C–°F preference is F1 / UI-05 feature work.
 
+- **Realtime broadcast channel auth** — Supabase Realtime broadcast channels (used by F6 for live signals delivery from `mqtt_bridge` to the dashboard) are not RLS-protected in V1. Channels are namespaced by `patient_id` but a determined client could subscribe to any channel name. Acceptable for V1 because dashboard subscribers are authenticated caregivers and the data on the channel (raw RSSI vectors) is low-sensitivity, but tighten when Supabase Realtime Authorization goes GA. (See [docs/CROSS_CUTTING.md §7](./docs/CROSS_CUTTING.md#7-realtime-patterns).)
+
 ## Recommended first feature: F1 closure → F2 (Patient Roster)
 
 The DB scaffolding for F1 is in place (`caregivers` table + `handle_new_user` trigger + RLS read-scoping). To finish F1 and unblock the spine:

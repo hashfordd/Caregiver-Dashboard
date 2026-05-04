@@ -67,6 +67,21 @@ create policy alerts_caregiver_ack on public.alerts
 
 In practice: write a SECURITY DEFINER stored function `acknowledge_alert(alert_id)` that the client calls via RPC. The function checks allocation, sets `acknowledged_at = now()` and `ack_by_caregiver_id = auth.uid()`, returns the updated row. This is more robust than column-level RLS.
 
+**Worked example — claim-but-don't-steal updates** (the `devices` pattern from F10):
+
+```sql
+create policy devices_pair_or_update on public.devices
+  for update using (
+    paired_patient_id is null
+    or public.is_caregiver_for(paired_patient_id)
+  )
+  with check (public.is_caregiver_for(paired_patient_id));
+```
+
+The two-clause shape is load-bearing: `using` lets a caregiver target an unpaired device (so they can claim it); `with check` requires the row _after_ the update to point at a patient they're allocated to (so they can't steal a paired device by overwriting `paired_patient_id`). Same shape works any time a row has a "pre-claim null" state.
+
+**SECURITY DEFINER for multi-row mutations**: any time a single user action writes to two or more tables and the authorisation depends on the result of the first write (e.g. F2's `create_patient_with_allocation`, F10's `pair_device`), prefer a SECURITY DEFINER RPC over a client-side two-step. It closes the race window where a caregiver creates a patient but fails to allocate themselves, and centralises the authorisation check in one server-side place.
+
 ## 2. MQTT message versioning
 
 Every message has `v: 1` as its first field. The bridge dispatches on `v` to the appropriate Zod schema.
@@ -97,6 +112,8 @@ Per-rule override via `alert_rules.params.cooldown_seconds` (number). Implementa
 Why query unacked specifically: an old acknowledged alert shouldn't suppress a new firing. The cooldown's job is to avoid storms of identical unhandled alerts — once acknowledged, the caregiver has seen the issue.
 
 **Cross-feature interaction**: F11's "would have alerted" preview must use the same cooldown logic as the live engine. Single source: `packages/shared/src/rules/cooldown.ts`.
+
+**Cooldown reset on rule re-enable**: when a caregiver toggles a rule off and back on, the cooldown should not silently suppress the next firing. Implement by gating the cooldown query with `fired_at >= alert_rules.updated_at` — toggling enable bumps `updated_at`, which excludes pre-toggle alerts from the cooldown window. Same trick handles threshold edits: editing a vitals rule shouldn't be suppressed by the previous threshold's recent alert.
 
 ## 4. Loading / empty / error / stale states
 
@@ -137,9 +154,19 @@ Floor plans use Fabric.js. The principle: **addressable entities live in tables,
 ## 7. Realtime patterns
 
 - One canonical hook: `usePatientStream(patientId, callbacks)` in `apps/web/src/lib/usePatientStream.ts`. All realtime consumption goes through it.
-- Channel naming: `patient:<uuid>`. Per-patient subscription, scoped via `filter: patient_id=eq.<uuid>`.
-- Subscriptions tear down on unmount and on patient change (the hook's effect dep array includes `patientId`).
+- **Mount point**: the hook is mounted **once per patient detail route**, not per component. F3's `PatientStreamContext` provides the callbacks downward via React context so F4 (sensor cards), F8 (position marker), and F12 (per-patient alerts tab) all consume the same subscription. Mounting in each component would create N parallel subscriptions and cause tab-switch resubscribes.
+- Channel naming: `patient:<uuid>` for postgres_changes; `patient:<uuid>:signals` for the broadcast channel below. Per-patient subscriptions are scoped via `filter: patient_id=eq.<uuid>`.
+- Subscriptions tear down on unmount and on patient change (the hook's effect dep array includes `patientId`); cleanup must `removeChannel` _both_ the postgres_changes channel and the broadcast channel.
 - Reconnection is handled by the Supabase JS client. The hook exposes `status` (subscribed/disconnected/error); UI surfaces `disconnected` as a status pill in the patient header.
+
+**Two realtime modes, by data lifecycle**:
+
+| Data                                              | Mode               | Channel                  | Why                                                                                                                                                                                   |
+| ------------------------------------------------- | ------------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sensor_readings`, `position_estimates`, `alerts` | `postgres_changes` | `patient:<uuid>`         | Persisted; clients can replay missed inserts on reconnect via the table                                                                                                               |
+| `signals` (BLE/WiFi RSSI snapshots)               | `broadcast`        | `patient:<uuid>:signals` | Deliberately not persisted (storage cost; raw signals are consumed and discarded by the position estimator). The bridge re-broadcasts each validated message after the position write |
+
+The bridge holds the service-role key and uses it to broadcast — service-role broadcasts bypass channel auth in V1. Channels are namespaced by `patient_id` but the broadcast itself is not RLS-protected; this is acceptable because dashboard subscribers are authenticated caregivers who can only act on patients via separately-scoped RLS-protected reads/writes. **Tighten when Supabase Realtime Authorization goes GA — see BACKLOG.**
 
 **Live data vs. server state**:
 
@@ -233,6 +260,8 @@ Production deployment paths:
 - `mqtt_bridge`: deploy as a Docker image on Fly.io. Add a `Dockerfile` in `apps/edge/functions/mqtt_bridge/` when the long-running mode lands (Phase 1).
 
 Service-role key handling: the long-running bridge holds it in its env. The edge functions get it from Supabase's runtime via `Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')`. Never piped to clients.
+
+**Scheduled jobs (pg_cron) and the fallback path**: Phase 4's inactivity rule type relies on a per-minute scheduled function. Primary path is `pg_cron`. If the chosen Supabase plan doesn't include it, the fallback is an external scheduler (Vercel Cron, GitHub Actions, Fly.io machines `[mounts.machines.schedule]`) hitting an HTTP-mode Edge Function with a bearer token from env. Document the chosen path in the relevant migration's PR description; both paths converge on the same `inactivity_scan` function code.
 
 ## 12. Migrations discipline
 
