@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -83,7 +83,12 @@ export function LoginPage() {
             >
               {mode === 'magic' ? 'Use password instead' : 'Email me a magic link'}
             </button>
-            {/* TODO: F1 — wire signup flow with role selection (professional / family). */}
+            <p className="text-center text-sm text-muted-foreground">
+              Don't have an account?{' '}
+              <Link to="/signup" className="underline-offset-4 hover:underline">
+                Create one
+              </Link>
+            </p>
           </form>
         </CardContent>
       </Card>

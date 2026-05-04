@@ -33,6 +33,26 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Service-role guard (no SERVICE_ROLE in apps/web/)
+        run: |
+          # The two excluded test files legitimately reference SERVICE_ROLE:
+          # rls.test.ts uses the key to drive admin-API calls against a local
+          # Supabase; ci-grep.test.ts mirrors this CI rule as a unit test.
+          if grep -rn "SERVICE_ROLE" apps/web/ \
+              --exclude-dir=node_modules \
+              --exclude-dir=dist \
+              --exclude='rls.test.ts' \
+              --exclude='ci-grep.test.ts' \
+              --include='*.ts' \
+              --include='*.tsx' \
+              --include='*.js' \
+              --include='*.jsx' \
+              --include='*.json' \
+              --include='*.html'; then
+            echo "::error::SERVICE_ROLE must never appear in apps/web/"
+            exit 1
+          fi
+
       - name: Lint
         run: npm run lint
 

@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth/AuthProvider';
 import { Button } from '@/components/ui/button';
@@ -14,9 +15,14 @@ export function LandingPage() {
     <main className="min-h-screen bg-background p-8">
       <header className="mx-auto flex max-w-5xl items-center justify-between">
         <h1 className="font-serif italic text-3xl text-foreground">Caregiver dashboard</h1>
-        <Button variant="outline" onClick={handleSignOut}>
-          Sign out
-        </Button>
+        <div className="flex items-center gap-4">
+          <Link to="/profile" className="text-sm underline-offset-4 hover:underline">
+            Profile
+          </Link>
+          <Button variant="outline" onClick={handleSignOut}>
+            Sign out
+          </Button>
+        </div>
       </header>
       <section className="mx-auto mt-12 max-w-5xl">
         <Card>
