@@ -93,7 +93,9 @@ function randomMac(): string {
   return `${hex()}:${hex()}:${hex()}:${hex()}:${hex()}:${hex()}`;
 }
 
-function pickInRange([lo, hi]: [number, number]): number {
+function pickInRange(range: readonly number[]): number {
+  const lo = range[0] ?? 0;
+  const hi = range[1] ?? lo;
   return lo + Math.random() * (hi - lo);
 }
 
