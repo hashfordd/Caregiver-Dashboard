@@ -1,0 +1,53 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Brand palette (raw HSL channels for use inside hsl() / alpha modifiers) */
+    --brand-navy: 220 38% 19%;
+    --brand-steel: 212 38% 49%;
+    --brand-cream: 46 84% 91%;
+    --brand-orange: 24 70% 51%;
+
+    /* Shadcn semantic tokens */
+    --background: var(--brand-cream);
+    --foreground: var(--brand-navy);
+
+    --card: 46 84% 96%;
+    --card-foreground: var(--brand-navy);
+
+    --popover: 46 84% 96%;
+    --popover-foreground: var(--brand-navy);
+
+    --primary: var(--brand-navy);
+    --primary-foreground: var(--brand-cream);
+
+    --secondary: var(--brand-steel);
+    --secondary-foreground: var(--brand-cream);
+
+    --muted: 46 30% 85%;
+    --muted-foreground: 220 20% 35%;
+
+    --accent: var(--brand-orange);
+    --accent-foreground: var(--brand-cream);
+
+    --destructive: 0 72% 50%;
+    --destructive-foreground: 46 84% 96%;
+
+    --border: 220 15% 80%;
+    --input: 220 15% 80%;
+    --ring: var(--brand-steel);
+
+    --radius: 0.5rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+}

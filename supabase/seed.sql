@@ -1,0 +1,3 @@
+-- Seed data for local Supabase development.
+-- TODO: BE-12 — populate one demo patient, one device, four placed beacons,
+-- sample alert rules, and synthetic 24h history. Empty for the foundational scaffold.

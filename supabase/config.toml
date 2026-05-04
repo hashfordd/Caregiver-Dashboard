@@ -1,0 +1,75 @@
+project_id = "alzcare"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[db.pooler]
+enabled = false
+
+[studio]
+enabled = true
+port = 54323
+api_url = "http://127.0.0.1"
+
+[inbucket]
+enabled = true
+port = 54324
+
+[storage]
+enabled = true
+file_size_limit = "50MiB"
+
+[auth]
+enabled = true
+site_url = "http://localhost:5173"
+additional_redirect_urls = ["http://localhost:5173"]
+jwt_expiry = 3600
+enable_refresh_token_rotation = true
+refresh_token_reuse_interval = 10
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = true
+enable_confirmations = false
+
+[auth.email.template.invite]
+subject = "You've been invited to the caregiver dashboard"
+
+[realtime]
+enabled = true
+
+[edge_runtime]
+enabled = true
+policy = "oneshot"
+inspector_port = 8083
+
+# ----------------------------------------------------------------------------
+# Edge functions
+# Source lives in apps/edge/functions/ ; supabase/functions is a symlink to it
+# so the supabase CLI can find them at the canonical path. The import map at
+# apps/edge/deno.json maps @alzcare/shared/* and pins zod / @supabase/supabase-js.
+# ----------------------------------------------------------------------------
+[functions.mqtt_bridge]
+verify_jwt = false
+import_map = "../apps/edge/deno.json"
+
+[functions.position_estimator]
+verify_jwt = true
+import_map = "../apps/edge/deno.json"
+
+[functions.rules_engine]
+verify_jwt = true
+import_map = "../apps/edge/deno.json"
+
+[analytics]
+enabled = false

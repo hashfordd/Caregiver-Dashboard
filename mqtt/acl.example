@@ -1,0 +1,23 @@
+# ACL pattern: enforce topic schema device/{patient_id}/{telemetry|signals|events}
+# %u expands to the connecting username; we use device usernames of the form
+# `device-<patient_uuid>` so the %u suffix matches the patient_id segment.
+#
+# Copy to ./acl, then customise per device as devices are provisioned.
+# TODO: MQ-05 — automate per-device ACL generation as part of FW-19 enrollment.
+
+# Bridge / backend service account (full read access)
+user backend-bridge
+topic readwrite #
+
+# Per-device pattern: a user named "device-<patient_id>" can publish only to its
+# own patient's topics. The %u substitution is matched against the topic
+# segments so each device gets a single namespace.
+pattern write device/%u/telemetry
+pattern write device/%u/signals
+pattern write device/%u/events
+
+# Caregiver / dashboard accounts (read-only)
+# TODO: MQ-05 — once dashboards subscribe via MQTT directly (rather than only
+# via Supabase Realtime), expand the per-caregiver patterns below.
+user dashboard-readonly
+topic read device/+/+

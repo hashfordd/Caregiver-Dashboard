@@ -1,0 +1,12 @@
+# Mosquitto password file — generated via `mosquitto_passwd`.
+# Copy to ./passwd, then create real entries with:
+#
+#   docker run --rm -v "$PWD/passwd:/passwd" eclipse-mosquitto:2.0.20 \
+#     mosquitto_passwd -b /passwd <username> <password>
+#
+# Default placeholder accounts referenced by acl.example:
+#   - backend-bridge       (used by the mqtt_bridge edge function)
+#   - dashboard-readonly   (read-only observation account)
+#   - device-<patient_id>  (one per provisioned wearable)
+#
+# Never commit the real passwd file; it's gitignored.

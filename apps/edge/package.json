@@ -1,0 +1,23 @@
+{
+  "name": "@alzcare/edge",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Supabase Edge Functions (Deno) — mqtt_bridge, position_estimator, rules_engine.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "deno check functions/mqtt_bridge/index.ts functions/position_estimator/index.ts functions/rules_engine/index.ts",
+    "test": "vitest run",
+    "build": "echo \"(edge functions are deployed via supabase CLI)\" && exit 0",
+    "deploy:mqtt_bridge": "supabase functions deploy mqtt_bridge --no-verify-jwt",
+    "deploy:position_estimator": "supabase functions deploy position_estimator",
+    "deploy:rules_engine": "supabase functions deploy rules_engine",
+    "deploy:all": "npm run deploy:mqtt_bridge && npm run deploy:position_estimator && npm run deploy:rules_engine"
+  },
+  "dependencies": {
+    "@alzcare/shared": "*"
+  },
+  "devDependencies": {
+    "vitest": "2.1.4",
+    "zod": "3.23.8"
+  }
+}

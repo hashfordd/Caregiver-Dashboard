@@ -1,0 +1,11 @@
+node_modules/
+dist/
+build/
+coverage/
+.next/
+.turbo/
+.vite/
+package-lock.json
+mqtt/certs/
+supabase/.branches/
+supabase/.temp/

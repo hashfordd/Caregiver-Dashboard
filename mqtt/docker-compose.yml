@@ -1,0 +1,35 @@
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2.0.20
+    container_name: alzcare-mosquitto
+    restart: unless-stopped
+    ports:
+      - '1883:1883' # plain MQTT (local dev only — disabled via listener config below if not needed)
+      - '8883:8883' # MQTT over TLS
+      - '9001:9001' # MQTT over WebSockets (for browser-side observability tools)
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./acl:/mosquitto/config/acl:ro
+      - ./passwd:/mosquitto/config/passwd:ro
+      - ./certs:/mosquitto/certs:ro
+      - ./data:/mosquitto/data
+      - ./log:/mosquitto/log
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'mosquitto_sub',
+          '-h',
+          'localhost',
+          '-p',
+          '1883',
+          '-t',
+          '$$SYS/broker/uptime',
+          '-C',
+          '1',
+          '-W',
+          '3',
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3

@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "noEmit": true,
+    "types": ["node"],
+    "paths": {
+      "@alzcare/shared": ["../../packages/shared/src/index.ts"],
+      "@alzcare/shared/*": ["../../packages/shared/src/*"]
+    }
+  },
+  "include": ["tests/**/*", "vitest.config.ts"],
+  "exclude": ["node_modules", "functions/**/*"]
+}
