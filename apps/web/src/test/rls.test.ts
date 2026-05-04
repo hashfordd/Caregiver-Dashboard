@@ -217,6 +217,47 @@ describe.skipIf(!enabled)('RLS denial — F1 caregiver write surface', () => {
     expect(ids).not.toContain(alicePatientId);
   });
 
+  it("F5: Bob cannot insert a floor plan against Alice's patient", async () => {
+    const { error } = await bob.client.from('floor_plans').insert({
+      patient_id: alicePatientId,
+      name: 'Hijacked plan',
+      canvas_json: { objects: [] },
+      scale_meters_per_pixel: null,
+    });
+    expect(error).not.toBeNull();
+
+    const { data: rows } = await admin
+      .from('floor_plans')
+      .select('id')
+      .eq('patient_id', alicePatientId);
+    expect(rows ?? []).toHaveLength(0);
+  });
+
+  it("F5: Bob cannot update an existing floor plan owned by Alice's patient", async () => {
+    const { data: inserted } = await admin
+      .from('floor_plans')
+      .insert({
+        patient_id: alicePatientId,
+        name: 'Original',
+        canvas_json: { objects: [] },
+        scale_meters_per_pixel: 0.05,
+      })
+      .select('id')
+      .single();
+    const planId = (inserted as { id: string }).id;
+
+    await bob.client.from('floor_plans').update({ name: 'Hijacked' }).eq('id', planId);
+
+    const { data: after } = await admin
+      .from('floor_plans')
+      .select('name')
+      .eq('id', planId)
+      .single();
+    expect(after?.name).toBe('Original');
+
+    await admin.from('floor_plans').delete().eq('id', planId);
+  });
+
   it("Bob cannot update Alice's caregivers row (zero rows affected)", async () => {
     const { data: beforeRow } = await admin
       .from('caregivers')

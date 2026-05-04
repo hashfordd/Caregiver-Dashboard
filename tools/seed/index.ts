@@ -8,10 +8,13 @@
 //   - one paired device per patient (pair_device RPC + label)
 //   - five minutes of 1 Hz vitals history per device, written via the
 //     service-role client
+//   - one starter floor plan per patient (empty canvas + sensible scale) so
+//     the Place tab opens into the editor instead of the empty state
 //
 // Re-running is safe — the script skips re-seeding patients when the admin
-// already has the expected count, but always normalises admin's
-// full_name + company_name so the navbar shows demo-friendly values.
+// already has the expected count, always normalises admin's
+// full_name + company_name so the navbar shows demo-friendly values, and
+// only inserts a floor plan for patients that don't yet have one.
 //
 // Usage:
 //   SB_SERVICE_KEY=$(supabase status -o env | grep SERVICE_ROLE_KEY | cut -d= -f2) \
@@ -147,6 +150,58 @@ async function alreadySeeded(adminId: string): Promise<boolean> {
   return (count ?? 0) >= PATIENTS.length;
 }
 
+// Empty Fabric canvas blob — round-trips cleanly through `loadFromJSON`. The
+// editor renders an empty board and the pep-talk empty state is skipped
+// because a row exists in floor_plans.
+const STARTER_CANVAS_JSON = { version: '7.3.1', objects: [], background: 'transparent' };
+// 1px = 2cm. A typical bedroom (4m × 5m) is therefore 200×250px in canvas
+// space — comfortable on the 960×600 board.
+const STARTER_SCALE = 0.02;
+
+async function ensureFloorPlanForPatient(patientId: string, patientName: string): Promise<void> {
+  const { count, error: countErr } = await admin
+    .from('floor_plans')
+    .select('*', { count: 'exact', head: true })
+    .eq('patient_id', patientId);
+  if (countErr) {
+    console.warn(`seed: floor_plan check for ${patientName} failed: ${countErr.message}`);
+    return;
+  }
+  if ((count ?? 0) > 0) {
+    return;
+  }
+  const { error } = await admin.from('floor_plans').insert({
+    patient_id: patientId,
+    name: 'Home',
+    canvas_json: STARTER_CANVAS_JSON,
+    scale_meters_per_pixel: STARTER_SCALE,
+  });
+  if (error) {
+    console.warn(`seed: floor_plan insert for ${patientName} failed: ${error.message}`);
+    return;
+  }
+  console.log(`seed: floor plan created for ${patientName}`);
+}
+
+async function seedFloorPlans(adminId: string): Promise<void> {
+  const { data: rows, error } = await admin
+    .from('caregiver_patient')
+    .select('patient_id, patients(full_name)')
+    .eq('caregiver_id', adminId);
+  if (error) {
+    console.warn(`seed: could not list allocated patients: ${error.message}`);
+    return;
+  }
+  const allocations = (rows ?? []) as unknown as Array<{
+    patient_id: string;
+    patients: { full_name: string } | { full_name: string }[] | null;
+  }>;
+  for (const row of allocations) {
+    const patient = Array.isArray(row.patients) ? row.patients[0] : row.patients;
+    await ensureFloorPlanForPatient(row.patient_id, patient?.full_name ?? row.patient_id);
+  }
+}
+
 async function main(): Promise<void> {
   const adminId = await ensureAdmin();
   await normaliseAdminProfile(adminId);
@@ -155,6 +210,7 @@ async function main(): Promise<void> {
     console.log(
       `seed: ${ADMIN_EMAIL} already has ${PATIENTS.length}+ allocated patients; skipping patient seed.`,
     );
+    await seedFloorPlans(adminId);
     console.log(`\nSign in at http://localhost:5173/login`);
     console.log(`  email:    ${ADMIN_EMAIL}`);
     console.log(`  password: ${ADMIN_PASSWORD}`);
@@ -223,6 +279,8 @@ async function main(): Promise<void> {
       `seed: ${p.full_name} (${patient.id}) + device ${mac} + ${HISTORY_SECONDS / 60} min of vitals`,
     );
   }
+
+  await seedFloorPlans(adminId);
 
   console.log(`\nSeeded! Sign in at http://localhost:5173/login`);
   console.log(`  email:    ${ADMIN_EMAIL}`);

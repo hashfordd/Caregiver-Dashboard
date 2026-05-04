@@ -26,7 +26,7 @@ Format: `- **<area>** — what + why deferred + reference (feature ID / task ID)
 
 - **Mosquitto monitoring + retention** — broker has a healthcheck in docker-compose; no log retention or device-count dashboard yet. (MQ-08)
 
-- **Front-end libs not yet installed** — Fabric.js (F5 floor plan), Mapbox GL JS (F9 outdoor map), Recharts (F4 sparklines / F13 history charts) are listed in the spec's Library Reference but not in `apps/web/package.json` since no feature uses them yet. Install at the time the relevant feature is built; pin exact versions.
+- **Front-end libs not yet installed** — Mapbox GL JS (F9 outdoor map) and Recharts (F4 sparklines / F13 history charts) are listed in the spec's Library Reference but not in `apps/web/package.json` since no feature uses them yet. Install at the time the relevant feature is built; pin exact versions.
 
 - **Husky pre-commit aggressiveness** — `lint-staged` runs ESLint + Prettier on staged files. Add a typecheck stage if false-positive PRs become a problem.
 

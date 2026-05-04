@@ -1,6 +1,7 @@
 import { useSearchParams } from 'react-router-dom';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { LiveTab } from './tabs/LiveTab';
+import { PlaceTab } from './tabs/PlaceTab';
 import { PlaceholderTab } from './tabs/PlaceholderTab';
 
 const TAB_KEYS = ['live', 'place', 'history', 'alerts', 'settings'] as const;
@@ -39,7 +40,7 @@ export function PatientTabs() {
         <LiveTab />
       </TabsContent>
       <TabsContent value="place">
-        <PlaceholderTab phase={2} feature="Floor plan editor, beacon pairing, calibration walk." />
+        <PlaceTab />
       </TabsContent>
       <TabsContent value="history">
         <PlaceholderTab phase={5} feature="Movement replay, vitals charts, CSV export." />
