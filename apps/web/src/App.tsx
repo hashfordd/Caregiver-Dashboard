@@ -1,10 +1,11 @@
-import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider } from '@/features/auth/AuthProvider';
 import { LoginPage } from '@/features/auth/LoginPage';
 import { SignupPage } from '@/features/auth/SignupPage';
 import { ProfilePage } from '@/features/auth/ProfilePage';
 import { ProtectedRoute } from '@/features/auth/ProtectedRoute';
-import { LandingPage } from '@/features/patients/LandingPage';
+import { RosterPage } from '@/features/patients/RosterPage';
+import { PatientDetailPage } from '@/features/patients/PatientDetailPage';
 
 export function App() {
   return (
@@ -14,10 +15,10 @@ export function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/signup" element={<SignupPage />} />
           <Route element={<ProtectedRoute />}>
-            <Route path="/" element={<LandingPage />} />
+            <Route path="/" element={<Navigate to="/patients" replace />} />
+            <Route path="/patients" element={<RosterPage />} />
+            <Route path="/patients/:id" element={<PatientDetailPage />} />
             <Route path="/profile" element={<ProfilePage />} />
-            {/* TODO: F2 — /patients roster route. */}
-            {/* TODO: F3 — /patients/:id detail dashboard with tabbed body. */}
           </Route>
         </Routes>
       </BrowserRouter>

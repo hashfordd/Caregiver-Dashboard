@@ -114,6 +114,13 @@ describe.skipIf(!enabled)('RLS denial — F1 caregiver write surface', () => {
     expect(data?.full_name).toBe(newName);
   });
 
+  it("Bob's roster does not include Alice's patient (F2 scope)", async () => {
+    const { data, error } = await bob.client.from('patients').select('id, full_name');
+    expect(error).toBeNull();
+    const ids = (data ?? []).map((r: { id: string }) => r.id);
+    expect(ids).not.toContain(alicePatientId);
+  });
+
   it("Bob cannot update Alice's caregivers row (zero rows affected)", async () => {
     const { data: beforeRow } = await admin
       .from('caregivers')
