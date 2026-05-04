@@ -26,9 +26,12 @@
     "broker:down": "docker compose -f mqtt/docker-compose.yml down",
     "broker:logs": "docker compose -f mqtt/docker-compose.yml logs -f mosquitto",
     "broker:certs": "bash mqtt/scripts/gen-certs.sh",
+    "broker:creds": "bash mqtt/scripts/gen-creds.sh",
+    "bridge:start": "deno run --env-file=apps/edge/.env --allow-net --allow-env --allow-read --import-map=apps/edge/deno.json apps/edge/functions/mqtt_bridge/longRunning.ts",
     "supabase:start": "supabase start",
     "supabase:stop": "supabase stop",
     "supabase:reset": "supabase db reset",
+    "seed": "npm run start --workspace @alzcare/seed",
     "prepare": "husky"
   },
   "overrides": {

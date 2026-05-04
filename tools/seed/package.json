@@ -1,17 +1,15 @@
 {
-  "name": "@alzcare/mock-telemetry",
+  "name": "@alzcare/seed",
   "version": "0.0.0",
   "private": true,
-  "description": "CLI that publishes simulated telemetry payloads against a local Supabase + bridge stack. Phase 1 dependency for F4.",
+  "description": "Idempotent seed script: ensures admin@bizzieapp.com + 3 demo patients + 1 device each + 60s of telemetry history.",
   "type": "module",
   "scripts": {
     "start": "tsx index.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@alzcare/shared": "*",
-    "@supabase/supabase-js": "2.45.4",
-    "mqtt": "5.10.1"
+    "@supabase/supabase-js": "2.45.4"
   },
   "devDependencies": {
     "@types/node": "20.17.0",

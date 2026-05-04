@@ -35,19 +35,17 @@ For implementation planning, start at [docs/IMPLEMENTATION_PLAN.md](./docs/IMPLE
 # 1. Install monorepo deps
 npm install
 
-# 2. Generate Mosquitto self-signed certs (one-time)
+# 2. Generate Mosquitto self-signed certs + passwd/acl (one-time)
 npm run broker:certs
+npm run broker:creds
 
-# 3. Create the Mosquitto passwd file with at least the bridge account
-docker run --rm -v "$PWD/mqtt:/m" eclipse-mosquitto:2.0.20 \
-  mosquitto_passwd -c -b /m/passwd backend-bridge changeme
-
-# 4. Copy the ACL template
-cp mqtt/acl.example mqtt/acl
-
-# 5. Web env vars
+# 3. Web env vars
 cp apps/web/.env.example apps/web/.env.local
 # Fill VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY (from `supabase status` after start)
+
+# 4. Bridge env vars
+cp apps/edge/.env.example apps/edge/.env
+# Fill SUPABASE_SERVICE_ROLE_KEY (from `supabase status`); MQTT_PASSWORD defaults match broker:creds.
 ```
 
 ## Daily commands
@@ -62,8 +60,15 @@ npm run broker:up
 npm run broker:logs
 npm run broker:down
 
+# Long-running bridge (subscribes to broker, persists telemetry)
+npm run bridge:start      # leave running in its own terminal
+
 # Dashboard dev server (http://localhost:5173)
 npm run dev
+
+# Mock telemetry — three modes, see tools/mock-telemetry/README.md
+SB_SERVICE_KEY=… npm run -w @alzcare/mock-telemetry start -- \
+  --patient-id <uuid> --device-id <uuid> --mode mqtt --interval 1000
 
 # Tear down
 npm run supabase:stop

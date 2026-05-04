@@ -1,21 +1,27 @@
 // Mock telemetry publisher for the F4 spine smoke test. Publishes simulated
-// telemetry on a configurable interval against a local Supabase stack.
+// telemetry on a configurable interval against a local Supabase + Mosquitto
+// stack.
 //
 // Modes:
 //   --mode direct  (default) — service-role insert into sensor_readings.
-//                  Fastest dev loop. Skips the mqtt_bridge.
-//   --mode bridge  — POST validated payloads to the mqtt_bridge HTTP endpoint
+//                  Fastest dev loop. Skips the mqtt_bridge entirely.
+//   --mode bridge  — POST validated payloads to the mqtt_bridge HTTP entry
 //                  (`supabase functions serve mqtt_bridge` must be running).
-//                  Exercises the bridge's processMessage SSOT.
+//                  Exercises the bridge's processMessage SSOT over HTTP.
+//   --mode mqtt    — Publish via the broker on `device/{patient_id}/telemetry`
+//                  (`npm run broker:up && npm run bridge:start`). Exercises
+//                  the full Phase 1 spine: firmware → broker → bridge → DB
+//                  → realtime → dashboard.
 //
-// Both modes ensure a `devices` row exists for the supplied --device-id and
-// pairs it to --patient-id (unless --no-ensure-device is set).
-//
-// Long-running MQTT mode (subscribed-from-broker) is the Phase 1 closure
-// follow-up; see BACKLOG.
+// All modes ensure a `devices` row exists for the supplied --device-id and
+// pairs it to --patient-id (unless --no-ensure-device is set). The device
+// upsert always goes via the service-role Supabase client because the
+// patient must own the device before any telemetry-driven flow makes
+// sense.
 
 import { parseArgs } from 'node:util';
 import { createClient } from '@supabase/supabase-js';
+import mqtt from 'mqtt';
 import { buildTopic, type TelemetryMessage } from '@alzcare/shared';
 
 const { values } = parseArgs({
@@ -27,6 +33,9 @@ const { values } = parseArgs({
     url: { type: 'string', default: 'http://127.0.0.1:54321' },
     'service-key': { type: 'string' },
     'bridge-url': { type: 'string' },
+    'mqtt-broker-url': { type: 'string', default: 'mqtt://127.0.0.1:1883' },
+    'mqtt-username': { type: 'string', default: 'backend-bridge' },
+    'mqtt-password': { type: 'string' },
     'no-ensure-device': { type: 'boolean', default: false },
   },
 });
@@ -34,10 +43,17 @@ const { values } = parseArgs({
 const PATIENT_ID = values['patient-id'];
 const DEVICE_ID = values['device-id'];
 const INTERVAL_MS = Number.parseInt(values.interval ?? '1000', 10);
-const MODE = values.mode === 'bridge' ? 'bridge' : 'direct';
+const MODE = ((): 'direct' | 'bridge' | 'mqtt' => {
+  if (values.mode === 'bridge') return 'bridge';
+  if (values.mode === 'mqtt') return 'mqtt';
+  return 'direct';
+})();
 const URL = values.url ?? 'http://127.0.0.1:54321';
 const SERVICE_KEY = values['service-key'] ?? process.env.SB_SERVICE_KEY;
 const BRIDGE_URL = values['bridge-url'] ?? `${URL}/functions/v1/mqtt_bridge`;
+const MQTT_BROKER_URL = values['mqtt-broker-url'] ?? 'mqtt://127.0.0.1:1883';
+const MQTT_USERNAME = values['mqtt-username'] ?? 'backend-bridge';
+const MQTT_PASSWORD = values['mqtt-password'] ?? process.env.MQTT_BRIDGE_PASSWORD ?? 'bridgepass';
 
 function fail(message: string): never {
   console.error(`mock-telemetry: ${message}`);
@@ -110,10 +126,48 @@ async function publishBridge(message: TelemetryMessage): Promise<void> {
   }
 }
 
-const publish = MODE === 'bridge' ? publishBridge : publishDirect;
+let mqttClient: mqtt.MqttClient | null = null;
+
+function startMqtt(): Promise<mqtt.MqttClient> {
+  return new Promise((resolve, reject) => {
+    const client = mqtt.connect(MQTT_BROKER_URL, {
+      username: MQTT_USERNAME,
+      password: MQTT_PASSWORD,
+      clientId: `mock-${(DEVICE_ID as string).slice(0, 8)}-${Date.now()}`,
+      reconnectPeriod: 5000,
+      keepalive: 30,
+    });
+    client.once('connect', () => {
+      console.log(`mock-telemetry: mqtt connected ${MQTT_BROKER_URL}`);
+      resolve(client);
+    });
+    client.once('error', (err) => reject(err));
+  });
+}
+
+function publishMqtt(message: TelemetryMessage): Promise<void> {
+  if (!mqttClient) return Promise.reject(new Error('mqtt client not connected'));
+  const topic = buildTopic(message.patient_id, 'telemetry');
+  return new Promise((resolve, reject) => {
+    mqttClient!.publish(topic, JSON.stringify(message), { qos: 0 }, (err) => {
+      if (err) {
+        console.error(`mock-telemetry: mqtt publish — ${err.message}`);
+        reject(err);
+      } else {
+        console.log(`pub mqtt ${topic} ${message.recorded_at}`);
+        resolve();
+      }
+    });
+  });
+}
+
+const publish = MODE === 'bridge' ? publishBridge : MODE === 'mqtt' ? publishMqtt : publishDirect;
 
 async function main(): Promise<void> {
   await ensureDevice();
+  if (MODE === 'mqtt') {
+    mqttClient = await startMqtt();
+  }
   console.log(
     `mock-telemetry running: mode=${MODE} interval=${INTERVAL_MS}ms patient=${PATIENT_ID} device=${DEVICE_ID}`,
   );
@@ -122,5 +176,12 @@ async function main(): Promise<void> {
     void publish(nextReading());
   }, INTERVAL_MS);
 }
+
+function shutdown() {
+  if (mqttClient) mqttClient.end();
+  process.exit(0);
+}
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
 
 void main();

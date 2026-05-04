@@ -7,7 +7,7 @@ The phase boundaries are deliberate — they're the points where we stop, integr
 | Phase | Theme      | Features                        | Verification gate                                                                        |
 | ----- | ---------- | ------------------------------- | ---------------------------------------------------------------------------------------- |
 | 0     | Foundation | (scaffold)                      | ✅ Done                                                                                  |
-| 1     | Spine      | F1, F2, F3, F4, F10             | One vertical slice: device → broker → bridge → DB → realtime → dashboard sensor card     |
+| 1     | Spine      | F1, F2, F3, F4, F10             | ✅ Done                                                                                  |
 | 2     | Place      | F5, F6, F7                      | Caregiver draws a 4-room space, places ≥3 beacons, captures ≥8 calibration points        |
 | 3     | Locate     | F8, F9                          | Live indoor marker < 1.5 m error on 80% samples; outdoor map switches with hysteresis    |
 | 4     | Alert      | F11, F12                        | 5 rule types configurable, alerts surface in bell within 2 s, ack persists across reload |
@@ -27,7 +27,17 @@ The next thing to land is the **mock telemetry generator** — a small TS script
 
 ---
 
-## Phase 1 — Spine
+## Phase 1 — Spine (✅ done)
+
+What shipped: F1 (signup/profile, RLS write surface), F2 (roster, create-with-allocation RPC), F3 (detail shell, single-mount realtime context, tabs), F4 (live sensor cards, Zustand store, sparkline, processMessage SSOT, mock-telemetry generator), F10 (pair_device RPC, write policies, label column, pairing panel, heartbeat).
+
+Phase 1 closure additions: long-running Deno bridge (`apps/edge/functions/mqtt_bridge/longRunning.ts`) subscribed to `device/+/+`; Mosquitto auth (`backend-bridge` account + ACL pattern; one-time `npm run broker:creds`); mqtt mode on the mock generator (`--mode mqtt` publishes via mqtt.js to the broker). Verified end-to-end: 9 telemetry messages over 6 s travelled mock → broker → bridge → DB; `devices.last_seen_at` advanced.
+
+What's deferred from Phase 1: bridge Dockerfile + docker-compose service entry (production hardening — bridge runs as `npm run bridge:start` for now); structured latency instrumentation (dev console only). See [BACKLOG.md](../BACKLOG.md).
+
+The original Phase 1 plan, retained below for reference.
+
+---
 
 **Goal**: A logged-in caregiver sees one allocated patient, clicks into the patient detail dashboard, and watches HR / SpO2 / temperature update in real time from a paired device. This is the smallest closed loop that proves the architecture works end-to-end.
 

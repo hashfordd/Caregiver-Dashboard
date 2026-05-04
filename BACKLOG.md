@@ -42,24 +42,12 @@ Format: `- **<area>** — what + why deferred + reference (feature ID / task ID)
   until multi-caregiver allocation lands as a feature; V1 has one caregiver
   per patient. (F3 / UI-05)
 
-- **Long-running `mqtt_bridge` mode + Mosquitto auth + Dockerfile** — F4
-  shipped the `processMessage` SSOT and the HTTP entry point only. Closing
-  Phase 1 needs:
-
-  1. The long-running Deno entry that subscribes to MQTT and calls
-     `processMessage` (CROSS_CUTTING §11).
-  2. Mosquitto `passwd` and `acl` files generated for `backend-bridge` plus
-     per-device entries (the existing `.example` files document the
-     pattern; MQ-04 / MQ-05).
-  3. Dockerfile + a `bridge` service in `mqtt/docker-compose.yml` so
-     `npm run broker:up` brings broker + bridge together.
-  4. An `mqtt` mode in `tools/mock-telemetry/` that publishes via mqtt.js
-     instead of HTTP / direct insert.
-     Scope was deferred from F4 because none of those pieces are needed to
-     demonstrate live data on the dashboard; the HTTP-mode bridge is fully
-     exercised by `processMessage.test.ts` and the direct-insert mock
-     generator covers the dev loop. Closing this unblocks TST-01 and TST-02
-     (sensor → broker, broker → Postgres) end-to-end.
+- **Bridge Dockerfile + docker-compose service entry** — Phase 1 closure
+  shipped the long-running Deno bridge (run via `npm run bridge:start`),
+  Mosquitto auth (`npm run broker:creds`), and the `mqtt` mode in the
+  mock generator. Containerising the bridge so `npm run broker:up`
+  brings both up together (and so it deploys to Fly.io as a single image)
+  is production hardening — defer to before any non-team deployment.
 
 - **°F unit toggle on sensor cards** — F4 displays temperature in °C only.
   The spec calls for a caregiver preference; F1's profile page didn't ship
