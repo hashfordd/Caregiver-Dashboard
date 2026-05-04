@@ -1,15 +1,17 @@
 // Idempotent demo seed for the local Supabase stack.
 //
 // Ensures:
-//   - admin@bizzieapp.com / DemoPass123! exists with role=professional
-//   - three demo patients allocated to that user (creator-auto-allocate via
+//   - admin@bizzieapp.com / DemoPass123! exists, with role=professional,
+//     full_name=Harrison Ashford, company_name=Riverside Care Network
+//   - five demo patients allocated to that user (creator-auto-allocate via
 //     create_patient_with_allocation)
 //   - one paired device per patient (pair_device RPC + label)
-//   - sixty seconds of 1 Hz vitals history per device, written via service
-//     role
+//   - five minutes of 1 Hz vitals history per device, written via the
+//     service-role client
 //
-// Re-running is safe — the script skips seeding when admin already has
-// three or more allocated patients.
+// Re-running is safe — the script skips re-seeding patients when the admin
+// already has the expected count, but always normalises admin's
+// full_name + company_name so the navbar shows demo-friendly values.
 //
 // Usage:
 //   SB_SERVICE_KEY=$(supabase status -o env | grep SERVICE_ROLE_KEY | cut -d= -f2) \
@@ -20,8 +22,11 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 const URL = process.env.SB_URL ?? 'http://127.0.0.1:54321';
 const ANON_KEY = process.env.SB_ANON_KEY ?? 'sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH';
 const SERVICE_KEY = process.env.SB_SERVICE_KEY ?? '';
+
 const ADMIN_EMAIL = 'admin@bizzieapp.com';
 const ADMIN_PASSWORD = 'DemoPass123!';
+const ADMIN_FULL_NAME = 'Harrison Ashford';
+const ADMIN_COMPANY = 'Riverside Care Network';
 
 if (!SERVICE_KEY) {
   console.error(
@@ -38,17 +43,40 @@ const PATIENTS = [
   {
     full_name: 'Margaret Holloway',
     dob: '1947-03-12',
-    notes: 'Mid-stage Alzheimer’s. Lives at home with her daughter; carer visits twice weekly.',
+    notes:
+      "Mid-stage Alzheimer's. Lives at home with her daughter; carer visits twice weekly. Wandering risk after dusk.",
+    deviceLabel: 'wrist · left',
+    vitalsProfile: { hr: [68, 88], spo2: [95, 98], temp: [36.4, 36.9] },
   },
   {
     full_name: "James O'Connor",
     dob: '1942-08-30',
-    notes: 'Recent diagnosis. Active; walks twice daily. Watch for fall risk on stairs.',
+    notes:
+      'Recent diagnosis. Active and ambulatory; walks the garden twice daily. Watch for fall risk on stairs.',
+    deviceLabel: 'wrist · right',
+    vitalsProfile: { hr: [72, 92], spo2: [96, 99], temp: [36.5, 37.1] },
   },
   {
     full_name: 'Eleanor Tanaka',
     dob: '1951-11-04',
-    notes: 'Late-stage care. Mostly bedridden; monitor SpO₂ closely overnight.',
+    notes:
+      'Late-stage care. Mostly bedridden; SpO₂ historically dips overnight — escalate below 92%.',
+    deviceLabel: 'wrist · left',
+    vitalsProfile: { hr: [60, 76], spo2: [92, 96], temp: [36.2, 36.7] },
+  },
+  {
+    full_name: 'Bernard Whitfield',
+    dob: '1939-06-21',
+    notes: 'Vascular dementia. Uses a walker indoors; physiotherapy appointments Tue/Thu mornings.',
+    deviceLabel: 'wrist · right',
+    vitalsProfile: { hr: [65, 82], spo2: [94, 97], temp: [36.3, 36.8] },
+  },
+  {
+    full_name: 'Aroha Nguyen',
+    dob: '1955-02-09',
+    notes: 'Early-stage Alzheimer’s. Independent on most ADLs. Daughter is the secondary contact.',
+    deviceLabel: 'ankle',
+    vitalsProfile: { hr: [70, 90], spo2: [96, 99], temp: [36.5, 37.0] },
   },
 ];
 
@@ -65,12 +93,20 @@ function randomMac(): string {
   return `${hex()}:${hex()}:${hex()}:${hex()}:${hex()}:${hex()}`;
 }
 
+function pickInRange([lo, hi]: [number, number]): number {
+  return lo + Math.random() * (hi - lo);
+}
+
 async function ensureAdmin(): Promise<string> {
   const created = await admin.auth.admin.createUser({
     email: ADMIN_EMAIL,
     password: ADMIN_PASSWORD,
     email_confirm: true,
-    user_metadata: { full_name: 'Admin Demo', role: 'professional' },
+    user_metadata: {
+      full_name: ADMIN_FULL_NAME,
+      role: 'professional',
+      company_name: ADMIN_COMPANY,
+    },
   });
 
   if (created.data.user) {
@@ -78,7 +114,6 @@ async function ensureAdmin(): Promise<string> {
     return created.data.user.id;
   }
 
-  // listUsers is paginated; for a tiny dev DB the first page covers it.
   const list = await admin.auth.admin.listUsers();
   const existing = list.data.users.find((u) => u.email === ADMIN_EMAIL);
   if (existing) {
@@ -86,6 +121,19 @@ async function ensureAdmin(): Promise<string> {
     return existing.id;
   }
   fail(`could not find or create admin user: ${created.error?.message ?? 'unknown'}`);
+}
+
+async function normaliseAdminProfile(adminId: string): Promise<void> {
+  // Always overwrite — the demo navbar reads these.
+  const { error } = await admin
+    .from('caregivers')
+    .update({ full_name: ADMIN_FULL_NAME, company_name: ADMIN_COMPANY })
+    .eq('id', adminId);
+  if (error) {
+    console.warn(`seed: could not update admin profile: ${error.message}`);
+  } else {
+    console.log(`seed: admin profile normalised (${ADMIN_FULL_NAME} · ${ADMIN_COMPANY})`);
+  }
 }
 
 async function alreadySeeded(adminId: string): Promise<boolean> {
@@ -99,10 +147,11 @@ async function alreadySeeded(adminId: string): Promise<boolean> {
 
 async function main(): Promise<void> {
   const adminId = await ensureAdmin();
+  await normaliseAdminProfile(adminId);
 
   if (await alreadySeeded(adminId)) {
     console.log(
-      `seed: ${ADMIN_EMAIL} already has ${PATIENTS.length}+ allocated patients; skipping.`,
+      `seed: ${ADMIN_EMAIL} already has ${PATIENTS.length}+ allocated patients; skipping patient seed.`,
     );
     console.log(`\nSign in at http://localhost:5173/login`);
     console.log(`  email:    ${ADMIN_EMAIL}`);
@@ -110,7 +159,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Sign in as the admin so create_patient_with_allocation runs under their JWT.
+  // Sign in as admin so create_patient_with_allocation runs under their JWT.
   const userClient = createClient(URL, ANON_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
@@ -119,6 +168,8 @@ async function main(): Promise<void> {
     password: ADMIN_PASSWORD,
   });
   if (signIn.error) fail(`admin sign-in failed: ${signIn.error.message}`);
+
+  const HISTORY_SECONDS = 5 * 60; // 5 minutes of 1 Hz history per patient
 
   for (const p of PATIENTS) {
     const { data: patientRaw, error: patientErr } = await userClient.rpc(
@@ -141,7 +192,7 @@ async function main(): Promise<void> {
     const { data: deviceRaw, error: pairErr } = await userClient.rpc('pair_device', {
       p_mac_address: mac,
       p_patient_id: patient.id,
-      p_label: 'wrist',
+      p_label: p.deviceLabel,
     });
     if (pairErr || !deviceRaw) {
       console.error(
@@ -152,13 +203,13 @@ async function main(): Promise<void> {
     const device = deviceRaw as { id: string };
 
     const baseTime = Date.now();
-    const rows = Array.from({ length: 60 }, (_, i) => ({
+    const rows = Array.from({ length: HISTORY_SECONDS }, (_, i) => ({
       patient_id: patient.id,
       device_id: device.id,
       recorded_at: new Date(baseTime - i * 1000).toISOString(),
-      hr_bpm: 65 + Math.round(Math.random() * 20),
-      spo2_pct: Math.round((96 + Math.random() * 3) * 10) / 10,
-      temp_c: Math.round((36.4 + Math.random() * 0.4) * 10) / 10,
+      hr_bpm: Math.round(pickInRange(p.vitalsProfile.hr)),
+      spo2_pct: Math.round(pickInRange(p.vitalsProfile.spo2) * 10) / 10,
+      temp_c: Math.round(pickInRange(p.vitalsProfile.temp) * 10) / 10,
     }));
     const { error: histErr } = await admin.from('sensor_readings').insert(rows);
     if (histErr) {
@@ -166,7 +217,9 @@ async function main(): Promise<void> {
       continue;
     }
 
-    console.log(`seed: ${p.full_name} (${patient.id}) + device ${mac} + 60s of vitals`);
+    console.log(
+      `seed: ${p.full_name} (${patient.id}) + device ${mac} + ${HISTORY_SECONDS / 60} min of vitals`,
+    );
   }
 
   console.log(`\nSeeded! Sign in at http://localhost:5173/login`);
