@@ -6,19 +6,32 @@ const PATIENT_ID = '11111111-1111-1111-1111-111111111111';
 const DEVICE_ID = '22222222-2222-2222-2222-222222222222';
 
 interface SupabaseMock extends SupabaseClient {
-  __insertMock: ReturnType<typeof vi.fn>;
-  __singleMock: ReturnType<typeof vi.fn>;
+  __sensorInsertMock: ReturnType<typeof vi.fn>;
+  __sensorSingleMock: ReturnType<typeof vi.fn>;
+  __devicesUpdateMock: ReturnType<typeof vi.fn>;
+  __devicesEqMock: ReturnType<typeof vi.fn>;
+  __fromMock: ReturnType<typeof vi.fn>;
 }
 
 function buildSupabase(): SupabaseMock {
-  const singleMock = vi.fn();
-  const insertMock = vi.fn(() => ({
-    select: vi.fn(() => ({ single: singleMock })),
+  const sensorSingleMock = vi.fn();
+  const sensorInsertMock = vi.fn(() => ({
+    select: vi.fn(() => ({ single: sensorSingleMock })),
   }));
+  const devicesEqMock = vi.fn().mockResolvedValue({ error: null });
+  const devicesUpdateMock = vi.fn(() => ({ eq: devicesEqMock }));
+  const fromMock = vi.fn((table: string) => {
+    if (table === 'sensor_readings') return { insert: sensorInsertMock };
+    if (table === 'devices') return { update: devicesUpdateMock };
+    return {};
+  });
   const supabase = {
-    from: vi.fn(() => ({ insert: insertMock })),
-    __insertMock: insertMock,
-    __singleMock: singleMock,
+    from: fromMock,
+    __sensorInsertMock: sensorInsertMock,
+    __sensorSingleMock: sensorSingleMock,
+    __devicesUpdateMock: devicesUpdateMock,
+    __devicesEqMock: devicesEqMock,
+    __fromMock: fromMock,
   } as unknown as SupabaseMock;
   return supabase;
 }
@@ -41,7 +54,7 @@ describe('processMessage', () => {
   });
 
   it('persists a valid telemetry payload and returns rowId', async () => {
-    supabase.__singleMock.mockResolvedValue({ data: { id: 'sr-1' }, error: null });
+    supabase.__sensorSingleMock.mockResolvedValue({ data: { id: 'sr-1' }, error: null });
 
     const outcome = await processMessage(
       `device/${PATIENT_ID}/telemetry`,
@@ -50,9 +63,9 @@ describe('processMessage', () => {
     );
 
     expect(outcome).toEqual({ kind: 'telemetry', persisted: true, rowId: 'sr-1' });
-    expect(supabase.from).toHaveBeenCalledWith('sensor_readings');
-    expect(supabase.__insertMock).toHaveBeenCalledTimes(1);
-    expect(supabase.__insertMock).toHaveBeenCalledWith(
+    expect(supabase.__fromMock).toHaveBeenCalledWith('sensor_readings');
+    expect(supabase.__sensorInsertMock).toHaveBeenCalledTimes(1);
+    expect(supabase.__sensorInsertMock).toHaveBeenCalledWith(
       expect.objectContaining({
         patient_id: PATIENT_ID,
         device_id: DEVICE_ID,
@@ -62,6 +75,19 @@ describe('processMessage', () => {
         temp_c: 36.5,
       }),
     );
+  });
+
+  it('bumps devices.last_seen_at after a successful telemetry persist (F10)', async () => {
+    supabase.__sensorSingleMock.mockResolvedValue({ data: { id: 'sr-1' }, error: null });
+
+    await processMessage(`device/${PATIENT_ID}/telemetry`, VALID_TELEMETRY, supabase);
+
+    expect(supabase.__fromMock).toHaveBeenCalledWith('devices');
+    expect(supabase.__devicesUpdateMock).toHaveBeenCalledTimes(1);
+    expect(supabase.__devicesUpdateMock).toHaveBeenCalledWith(
+      expect.objectContaining({ last_seen_at: expect.any(String) }),
+    );
+    expect(supabase.__devicesEqMock).toHaveBeenCalledWith('id', DEVICE_ID);
   });
 
   it('returns a validation error and does not insert when telemetry is malformed', async () => {
@@ -76,7 +102,8 @@ describe('processMessage', () => {
     if (outcome.kind === 'telemetry' && !outcome.persisted) {
       expect(outcome.error).toBe('validation');
     }
-    expect(supabase.__insertMock).not.toHaveBeenCalled();
+    expect(supabase.__sensorInsertMock).not.toHaveBeenCalled();
+    expect(supabase.__devicesUpdateMock).not.toHaveBeenCalled();
   });
 
   it('treats valid signals as a phase-2 no-op (no insert)', async () => {
@@ -94,7 +121,8 @@ describe('processMessage', () => {
     );
 
     expect(outcome).toMatchObject({ kind: 'signals', persisted: false, reason: 'phase-2' });
-    expect(supabase.__insertMock).not.toHaveBeenCalled();
+    expect(supabase.__sensorInsertMock).not.toHaveBeenCalled();
+    expect(supabase.__devicesUpdateMock).not.toHaveBeenCalled();
   });
 
   it('treats valid events as a phase-4 no-op (no insert)', async () => {
@@ -111,12 +139,13 @@ describe('processMessage', () => {
     );
 
     expect(outcome).toMatchObject({ kind: 'events', persisted: false, reason: 'phase-4' });
-    expect(supabase.__insertMock).not.toHaveBeenCalled();
+    expect(supabase.__sensorInsertMock).not.toHaveBeenCalled();
+    expect(supabase.__devicesUpdateMock).not.toHaveBeenCalled();
   });
 
   it('rejects an unknown topic shape', async () => {
     const outcome = await processMessage('not/a/topic', VALID_TELEMETRY, supabase);
     expect(outcome).toMatchObject({ kind: 'unknown', persisted: false, error: 'topic' });
-    expect(supabase.__insertMock).not.toHaveBeenCalled();
+    expect(supabase.__sensorInsertMock).not.toHaveBeenCalled();
   });
 });

@@ -16,3 +16,17 @@ export function formatTimestamp(iso: string, opts?: Intl.DateTimeFormatOptions):
     opts ?? { hour: '2-digit', minute: '2-digit', second: '2-digit' },
   ).format(date);
 }
+
+// Compact relative time used by F10's device heartbeat and any future
+// "last seen X ago" surface. Returns 'never' when the input is null.
+export function relativeTime(input: string | number | null): string {
+  if (input == null) return 'never';
+  const seconds = secondsAgo(input);
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}

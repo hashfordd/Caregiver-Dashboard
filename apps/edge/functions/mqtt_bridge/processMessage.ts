@@ -62,6 +62,22 @@ export async function processMessage(
         details: error?.message ?? 'no row returned',
       };
     }
+    // F10: bump the device heartbeat. Best-effort — a failed update here
+    // shouldn't fail the persist outcome (the telemetry row landed).
+    const heartbeat = await supabase
+      .from('devices')
+      .update({ last_seen_at: new Date().toISOString() })
+      .eq('id', m.device_id);
+    if (heartbeat.error) {
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          msg: 'mqtt_bridge: heartbeat update failed',
+          device_id: m.device_id,
+          err: heartbeat.error.message,
+        }),
+      );
+    }
     return { kind: 'telemetry', persisted: true, rowId: data.id };
   }
 

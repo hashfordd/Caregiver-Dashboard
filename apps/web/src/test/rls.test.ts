@@ -114,6 +114,75 @@ describe.skipIf(!enabled)('RLS denial — F1 caregiver write surface', () => {
     expect(data?.full_name).toBe(newName);
   });
 
+  it("F10: Bob cannot pair an unpaired device to Alice's patient via update", async () => {
+    // Service role inserts an unpaired device.
+    const mac = `aa:bb:cc:f1:0a:${Math.floor(Math.random() * 256)
+      .toString(16)
+      .padStart(2, '0')}`;
+    const { data: device } = await admin
+      .from('devices')
+      .insert({ mac_address: mac, paired_patient_id: null })
+      .select('id')
+      .single();
+    const deviceId = (device as { id: string }).id;
+
+    // Bob tries to repaint it onto Alice's patient. RLS `with check`
+    // should reject (the post-update row doesn't pass is_caregiver_for
+    // for Bob).
+    await bob.client
+      .from('devices')
+      .update({ paired_patient_id: alicePatientId })
+      .eq('id', deviceId);
+
+    const { data: after } = await admin
+      .from('devices')
+      .select('paired_patient_id')
+      .eq('id', deviceId)
+      .single();
+    expect(after?.paired_patient_id).toBeNull();
+
+    await admin.from('devices').delete().eq('id', deviceId);
+  });
+
+  it("F10: Bob cannot rewrite a device paired to Alice's patient", async () => {
+    const { data: device } = await admin
+      .from('devices')
+      .insert({
+        mac_address: `aa:bb:cc:f1:0b:${Math.floor(Math.random() * 256)
+          .toString(16)
+          .padStart(2, '0')}`,
+        paired_patient_id: alicePatientId,
+      })
+      .select('id')
+      .single();
+    const deviceId = (device as { id: string }).id;
+
+    // Bob tries to change the firmware_version. RLS `using` should
+    // reject (pre-update row is paired to Alice, not Bob).
+    await bob.client.from('devices').update({ firmware_version: 'hijacked' }).eq('id', deviceId);
+
+    const { data: after } = await admin
+      .from('devices')
+      .select('firmware_version')
+      .eq('id', deviceId)
+      .single();
+    expect(after?.firmware_version).toBeNull();
+
+    await admin.from('devices').delete().eq('id', deviceId);
+  });
+
+  it('F10: pair_device RPC raises when caller is not allocated to the patient', async () => {
+    const { error } = await bob.client.rpc('pair_device', {
+      p_mac_address: `aa:bb:cc:f1:0c:${Math.floor(Math.random() * 256)
+        .toString(16)
+        .padStart(2, '0')}`,
+      p_patient_id: alicePatientId,
+      p_label: null,
+    });
+    expect(error).not.toBeNull();
+    expect(error?.message ?? '').toMatch(/not allocated|allocated/i);
+  });
+
   it("Bob cannot read Alice's sensor_readings (F4 scope)", async () => {
     // Insert a reading via the service-role admin client (bridge would do
     // this in production via mqtt_bridge), then assert Bob's session sees
