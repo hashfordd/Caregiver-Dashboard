@@ -42,6 +42,42 @@ Format: `- **<area>** — what + why deferred + reference (feature ID / task ID)
   until multi-caregiver allocation lands as a feature; V1 has one caregiver
   per patient. (F3 / UI-05)
 
+- **Long-running `mqtt_bridge` mode + Mosquitto auth + Dockerfile** — F4
+  shipped the `processMessage` SSOT and the HTTP entry point only. Closing
+  Phase 1 needs:
+
+  1. The long-running Deno entry that subscribes to MQTT and calls
+     `processMessage` (CROSS_CUTTING §11).
+  2. Mosquitto `passwd` and `acl` files generated for `backend-bridge` plus
+     per-device entries (the existing `.example` files document the
+     pattern; MQ-04 / MQ-05).
+  3. Dockerfile + a `bridge` service in `mqtt/docker-compose.yml` so
+     `npm run broker:up` brings broker + bridge together.
+  4. An `mqtt` mode in `tools/mock-telemetry/` that publishes via mqtt.js
+     instead of HTTP / direct insert.
+     Scope was deferred from F4 because none of those pieces are needed to
+     demonstrate live data on the dashboard; the HTTP-mode bridge is fully
+     exercised by `processMessage.test.ts` and the direct-insert mock
+     generator covers the dev loop. Closing this unblocks TST-01 and TST-02
+     (sensor → broker, broker → Postgres) end-to-end.
+
+- **°F unit toggle on sensor cards** — F4 displays temperature in °C only.
+  The spec calls for a caregiver preference; F1's profile page didn't ship
+  the unit toggle. Add a `temperature_unit: 'c' | 'f'` column on
+  `caregivers`, surface in profile, and switch the formatter in
+  `SensorCard`. (F4 / UI-05)
+
+- **Recharts deferral note** — Recharts is intentionally not installed
+  yet. F4's sparkline is hand-rolled SVG; F13 is the first feature that
+  actually needs Recharts (axes, tooltips, range selection). Pin the
+  version at F13 install time, then remove the related "Front-end libs
+  not yet installed" entry above.
+
+- **Production latency instrumentation** — F4 includes a console-log of
+  publish-to-render delta only in dev. Replacing it with a structured
+  metric pipeline (e.g. Vercel Analytics / Logflare ingest) is a Phase 5
+  / production-hardening item.
+
 - **Realtime broadcast channel auth** — Supabase Realtime broadcast channels (used by F6 for live signals delivery from `mqtt_bridge` to the dashboard) are not RLS-protected in V1. Channels are namespaced by `patient_id` but a determined client could subscribe to any channel name. Acceptable for V1 because dashboard subscribers are authenticated caregivers and the data on the channel (raw RSSI vectors) is low-sensitivity, but tighten when Supabase Realtime Authorization goes GA. (See [docs/CROSS_CUTTING.md §7](./docs/CROSS_CUTTING.md#7-realtime-patterns).)
 
 ## Recommended first feature: F1 closure → F2 (Patient Roster)

@@ -1,0 +1,20 @@
+{
+  "name": "@alzcare/mock-telemetry",
+  "version": "0.0.0",
+  "private": true,
+  "description": "CLI that publishes simulated telemetry payloads against a local Supabase + bridge stack. Phase 1 dependency for F4.",
+  "type": "module",
+  "scripts": {
+    "start": "tsx index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@alzcare/shared": "*",
+    "@supabase/supabase-js": "2.45.4"
+  },
+  "devDependencies": {
+    "@types/node": "20.17.0",
+    "tsx": "4.19.2",
+    "typescript": "5.6.3"
+  }
+}

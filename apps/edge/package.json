@@ -17,6 +17,7 @@
     "@alzcare/shared": "*"
   },
   "devDependencies": {
+    "@supabase/supabase-js": "2.45.4",
     "vitest": "2.1.4",
     "zod": "3.23.8"
   }

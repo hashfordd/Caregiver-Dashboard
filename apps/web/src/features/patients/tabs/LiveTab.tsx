@@ -1,15 +1,16 @@
-import { Activity } from 'lucide-react';
-import { EmptyState } from '@/components/ui/empty-state';
+import { SensorCard } from '../live/SensorCard';
+import { usePatientStreamContext } from '../PatientStreamContext';
 
-// F3 ships this as a placeholder. F4 fills it with the live sensor cards
-// (HR / SpO2 / temperature / motion + sparklines + stale-data indicator).
-// F10 adds the device pairing CTA when a patient has no paired device.
+// F4 fills this with three sensor cards bound to the live store. F10 will
+// add a DevicePairingSlot above the grid for patients with no paired device.
 export function LiveTab() {
+  const { patientId } = usePatientStreamContext();
   return (
-    <EmptyState
-      icon={<Activity className="h-10 w-10" />}
-      title="No live data yet"
-      description="Pair a device to start streaming this patient's vitals."
-    />
+    <div className="grid gap-4 md:grid-cols-3">
+      <SensorCard patientId={patientId} metric="hr" />
+      <SensorCard patientId={patientId} metric="spo2" />
+      <SensorCard patientId={patientId} metric="temp" />
+      {/* TODO: F10 — DevicePairingSlot when no device is paired. */}
+    </div>
   );
 }

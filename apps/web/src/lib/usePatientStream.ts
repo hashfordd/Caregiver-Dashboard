@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
+import type { SensorReadingRow } from '@alzcare/shared';
 import { supabase } from '@/lib/supabase';
+
+export type { SensorReadingRow };
 
 /**
  * Realtime subscription for a single patient. Subscribes to INSERTs on
@@ -14,21 +17,9 @@ import { supabase } from '@/lib/supabase';
  * tabs can render stale-data warnings without each opening their own
  * subscription.
  *
- * TODO: F2/F3 — once DB row schemas live in @alzcare/shared, replace the
- * inline Row interfaces below with imports so this is typed end-to-end.
+ * TODO: F8/F11 — move PositionEstimateRow + AlertRow into @alzcare/shared/db
+ * when their owning features ship.
  */
-export interface SensorReadingRow {
-  id: string;
-  patient_id: string;
-  device_id: string;
-  recorded_at: string;
-  hr_bpm: number | null;
-  spo2_pct: number | null;
-  temp_c: number | null;
-  accel: unknown | null;
-  gyro: unknown | null;
-  created_at: string;
-}
 
 export interface PositionEstimateRow {
   id: string;

@@ -6,6 +6,7 @@ import {
   type PositionEstimateRow,
   type SensorReadingRow,
 } from '@/lib/usePatientStream';
+import { useLiveSensorStore } from '@/lib/stores/liveSensorStore';
 
 type Listener<T> = (row: T) => void;
 type Unsubscribe = () => void;
@@ -32,7 +33,13 @@ export function PatientStreamProvider({
   const alertListeners = useRef<Set<Listener<AlertRow>>>(new Set());
 
   const handle = usePatientStream(patientId, {
-    onSensorReading: (row) => sensorListeners.current.forEach((cb) => cb(row)),
+    onSensorReading: (row) => {
+      // Live store dispatch is the canonical home for sparkline buffers; the
+      // fanout below feeds any feature that wants a per-row callback (e.g.
+      // F12 alert flash, future telemetry-driven widgets).
+      useLiveSensorStore.getState().pushReading(patientId, row);
+      sensorListeners.current.forEach((cb) => cb(row));
+    },
     onPositionEstimate: (row) => positionListeners.current.forEach((cb) => cb(row)),
     onAlert: (row) => alertListeners.current.forEach((cb) => cb(row)),
   });

@@ -114,6 +114,33 @@ describe.skipIf(!enabled)('RLS denial — F1 caregiver write surface', () => {
     expect(data?.full_name).toBe(newName);
   });
 
+  it("Bob cannot read Alice's sensor_readings (F4 scope)", async () => {
+    // Insert a reading via the service-role admin client (bridge would do
+    // this in production via mqtt_bridge), then assert Bob's session sees
+    // none.
+    await admin.from('devices').insert({
+      id: '99999999-9999-9999-9999-999999999991',
+      mac_address: 'mock-rls-bob-test',
+      paired_patient_id: alicePatientId,
+      last_seen_at: new Date().toISOString(),
+    });
+    await admin.from('sensor_readings').insert({
+      patient_id: alicePatientId,
+      device_id: '99999999-9999-9999-9999-999999999991',
+      recorded_at: new Date().toISOString(),
+      hr_bpm: 72,
+      spo2_pct: 98,
+      temp_c: 36.5,
+    });
+
+    const { data, error } = await bob.client
+      .from('sensor_readings')
+      .select('id')
+      .eq('patient_id', alicePatientId);
+    expect(error).toBeNull();
+    expect(data).toEqual([]);
+  });
+
   it("Bob's roster does not include Alice's patient (F2 scope)", async () => {
     const { data, error } = await bob.client.from('patients').select('id, full_name');
     expect(error).toBeNull();
