@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 
@@ -7,6 +7,12 @@ import { supabase } from '@/lib/supabase';
  * sensor_readings + position_estimates and to all changes on alerts, scoped
  * by patient_id. Caller supplies typed callbacks; the hook handles teardown
  * on unmount or patient change.
+ *
+ * The hook returns a `PatientStreamHandle` exposing the current channel
+ * status and per-channel `lastSeen` timestamps so the patient header can
+ * surface a connection pill (subscribed/disconnected/error) and downstream
+ * tabs can render stale-data warnings without each opening their own
+ * subscription.
  *
  * TODO: F2/F3 — once DB row schemas live in @alzcare/shared, replace the
  * inline Row interfaces below with imports so this is typed end-to-end.
@@ -55,15 +61,41 @@ export interface PatientStreamCallbacks {
   onError?: (error: Error) => void;
 }
 
+export type PatientStreamStatus = 'idle' | 'subscribed' | 'disconnected' | 'error';
+
+export interface PatientStreamLastSeen {
+  sensor: number | null;
+  position: number | null;
+  alert: number | null;
+}
+
+export interface PatientStreamHandle {
+  status: PatientStreamStatus;
+  lastSeen: PatientStreamLastSeen;
+}
+
+const INITIAL_LAST_SEEN: PatientStreamLastSeen = {
+  sensor: null,
+  position: null,
+  alert: null,
+};
+
 export function usePatientStream(
   patientId: string | null,
   callbacks: PatientStreamCallbacks,
-): void {
+): PatientStreamHandle {
   const callbacksRef = useRef(callbacks);
   callbacksRef.current = callbacks;
 
+  const [status, setStatus] = useState<PatientStreamStatus>('idle');
+  const [lastSeen, setLastSeen] = useState<PatientStreamLastSeen>(INITIAL_LAST_SEEN);
+
   useEffect(() => {
-    if (!patientId) return;
+    if (!patientId) {
+      setStatus('idle');
+      setLastSeen(INITIAL_LAST_SEEN);
+      return;
+    }
 
     const channel: RealtimeChannel = supabase
       .channel(`patient:${patientId}`)
@@ -75,7 +107,10 @@ export function usePatientStream(
           table: 'sensor_readings',
           filter: `patient_id=eq.${patientId}`,
         },
-        (payload) => callbacksRef.current.onSensorReading?.(payload.new as SensorReadingRow),
+        (payload) => {
+          setLastSeen((prev) => ({ ...prev, sensor: Date.now() }));
+          callbacksRef.current.onSensorReading?.(payload.new as SensorReadingRow);
+        },
       )
       .on(
         'postgres_changes',
@@ -85,7 +120,10 @@ export function usePatientStream(
           table: 'position_estimates',
           filter: `patient_id=eq.${patientId}`,
         },
-        (payload) => callbacksRef.current.onPositionEstimate?.(payload.new as PositionEstimateRow),
+        (payload) => {
+          setLastSeen((prev) => ({ ...prev, position: Date.now() }));
+          callbacksRef.current.onPositionEstimate?.(payload.new as PositionEstimateRow);
+        },
       )
       .on(
         'postgres_changes',
@@ -95,16 +133,27 @@ export function usePatientStream(
           table: 'alerts',
           filter: `patient_id=eq.${patientId}`,
         },
-        (payload) => callbacksRef.current.onAlert?.(payload.new as AlertRow),
+        (payload) => {
+          setLastSeen((prev) => ({ ...prev, alert: Date.now() }));
+          callbacksRef.current.onAlert?.(payload.new as AlertRow);
+        },
       )
-      .subscribe((status, err) => {
-        if (status === 'CHANNEL_ERROR' && err) {
-          callbacksRef.current.onError?.(err);
+      .subscribe((subStatus, err) => {
+        if (subStatus === 'SUBSCRIBED') {
+          setStatus('subscribed');
+        } else if (subStatus === 'CHANNEL_ERROR') {
+          setStatus('error');
+          if (err) callbacksRef.current.onError?.(err);
+        } else if (subStatus === 'CLOSED' || subStatus === 'TIMED_OUT') {
+          setStatus('disconnected');
         }
       });
 
     return () => {
       void supabase.removeChannel(channel);
+      setStatus('idle');
     };
   }, [patientId]);
+
+  return { status, lastSeen };
 }

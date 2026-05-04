@@ -34,6 +34,14 @@ Format: `- **<area>** — what + why deferred + reference (feature ID / task ID)
 
 - **Caregiver profile page** — name / contact / role / °C–°F preference is F1 / UI-05 feature work.
 
+- **Peer caregiver chips on the patient header** — F3 currently shows only the
+  patient's name, age and connection status. Rendering chips for every
+  caregiver allocated to a patient requires either broadening the
+  `caregivers` SELECT policy to "visible to a peer who shares a patient" or a
+  `SECURITY DEFINER` `get_patient_with_caregivers(patient_id)` RPC. Defer
+  until multi-caregiver allocation lands as a feature; V1 has one caregiver
+  per patient. (F3 / UI-05)
+
 - **Realtime broadcast channel auth** — Supabase Realtime broadcast channels (used by F6 for live signals delivery from `mqtt_bridge` to the dashboard) are not RLS-protected in V1. Channels are namespaced by `patient_id` but a determined client could subscribe to any channel name. Acceptable for V1 because dashboard subscribers are authenticated caregivers and the data on the channel (raw RSSI vectors) is low-sensitivity, but tighten when Supabase Realtime Authorization goes GA. (See [docs/CROSS_CUTTING.md §7](./docs/CROSS_CUTTING.md#7-realtime-patterns).)
 
 ## Recommended first feature: F1 closure → F2 (Patient Roster)
