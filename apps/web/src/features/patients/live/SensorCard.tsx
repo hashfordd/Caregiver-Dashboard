@@ -54,7 +54,7 @@ export function SensorCard({ patientId, metric }: SensorCardProps) {
               <span className="text-sm font-medium text-muted-foreground">{UNITS[metric]}</span>
             </div>
             <p
-              className={cn('mt-2 text-xs', isStale ? 'text-brandy-500' : 'text-muted-foreground')}
+              className={cn('mt-2 text-xs', isStale ? 'text-destructive' : 'text-muted-foreground')}
             >
               {isStale && ageSeconds != null
                 ? `Stale · ${ageSeconds}s since last reading`
@@ -62,7 +62,7 @@ export function SensorCard({ patientId, metric }: SensorCardProps) {
             </p>
             <Sparkline
               points={card.buffer}
-              className={cn('mt-3 w-full', isStale ? 'text-brandy-700' : 'text-tangerine-500')}
+              className={cn('mt-3 w-full', isStale ? 'text-destructive' : 'text-accent')}
             />
           </>
         ) : (
@@ -89,12 +89,12 @@ function FreshnessPip({ stale, hasData }: { stale: boolean; hasData: boolean }) 
   return (
     <span className="relative flex h-2 w-2" aria-label={stale ? 'stale' : 'fresh'}>
       {!stale && (
-        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-tangerine-500/60" />
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent/60" />
       )}
       <span
         className={cn(
           'relative inline-flex h-2 w-2 rounded-full',
-          stale ? 'bg-brandy-500' : 'bg-tangerine-500',
+          stale ? 'bg-destructive' : 'bg-accent',
         )}
       />
     </span>

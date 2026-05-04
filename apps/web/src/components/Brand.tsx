@@ -24,7 +24,7 @@ export function Brand({ size = 'md', tagline = false, className }: BrandProps) {
           SIZES[size],
         )}
       >
-        alzcare<span className="text-tangerine-500">.</span>
+        alzcare<span className="text-accent">.</span>
       </span>
       {tagline && (
         <span className="mt-1 text-xs uppercase tracking-[0.2em] text-muted-foreground">

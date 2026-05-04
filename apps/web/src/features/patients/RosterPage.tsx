@@ -128,11 +128,11 @@ export function RosterPage() {
                 <li key={p.id}>
                   <Link
                     to={`/patients/${p.id}`}
-                    className="group flex items-center gap-4 rounded-lg border border-border/60 bg-card px-5 py-4 text-card-foreground transition-all hover:border-tangerine-400 hover:shadow-sm focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+                    className="group flex items-center gap-4 rounded-lg border border-border/60 bg-card px-5 py-4 text-card-foreground transition-all hover:border-accent hover:shadow-sm focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
                   >
                     <div
                       aria-hidden
-                      className="grid h-12 w-12 place-items-center rounded-full bg-papaya-600 font-serif italic text-xl text-foreground"
+                      className="grid h-12 w-12 place-items-center rounded-full bg-eggshell-600 font-serif italic text-xl text-foreground"
                     >
                       {initials(p.full_name)}
                     </div>
@@ -149,7 +149,7 @@ export function RosterPage() {
                         </p>
                       )}
                     </div>
-                    <ChevronRight className="h-5 w-5 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-tangerine-500" />
+                    <ChevronRight className="h-5 w-5 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-accent" />
                   </Link>
                 </li>
               );

@@ -82,7 +82,7 @@ export function LoginPage() {
                 </p>
               )}
               {info && (
-                <p className="rounded-md bg-tangerine-900 px-3 py-2 text-sm text-tangerine-300">
+                <p className="rounded-md bg-accent/10 px-3 py-2 text-sm text-foreground/80">
                   {info}
                 </p>
               )}
