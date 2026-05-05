@@ -19,7 +19,13 @@ import {
   type WallJoin,
   type WorldPoint,
 } from './geometry';
-import type { FloorPlanCanvasHandle, FurnitureKind, SelectionDescriptor, ToolMode } from './types';
+import type {
+  BeaconSprite,
+  FloorPlanCanvasHandle,
+  FurnitureKind,
+  SelectionDescriptor,
+  ToolMode,
+} from './types';
 
 interface FloorPlanCanvasProps {
   initialJson: unknown;
@@ -29,10 +35,17 @@ interface FloorPlanCanvasProps {
    *  and join clicks are all disabled. Default true so callers that
    *  don't care about the toggle keep the previous behaviour. */
   editing?: boolean;
+  /** Initial mode for the canvas. Used by the Beacons sub-tab to mount
+   *  in 'beacon-placement' mode without any further setMode call. */
+  initialMode?: ToolMode;
   onDirty?: () => void;
   onModeChange?: (next: ToolMode) => void;
   onIsEmptyChange?: (isEmpty: boolean) => void;
   onSelectionChange?: (desc: SelectionDescriptor) => void;
+  /** F6: fires when an armed beacon lands on the canvas (initial place)
+   *  or an existing placed beacon is dragged to a new spot. The parent
+   *  is expected to persist via useUpdateBeaconPosition. */
+  onBeaconUpdate?: (beaconId: string, x: number, y: number) => void;
   width?: number;
   height?: number;
   className?: string;
@@ -108,10 +121,12 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       scale,
       showDimensions,
       editing,
+      initialMode,
       onDirty,
       onModeChange,
       onIsEmptyChange,
       onSelectionChange,
+      onBeaconUpdate,
       width,
       height,
       className,
@@ -137,11 +152,12 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     const handlesLayerRef = useRef<HTMLDivElement>(null);
     const labelsLayerRef = useRef<HTMLDivElement>(null);
     const joinsLayerRef = useRef<HTMLDivElement>(null);
+    const beaconsLayerRef = useRef<HTMLDivElement>(null);
     const shadingLayerRef = useRef<SVGSVGElement>(null);
     const snapIndicatorRef = useRef<HTMLDivElement>(null);
     const fabricRef = useRef<fabric.Canvas | null>(null);
 
-    const modeRef = useRef<ToolMode>('select');
+    const modeRef = useRef<ToolMode>(initialMode ?? 'select');
     const furnitureKindRef = useRef<FurnitureKind>('bed');
     const drawingRef = useRef<{
       kind: 'wall' | 'room';
@@ -159,6 +175,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     const onModeChangeRef = useRef(onModeChange);
     const onIsEmptyChangeRef = useRef(onIsEmptyChange);
     const onSelectionChangeRef = useRef(onSelectionChange);
+    const onBeaconUpdateRef = useRef(onBeaconUpdate);
     const scaleRef = useRef(scale);
     const showDimensionsRef = useRef(showDimensions ?? true);
     const editingRef = useRef(editing ?? true);
@@ -196,6 +213,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       onSelectionChangeRef.current = onSelectionChange;
     }, [onSelectionChange]);
     useEffect(() => {
+      onBeaconUpdateRef.current = onBeaconUpdate;
+    }, [onBeaconUpdate]);
+    useEffect(() => {
       scaleRef.current = scale;
     }, [scale]);
     useEffect(() => {
@@ -228,10 +248,13 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           polygonDraftRef.current = null;
         }
         // Force back to select mode so the next entry into edit mode
-        // starts cleanly.
-        modeRef.current = 'select';
-        canvas.defaultCursor = 'default';
-        onModeChangeRef.current?.('select');
+        // starts cleanly. Beacon-placement is the exception — it's a
+        // legit non-editing mode, not a leftover draft state.
+        if (modeRef.current !== 'beacon-placement') {
+          modeRef.current = 'select';
+          canvas.defaultCursor = 'default';
+          onModeChangeRef.current?.('select');
+        }
       }
       canvas.requestRenderAll();
     }, [editing]);
@@ -266,6 +289,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       const modeCursor = () => (modeRef.current === 'select' ? 'default' : 'crosshair');
 
       const setEventedForAll = (mode: ToolMode) => {
+        // In beacon-placement, every wall/room/furniture is locked: clicks
+        // pass through to the canvas so the beacon-placement handler
+        // sees them. Selection/drawing modes follow the F5 rules.
         const evented = mode === 'select';
         for (const obj of canvas.getObjects()) {
           if (kindOf(obj)) obj.evented = evented;
@@ -711,8 +737,109 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         svg.replaceChildren(...next);
       }
 
+      // ─── F6 beacon overlay ──────────────────────────────────────────────
+      // Beacons render as DOM nodes on a dedicated layer (mirrors the
+      // joins overlay). They live in the same coordinate space as the
+      // canvas via screenFromWorld, so they ride along with zoom + pan
+      // without being baked into Fabric's render loop. Drag of an already-
+      // placed beacon updates its position in-place and fires onBeaconUpdate
+      // on pointer-up; click on the canvas while armed drops the armed
+      // beacon at the click coords.
+      let beaconSprites: BeaconSprite[] = [];
+      let armedBeaconId: string | null = null;
+
+      const applyArmedCursor = () => {
+        if (modeRef.current !== 'beacon-placement') return;
+        canvas.defaultCursor = armedBeaconId ? 'crosshair' : 'default';
+        canvas.hoverCursor = canvas.defaultCursor;
+      };
+
+      function renderBeacons() {
+        const layer = beaconsLayerRef.current;
+        if (!layer) return;
+        // Hide every overlay when not in beacon-placement mode — the
+        // sprites stay in memory so re-entering the Beacons sub-tab
+        // restores them instantly.
+        if (modeRef.current !== 'beacon-placement') {
+          layer.replaceChildren();
+          return;
+        }
+        const placed = beaconSprites.filter((s) => s.x != null && s.y != null);
+        const next = placed.map((sprite) => makeBeaconEl(sprite));
+        layer.replaceChildren(...next);
+      }
+
+      function makeBeaconEl(sprite: BeaconSprite): HTMLDivElement {
+        const screen = screenFromWorld({ x: sprite.x!, y: sprite.y! });
+        const el = document.createElement('div');
+        el.className =
+          'pointer-events-auto absolute z-30 flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full border-2 border-white bg-emerald-500 text-[9px] font-semibold text-white shadow';
+        el.style.left = `${screen.x}px`;
+        el.style.top = `${screen.y}px`;
+        el.title = `${sprite.label} · drag to move`;
+        el.dataset.beaconId = sprite.id;
+        // Inline initial — first letter of the label, falls back to dot.
+        el.textContent = sprite.label.trim().charAt(0).toUpperCase() || '•';
+        attachBeaconDrag(el, sprite.id);
+        return el;
+      }
+
+      function attachBeaconDrag(el: HTMLDivElement, beaconId: string) {
+        el.addEventListener('pointerdown', (e) => {
+          if (modeRef.current !== 'beacon-placement') return;
+          e.preventDefault();
+          e.stopPropagation();
+          el.setPointerCapture(e.pointerId);
+          el.style.cursor = 'grabbing';
+
+          const onMove = (ev: PointerEvent) => {
+            const rect = canvas.upperCanvasEl.getBoundingClientRect();
+            const sx = ev.clientX - rect.left;
+            const sy = ev.clientY - rect.top;
+            const w = worldFromScreen(sx, sy);
+            const target = { x: snap(w.x), y: snap(w.y) };
+            // Mutate the in-memory sprite + DOM directly during drag so
+            // the visual moves smoothly. Persist on pointerup.
+            const sprite = beaconSprites.find((s) => s.id === beaconId);
+            if (!sprite) return;
+            sprite.x = target.x;
+            sprite.y = target.y;
+            const screen = screenFromWorld(target);
+            el.style.left = `${screen.x}px`;
+            el.style.top = `${screen.y}px`;
+          };
+
+          const onUp = () => {
+            el.releasePointerCapture(e.pointerId);
+            el.removeEventListener('pointermove', onMove);
+            el.removeEventListener('pointerup', onUp);
+            el.style.cursor = 'grab';
+            const sprite = beaconSprites.find((s) => s.id === beaconId);
+            if (sprite && sprite.x != null && sprite.y != null) {
+              onBeaconUpdateRef.current?.(beaconId, sprite.x, sprite.y);
+            }
+          };
+
+          el.addEventListener('pointermove', onMove);
+          el.addEventListener('pointerup', onUp);
+        });
+      }
+
       // ─── Pointer handlers ───────────────────────────────────────────────
       const handlePointerDown = (opt: fabric.TPointerEventInfo<fabric.TPointerEvent>) => {
+        // Beacon placement is the one mode where clicks matter even when
+        // the canvas is read-only (`!editingRef.current`). Drop the armed
+        // beacon at the click coords, then disarm.
+        if (modeRef.current === 'beacon-placement') {
+          if (!armedBeaconId) return;
+          const raw = canvas.getScenePoint(opt.e);
+          const sp = { x: snap(raw.x), y: snap(raw.y) };
+          const id = armedBeaconId;
+          armedBeaconId = null;
+          applyArmedCursor();
+          onBeaconUpdateRef.current?.(id, sp.x, sp.y);
+          return;
+        }
         if (!interactiveRef.current) return;
         if (!editingRef.current) return;
         const e = opt.e as MouseEvent;
@@ -940,6 +1067,14 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
 
       Object.assign(canvas as unknown as Record<string, unknown>, {
         __fpClearAll: clearAll,
+        __fpSetBeacons: (sprites: BeaconSprite[]) => {
+          beaconSprites = sprites;
+          renderBeacons();
+        },
+        __fpArmPlacement: (id: string | null) => {
+          armedBeaconId = id;
+          applyArmedCursor();
+        },
       });
 
       const handlePointerMove = (opt: fabric.TPointerEventInfo<fabric.TPointerEvent>) => {
@@ -1173,6 +1308,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         renderHandles();
         renderLabelsAndJoins();
         renderShading();
+        renderBeacons();
       });
       canvas.on('selection:created', () => {
         emitSelection();
@@ -1228,6 +1364,18 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
 
       const onKeyDown = (e: KeyboardEvent) => {
         if (isTextTarget(e.target)) return;
+        // Beacon-placement mode runs alongside the F5 canvas (e.g. when
+        // both sub-tabs are open at once via forceMount). The F5 keyboard
+        // shortcuts (Backspace = delete, Cmd+Z = undo, Cmd+A = select
+        // all, etc.) shouldn't fire from the Beacons sub-tab — only Esc,
+        // which disarms a pending placement.
+        if (modeRef.current === 'beacon-placement') {
+          if (e.key === 'Escape' && armedBeaconId) {
+            armedBeaconId = null;
+            applyArmedCursor();
+          }
+          return;
+        }
         if ((e.key === ' ' || e.code === 'Space') && !spaceHeldRef.current) {
           spaceHeldRef.current = true;
           canvas.defaultCursor = 'grab';
@@ -1375,7 +1523,10 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           if (!canvas) return;
           const interactive = editingRef.current && mode === 'select';
           canvas.selection = interactive;
-          canvas.defaultCursor = mode === 'select' ? 'default' : 'crosshair';
+          // Beacon-placement: cursor stays default until a beacon is armed
+          // (handled inside the heavy effect via applyArmedCursor).
+          canvas.defaultCursor =
+            mode === 'select' || mode === 'beacon-placement' ? 'default' : 'crosshair';
           // In drawing modes, prevent fabric from intercepting clicks on
           // existing geometry (so a wall-mode click on an existing wall's
           // endpoint starts a new wall instead of selecting the old one).
@@ -1518,6 +1669,18 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           active.setCoords();
           canvas.requestRenderAll();
         },
+        setBeacons: (sprites) => {
+          const c = fabricRef.current as unknown as {
+            __fpSetBeacons?: (sprites: BeaconSprite[]) => void;
+          } | null;
+          c?.__fpSetBeacons?.(sprites);
+        },
+        armPlacement: (id) => {
+          const c = fabricRef.current as unknown as {
+            __fpArmPlacement?: (id: string | null) => void;
+          } | null;
+          c?.__fpArmPlacement?.(id);
+        },
       }),
       [],
     );
@@ -1557,6 +1720,10 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         <div ref={labelsLayerRef} className="pointer-events-none absolute inset-0 z-25" />
         <div ref={handlesLayerRef} className="pointer-events-none absolute inset-0 z-30" />
         <div ref={joinsLayerRef} className="pointer-events-none absolute inset-0 z-22" />
+        {/* z-30: above shading + labels, alongside endpoint handles. The
+            children themselves carry pointer-events-auto so beacons are
+            draggable while the layer stays inert under read-only modes. */}
+        <div ref={beaconsLayerRef} className="pointer-events-none absolute inset-0 z-30" />
         <div
           ref={snapIndicatorRef}
           className="pointer-events-none absolute z-25 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-emerald-400 bg-emerald-400/30"
