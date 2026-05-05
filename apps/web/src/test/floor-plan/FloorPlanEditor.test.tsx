@@ -40,6 +40,7 @@ vi.mock('@/features/floor-plan/FloorPlanCanvas', () => {
       undo: () => {},
       redo: () => {},
       fitToContent: () => {},
+      setSelectedWallLength: () => {},
     }));
     return (
       <div data-testid="floor-plan-canvas">

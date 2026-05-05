@@ -1,7 +1,18 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import * as fabric from 'fabric';
 import { cn } from '@/lib/utils';
-import type { FloorPlanCanvasHandle, FurnitureKind, ToolMode } from './types';
+import { addFurnitureAt } from './furniture';
+import {
+  canonicaliseLine,
+  collectEndpoints,
+  lineWorldEndpoints,
+  polygonWorldVertices,
+  rectToPolygonVertices,
+  setPolygonVertices,
+  snapToEndpoint,
+  type WorldPoint,
+} from './geometry';
+import type { FloorPlanCanvasHandle, FurnitureKind, SelectionDescriptor, ToolMode } from './types';
 
 interface FloorPlanCanvasProps {
   initialJson: unknown;
@@ -9,27 +20,20 @@ interface FloorPlanCanvasProps {
   onDirty?: () => void;
   onModeChange?: (next: ToolMode) => void;
   onIsEmptyChange?: (isEmpty: boolean) => void;
+  onSelectionChange?: (desc: SelectionDescriptor) => void;
   width?: number;
   height?: number;
   className?: string;
 }
 
-const FURNITURE_PRESETS: Record<FurnitureKind, { label: string; w: number; h: number }> = {
-  bed: { label: 'Bed', w: 120, h: 180 },
-  chair: { label: 'Chair', w: 50, h: 50 },
-  table: { label: 'Table', w: 110, h: 70 },
-  toilet: { label: 'Toilet', w: 60, h: 80 },
-  kitchen: { label: 'Kitchen', w: 160, h: 70 },
-};
-
 const STROKE = '#3e5c76';
-const FURNITURE_FILL = 'rgba(116, 140, 171, 0.18)';
 const ROOM_FILL = 'rgba(116, 140, 171, 0.06)';
 
 const GRID_SIZE = 20;
 const HISTORY_LIMIT = 50;
 const ZOOM_MIN = 0.2;
 const ZOOM_MAX = 5;
+const VERTEX_CLOSE_PX = 12;
 // Custom properties we want preserved across canvas.toObject / loadFromJSON.
 // Fabric's allow-list excludes anything starting with __, so the kind tags
 // would otherwise vanish on the first save/reload — breaking countObjects().
@@ -47,6 +51,37 @@ function snap(value: number): number {
   return Math.round(value / GRID_SIZE) * GRID_SIZE;
 }
 
+function describeSelection(canvas: fabric.Canvas): SelectionDescriptor {
+  const active = canvas.getActiveObject();
+  if (!active) return { kind: 'none' };
+  const activeSel = active as unknown as { _objects?: fabric.Object[] };
+  if (Array.isArray(activeSel._objects) && activeSel._objects.length > 1) {
+    return { kind: 'multi', count: activeSel._objects.length };
+  }
+  if (active instanceof fabric.Line) {
+    const ends = lineWorldEndpoints(active);
+    const len = Math.hypot(ends.end.x - ends.start.x, ends.end.y - ends.start.y);
+    return { kind: 'wall', pixelLength: len };
+  }
+  if (active instanceof fabric.Polygon) {
+    return kindOf(active) === 'room' ? { kind: 'polygon' } : { kind: 'polygon' };
+  }
+  if (active instanceof fabric.Rect && kindOf(active) === 'room') {
+    return { kind: 'room' };
+  }
+  return { kind: 'furniture' };
+}
+
+/** Lock walls and polygon-rooms from default Fabric transform handles —
+ *  editing happens through our DOM endpoint/vertex handles instead. */
+function applyEditableLocks(obj: fabric.Object): void {
+  obj.set({
+    hasBorders: false,
+    hasControls: false,
+    lockScalingFlip: true,
+  });
+}
+
 export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvasProps>(
   function FloorPlanCanvas(
     {
@@ -55,6 +90,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       onDirty,
       onModeChange,
       onIsEmptyChange,
+      onSelectionChange,
       width = 960,
       height = 600,
       className,
@@ -65,6 +101,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     const wrapperRef = useRef<HTMLDivElement>(null);
     const gridRef = useRef<HTMLDivElement>(null);
     const hudRef = useRef<HTMLDivElement>(null);
+    const handlesLayerRef = useRef<HTMLDivElement>(null);
     const fabricRef = useRef<fabric.Canvas | null>(null);
 
     const modeRef = useRef<ToolMode>('select');
@@ -74,11 +111,17 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       object: fabric.Line | fabric.Rect;
       origin: { x: number; y: number };
     } | null>(null);
+    const polygonDraftRef = useRef<{
+      vertices: WorldPoint[];
+      polygon: fabric.Polygon | null;
+      previewLine: fabric.Line | null;
+    } | null>(null);
 
     // Stable refs for callbacks/data so changes don't re-mount the canvas.
     const onDirtyRef = useRef(onDirty);
     const onModeChangeRef = useRef(onModeChange);
     const onIsEmptyChangeRef = useRef(onIsEmptyChange);
+    const onSelectionChangeRef = useRef(onSelectionChange);
     const scaleRef = useRef(scale);
 
     const interactiveRef = useRef(false);
@@ -100,6 +143,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       onIsEmptyChangeRef.current = onIsEmptyChange;
     }, [onIsEmptyChange]);
     useEffect(() => {
+      onSelectionChangeRef.current = onSelectionChange;
+    }, [onSelectionChange]);
+    useEffect(() => {
       scaleRef.current = scale;
     }, [scale]);
 
@@ -114,6 +160,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         preserveObjectStacking: true,
       });
       fabricRef.current = canvas;
+
+      // Pool of DOM handle elements, recycled across selection changes.
+      const handleEls: HTMLDivElement[] = [];
 
       // ─── Helpers ────────────────────────────────────────────────────────
       const modeCursor = () => (modeRef.current === 'select' ? 'default' : 'crosshair');
@@ -131,16 +180,19 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       };
 
       const emitEmpty = () => {
-        onIsEmptyChangeRef.current?.(canvas.getObjects().length === 0);
+        const total = canvas.getObjects().filter((o) => kindOf(o)).length;
+        onIsEmptyChangeRef.current?.(total === 0);
+      };
+
+      const emitSelection = () => {
+        onSelectionChangeRef.current?.(describeSelection(canvas));
       };
 
       const snapshot = () => {
         if (!interactiveRef.current || replayingRef.current) return;
         const state = canvas.toObject(EXTRA_PROPS);
         const h = historyRef.current;
-        if (h.idx < h.stack.length - 1) {
-          h.stack = h.stack.slice(0, h.idx + 1);
-        }
+        if (h.idx < h.stack.length - 1) h.stack = h.stack.slice(0, h.idx + 1);
         h.stack.push(state);
         if (h.stack.length > HISTORY_LIMIT) h.stack.shift();
         h.idx = h.stack.length - 1;
@@ -152,11 +204,13 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           .loadFromJSON(state as Record<string, unknown>)
           .then(() => {
             backfillKinds(canvas, state);
+            applyLocksToAll(canvas);
             canvas.renderAll();
             replayingRef.current = false;
             onDirtyRef.current?.();
             emitEmpty();
             updateGrid();
+            renderHandles();
           })
           .catch((err) => {
             console.error('floor-plan: replay failed', err);
@@ -165,7 +219,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       };
 
       const undo = () => {
-        if (drawingRef.current) return;
+        if (drawingRef.current || polygonDraftRef.current) return;
         const h = historyRef.current;
         if (h.idx <= 0) return;
         h.idx -= 1;
@@ -173,14 +227,13 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       };
 
       const redo = () => {
-        if (drawingRef.current) return;
+        if (drawingRef.current || polygonDraftRef.current) return;
         const h = historyRef.current;
         if (h.idx >= h.stack.length - 1) return;
         h.idx += 1;
         replay(h.stack[h.idx]);
       };
 
-      // Stash undo/redo on the canvas for the imperative handle.
       Object.assign(canvas as unknown as Record<string, unknown>, {
         __fpUndo: undo,
         __fpRedo: redo,
@@ -213,11 +266,8 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         const vt = canvas.viewportTransform;
         if (!grid || !vt) return;
         const z = vt[0];
-        const tx = vt[4];
-        const ty = vt[5];
-        const size = GRID_SIZE * z;
-        grid.style.backgroundSize = `${size}px ${size}px`;
-        grid.style.backgroundPosition = `${tx}px ${ty}px`;
+        grid.style.backgroundSize = `${GRID_SIZE * z}px ${GRID_SIZE * z}px`;
+        grid.style.backgroundPosition = `${vt[4]}px ${vt[5]}px`;
       };
 
       const screenFromMouse = (e: MouseEvent) => {
@@ -225,12 +275,126 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         return { x: e.clientX - rect.left, y: e.clientY - rect.top };
       };
 
+      const screenFromWorld = (p: WorldPoint) => {
+        const vt = canvas.viewportTransform;
+        if (!vt) return { x: 0, y: 0 };
+        return { x: p.x * vt[0] + vt[4], y: p.y * vt[3] + vt[5] };
+      };
+
+      const worldFromScreen = (sx: number, sy: number) => {
+        const vt = canvas.viewportTransform;
+        if (!vt) return { x: sx, y: sy };
+        return { x: (sx - vt[4]) / vt[0], y: (sy - vt[5]) / vt[3] };
+      };
+
+      const trySnapWorld = (
+        p: WorldPoint,
+        exclude?: fabric.Object,
+      ): { x: number; y: number; snapped: boolean } => {
+        const eps = collectEndpoints(canvas, exclude);
+        return snapToEndpoint(p, eps);
+      };
+
+      // ─── DOM handles ────────────────────────────────────────────────────
+      function ensureHandle(idx: number): HTMLDivElement {
+        let el = handleEls[idx];
+        if (el) return el;
+        el = document.createElement('div');
+        el.className =
+          'pointer-events-auto absolute z-30 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 cursor-grab rounded-full border-2 border-white bg-[#3e5c76] shadow';
+        el.style.touchAction = 'none';
+        el.dataset.handleIndex = String(idx);
+        handleEls[idx] = el;
+        handlesLayerRef.current?.appendChild(el);
+        attachHandlePointer(el);
+        return el;
+      }
+
+      function attachHandlePointer(el: HTMLDivElement) {
+        el.addEventListener('pointerdown', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const idx = Number(el.dataset.handleIndex ?? '0');
+          const active = canvas.getActiveObject();
+          if (!active) return;
+          el.setPointerCapture(e.pointerId);
+          el.style.cursor = 'grabbing';
+
+          const onMove = (ev: PointerEvent) => {
+            const rect = canvas.upperCanvasEl.getBoundingClientRect();
+            const sx = ev.clientX - rect.left;
+            const sy = ev.clientY - rect.top;
+            const w = worldFromScreen(sx, sy);
+            // Snap to grid + nearby endpoints (excluding the active object).
+            const gridSnapped = { x: snap(w.x), y: snap(w.y) };
+            const epSnap = trySnapWorld(gridSnapped, active);
+            const target = epSnap.snapped ? epSnap : gridSnapped;
+
+            if (active instanceof fabric.Line) {
+              if (idx === 0) active.set({ x1: target.x, y1: target.y });
+              else active.set({ x2: target.x, y2: target.y });
+              active.setCoords();
+            } else if (active instanceof fabric.Polygon) {
+              const verts = polygonWorldVertices(active);
+              verts[idx] = { x: target.x, y: target.y };
+              setPolygonVertices(active, verts);
+            }
+            canvas.requestRenderAll();
+            renderHandles();
+            emitDirty();
+          };
+
+          const onUp = () => {
+            el.releasePointerCapture(e.pointerId);
+            el.removeEventListener('pointermove', onMove);
+            el.removeEventListener('pointerup', onUp);
+            el.style.cursor = 'grab';
+            const a = canvas.getActiveObject();
+            if (a instanceof fabric.Line) canonicaliseLine(a);
+            canvas.requestRenderAll();
+            snapshot();
+            emitSelection();
+            renderHandles();
+          };
+
+          el.addEventListener('pointermove', onMove);
+          el.addEventListener('pointerup', onUp);
+        });
+      }
+
+      function renderHandles() {
+        const layer = handlesLayerRef.current;
+        if (!layer) return;
+        for (const el of handleEls) el.style.display = 'none';
+        if (modeRef.current !== 'select') return;
+        const active = canvas.getActiveObject();
+        if (!active) return;
+        // Skip multi-selection — fabric provides its own bounding box.
+        const asGroup = active as unknown as { _objects?: unknown[] };
+        if (Array.isArray(asGroup._objects) && asGroup._objects.length > 1) return;
+
+        let positions: WorldPoint[] = [];
+        if (active instanceof fabric.Line && kindOf(active) === 'wall') {
+          const e = lineWorldEndpoints(active);
+          positions = [e.start, e.end];
+        } else if (active instanceof fabric.Polygon && kindOf(active) === 'room') {
+          positions = polygonWorldVertices(active);
+        }
+
+        positions.forEach((world, i) => {
+          const el = ensureHandle(i);
+          const screen = screenFromWorld(world);
+          el.style.left = `${screen.x}px`;
+          el.style.top = `${screen.y}px`;
+          el.style.display = 'block';
+        });
+      }
+
       // ─── Pointer handlers ───────────────────────────────────────────────
       const handlePointerDown = (opt: fabric.TPointerEventInfo<fabric.TPointerEvent>) => {
         if (!interactiveRef.current) return;
         const e = opt.e as MouseEvent;
 
-        // Pan via held space — overrides any draw mode.
         if (spaceHeldRef.current) {
           panningRef.current = true;
           panOriginRef.current = { x: e.clientX, y: e.clientY };
@@ -242,7 +406,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         if (mode === 'select') return;
 
         const raw = canvas.getScenePoint(opt.e);
-        const sp = { x: snap(raw.x), y: snap(raw.y) };
+        const gridSnapped = { x: snap(raw.x), y: snap(raw.y) };
+        const epSnap = trySnapWorld(gridSnapped);
+        const sp = epSnap.snapped ? { x: epSnap.x, y: epSnap.y } : gridSnapped;
 
         if (mode === 'wall') {
           const line = new fabric.Line([sp.x, sp.y, sp.x, sp.y], {
@@ -270,12 +436,117 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           tagged(rect, 'room');
           canvas.add(rect);
           drawingRef.current = { kind: 'room', object: rect, origin: { x: sp.x, y: sp.y } };
+        } else if (mode === 'polygon') {
+          handlePolygonClick(sp);
         } else if (mode === 'furniture') {
-          addFurnitureAt(canvas, raw, furnitureKindRef.current);
+          addFurnitureAt(canvas, raw, furnitureKindRef.current, scaleRef.current, snap);
           emitDirty();
           snapshot();
           autoRevertToSelect();
         }
+      };
+
+      const handlePolygonClick = (point: WorldPoint) => {
+        const draft = polygonDraftRef.current;
+        if (!draft) {
+          // Start a new polygon.
+          const previewLine = new fabric.Line([point.x, point.y, point.x, point.y], {
+            stroke: STROKE,
+            strokeWidth: 1.5,
+            strokeDashArray: [6, 4],
+            selectable: false,
+            evented: false,
+          });
+          canvas.add(previewLine);
+          polygonDraftRef.current = {
+            vertices: [{ x: point.x, y: point.y }],
+            polygon: null,
+            previewLine,
+          };
+          return;
+        }
+        // If user clicks back on the first vertex, close the polygon.
+        const first = draft.vertices[0];
+        if (
+          first &&
+          draft.vertices.length >= 3 &&
+          Math.hypot(first.x - point.x, first.y - point.y) < VERTEX_CLOSE_PX
+        ) {
+          finalisePolygon();
+          return;
+        }
+        // Otherwise, add the new vertex.
+        draft.vertices.push({ x: point.x, y: point.y });
+        if (draft.polygon) {
+          setPolygonVertices(draft.polygon, draft.vertices);
+        } else if (draft.vertices.length >= 2) {
+          // Promote to a fabric.Polygon once we have 2+ vertices.
+          const poly = new fabric.Polygon(
+            draft.vertices.map((v) => new fabric.Point(v.x, v.y)),
+            {
+              fill: ROOM_FILL,
+              stroke: STROKE,
+              strokeWidth: 2,
+              selectable: false,
+              evented: false,
+            },
+          );
+          tagged(poly, 'room');
+          canvas.add(poly);
+          draft.polygon = poly;
+        }
+        if (draft.previewLine) {
+          draft.previewLine.set({
+            x1: point.x,
+            y1: point.y,
+            x2: point.x,
+            y2: point.y,
+          });
+        }
+        canvas.requestRenderAll();
+      };
+
+      const finalisePolygon = () => {
+        const draft = polygonDraftRef.current;
+        if (!draft) return;
+        if (draft.previewLine) canvas.remove(draft.previewLine);
+        if (!draft.polygon || draft.vertices.length < 3) {
+          if (draft.polygon) canvas.remove(draft.polygon);
+          polygonDraftRef.current = null;
+          autoRevertToSelect();
+          canvas.requestRenderAll();
+          return;
+        }
+        // Re-create with locks applied + canonical bounds.
+        canvas.remove(draft.polygon);
+        const finalPoly = new fabric.Polygon(
+          draft.vertices.map((v) => new fabric.Point(v.x, v.y)),
+          {
+            fill: ROOM_FILL,
+            stroke: STROKE,
+            strokeWidth: 2,
+          },
+        );
+        tagged(finalPoly, 'room');
+        applyEditableLocks(finalPoly);
+        canvas.add(finalPoly);
+        canvas.setActiveObject(finalPoly);
+        polygonDraftRef.current = null;
+        canvas.requestRenderAll();
+        emitDirty();
+        snapshot();
+        emitEmpty();
+        autoRevertToSelect();
+        renderHandles();
+      };
+
+      const cancelPolygonDraft = () => {
+        const draft = polygonDraftRef.current;
+        if (!draft) return;
+        if (draft.previewLine) canvas.remove(draft.previewLine);
+        if (draft.polygon) canvas.remove(draft.polygon);
+        polygonDraftRef.current = null;
+        canvas.requestRenderAll();
       };
 
       const handlePointerMove = (opt: fabric.TPointerEventInfo<fabric.TPointerEvent>) => {
@@ -292,34 +563,56 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
             vt[5] += dy;
             canvas.requestRenderAll();
             updateGrid();
+            renderHandles();
           }
           return;
         }
 
-        const draft = drawingRef.current;
-        if (!draft) return;
+        // Polygon preview line tracking.
+        const draft = polygonDraftRef.current;
+        if (draft && draft.previewLine && modeRef.current === 'polygon') {
+          const raw = canvas.getScenePoint(opt.e);
+          const gridSnapped = { x: snap(raw.x), y: snap(raw.y) };
+          const epSnap = trySnapWorld(gridSnapped);
+          const tip = epSnap.snapped ? { x: epSnap.x, y: epSnap.y } : gridSnapped;
+          const last = draft.vertices[draft.vertices.length - 1];
+          if (last) {
+            draft.previewLine.set({ x1: last.x, y1: last.y, x2: tip.x, y2: tip.y });
+            const screen = screenFromMouse(e);
+            const len = Math.hypot(tip.x - last.x, tip.y - last.y);
+            setHud(screen.x + 14, screen.y + 14, formatLength(len));
+            canvas.requestRenderAll();
+          }
+          return;
+        }
+
+        const drawing = drawingRef.current;
+        if (!drawing) return;
         const raw = canvas.getScenePoint(opt.e);
-        const sp = { x: snap(raw.x), y: snap(raw.y) };
+        const gridSnapped = { x: snap(raw.x), y: snap(raw.y) };
+        const epSnap = trySnapWorld(gridSnapped, drawing.object);
+        const sp = epSnap.snapped ? { x: epSnap.x, y: epSnap.y } : gridSnapped;
         const screen = screenFromMouse(e);
 
-        if (draft.kind === 'wall') {
+        if (drawing.kind === 'wall') {
           let { x, y } = sp;
-          if (e.shiftKey) {
-            const dx = Math.abs(x - draft.origin.x);
-            const dy = Math.abs(y - draft.origin.y);
-            if (dx >= dy) y = draft.origin.y;
-            else x = draft.origin.x;
+          // Shift = ortho lock (only when not endpoint-snapping).
+          if (e.shiftKey && !epSnap.snapped) {
+            const dx = Math.abs(x - drawing.origin.x);
+            const dy = Math.abs(y - drawing.origin.y);
+            if (dx >= dy) y = drawing.origin.y;
+            else x = drawing.origin.x;
           }
-          (draft.object as fabric.Line).set({ x2: x, y2: y });
-          const len = Math.hypot(x - draft.origin.x, y - draft.origin.y);
+          (drawing.object as fabric.Line).set({ x2: x, y2: y });
+          const len = Math.hypot(x - drawing.origin.x, y - drawing.origin.y);
           setHud(screen.x + 14, screen.y + 14, formatLength(len));
         } else {
-          const rect = draft.object as fabric.Rect;
+          const rect = drawing.object as fabric.Rect;
           rect.set({
-            left: Math.min(sp.x, draft.origin.x),
-            top: Math.min(sp.y, draft.origin.y),
-            width: Math.abs(sp.x - draft.origin.x),
-            height: Math.abs(sp.y - draft.origin.y),
+            left: Math.min(sp.x, drawing.origin.x),
+            top: Math.min(sp.y, drawing.origin.y),
+            width: Math.abs(sp.x - drawing.origin.x),
+            height: Math.abs(sp.y - drawing.origin.y),
           });
           setHud(
             screen.x + 14,
@@ -337,11 +630,11 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           canvas.setCursor(spaceHeldRef.current ? 'grab' : modeCursor());
           return;
         }
-        const draft = drawingRef.current;
-        if (!draft) return;
+        const drawing = drawingRef.current;
+        if (!drawing) return;
         // Reject zero-size strokes (clicks without drag).
-        if (draft.kind === 'wall') {
-          const line = draft.object as fabric.Line;
+        if (drawing.kind === 'wall') {
+          const line = drawing.object as fabric.Line;
           const len = Math.hypot((line.x2 ?? 0) - (line.x1 ?? 0), (line.y2 ?? 0) - (line.y1 ?? 0));
           if (len < 4) {
             canvas.remove(line);
@@ -350,8 +643,11 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
             autoRevertToSelect();
             return;
           }
+          line.set({ selectable: true, evented: true });
+          applyEditableLocks(line);
+          canvas.setActiveObject(line);
         } else {
-          const rect = draft.object as fabric.Rect;
+          const rect = drawing.object as fabric.Rect;
           if ((rect.width ?? 0) < 4 || (rect.height ?? 0) < 4) {
             canvas.remove(rect);
             drawingRef.current = null;
@@ -359,14 +655,26 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
             autoRevertToSelect();
             return;
           }
+          // Promote rectangle room to an editable polygon so the user can
+          // shape it after creation.
+          const verts = rectToPolygonVertices(rect);
+          canvas.remove(rect);
+          const poly = new fabric.Polygon(
+            verts.map((v) => new fabric.Point(v.x, v.y)),
+            { fill: ROOM_FILL, stroke: STROKE, strokeWidth: 2 },
+          );
+          tagged(poly, 'room');
+          applyEditableLocks(poly);
+          canvas.add(poly);
+          canvas.setActiveObject(poly);
         }
-        draft.object.set({ selectable: true, evented: true });
-        canvas.setActiveObject(draft.object);
         emitDirty();
         snapshot();
         drawingRef.current = null;
         setHud(null);
         autoRevertToSelect();
+        renderHandles();
+        emitSelection();
       };
 
       const handleWheel = (opt: fabric.TPointerEventInfo<WheelEvent>) => {
@@ -376,31 +684,65 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom));
         canvas.zoomToPoint(new fabric.Point(e.offsetX, e.offsetY), zoom);
         updateGrid();
+        renderHandles();
         e.preventDefault();
         e.stopPropagation();
       };
 
-      const handleObjectModified = () => {
+      const handleObjectModified = (opt: { target?: fabric.Object }) => {
         if (!interactiveRef.current || replayingRef.current) return;
+        const t = opt.target;
+        if (t instanceof fabric.Line && kindOf(t) === 'wall') {
+          canonicaliseLine(t);
+        } else if (t instanceof fabric.Polygon && kindOf(t) === 'room') {
+          // Push any translate/scale back into the points so subsequent
+          // edits (vertex drag, save) see canonical world coords.
+          setPolygonVertices(t, polygonWorldVertices(t));
+        }
         emitDirty();
         snapshot();
+        emitSelection();
+        renderHandles();
       };
 
       canvas.on('mouse:down', handlePointerDown);
       canvas.on('mouse:move', handlePointerMove);
       canvas.on('mouse:up', handlePointerUp);
+      canvas.on('mouse:dblclick', () => {
+        if (modeRef.current === 'polygon') finalisePolygon();
+      });
       canvas.on('mouse:wheel', handleWheel);
       canvas.on('object:modified', handleObjectModified);
       canvas.on('object:added', emitEmpty);
-      canvas.on('object:removed', emitEmpty);
-      canvas.on('after:render', updateGrid);
+      canvas.on('object:removed', () => {
+        emitEmpty();
+        renderHandles();
+      });
+      canvas.on('after:render', () => {
+        updateGrid();
+        renderHandles();
+      });
+      canvas.on('selection:created', () => {
+        emitSelection();
+        renderHandles();
+      });
+      canvas.on('selection:updated', () => {
+        emitSelection();
+        renderHandles();
+      });
+      canvas.on('selection:cleared', () => {
+        emitSelection();
+        renderHandles();
+      });
 
       // ─── Initial load ───────────────────────────────────────────────────
       const finishLoad = () => {
         backfillKinds(canvas, initialJson);
+        applyLocksToAll(canvas);
         canvas.renderAll();
         updateGrid();
         emitEmpty();
+        emitSelection();
         interactiveRef.current = true;
         const initialState = canvas.toObject(EXTRA_PROPS);
         historyRef.current = { stack: [initialState], idx: 0 };
@@ -446,14 +788,48 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           redo();
           return;
         }
+        if (mod && (e.key === 'a' || e.key === 'A')) {
+          e.preventDefault();
+          const objs = canvas.getObjects().filter((o) => kindOf(o));
+          if (objs.length === 0) return;
+          canvas.discardActiveObject();
+          const sel = new fabric.ActiveSelection(objs, { canvas });
+          canvas.setActiveObject(sel);
+          canvas.requestRenderAll();
+          emitSelection();
+          renderHandles();
+          return;
+        }
+        if (e.key === 'Enter') {
+          if (modeRef.current === 'polygon' && polygonDraftRef.current) {
+            e.preventDefault();
+            finalisePolygon();
+          }
+          return;
+        }
+        if (e.key === 'Escape') {
+          if (polygonDraftRef.current) {
+            cancelPolygonDraft();
+            autoRevertToSelect();
+          }
+          return;
+        }
         if (e.key === 'Backspace' || e.key === 'Delete') {
-          const obj = canvas.getActiveObject();
-          if (!obj) return;
-          canvas.remove(obj);
+          const active = canvas.getActiveObject();
+          if (!active) return;
+          // Multi-delete via ActiveSelection.
+          const asGroup = active as unknown as { _objects?: fabric.Object[] };
+          if (Array.isArray(asGroup._objects) && asGroup._objects.length > 0) {
+            for (const o of asGroup._objects) canvas.remove(o);
+          } else {
+            canvas.remove(active);
+          }
           canvas.discardActiveObject();
           canvas.requestRenderAll();
           emitDirty();
           snapshot();
+          emitSelection();
+          renderHandles();
         }
       };
       const onKeyUp = (e: KeyboardEvent) => {
@@ -471,12 +847,13 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       return () => {
         window.removeEventListener('keydown', onKeyDown);
         window.removeEventListener('keyup', onKeyUp);
+        for (const el of handleEls) el.remove();
         canvas.dispose();
         fabricRef.current = null;
       };
       // initialJson + scale intentionally excluded — initialJson is loaded
-      // once on mount; scale is read via scaleRef so the HUD stays accurate
-      // without re-mounting the canvas.
+      // once on mount; scale is read via scaleRef so HUD + furniture sizing
+      // stay accurate without re-mounting.
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [width, height]);
 
@@ -490,6 +867,16 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           if (canvas) {
             canvas.selection = mode === 'select';
             canvas.defaultCursor = mode === 'select' ? 'default' : 'crosshair';
+            // If we leave polygon mode mid-draft, drop the draft.
+            if (mode !== 'polygon') {
+              const draft = polygonDraftRef.current;
+              if (draft) {
+                if (draft.previewLine) canvas.remove(draft.previewLine);
+                if (draft.polygon) canvas.remove(draft.polygon);
+                polygonDraftRef.current = null;
+                canvas.requestRenderAll();
+              }
+            }
           }
         },
         setFurnitureKind: (kind) => {
@@ -501,23 +888,26 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           if (!canvas || !data || typeof data !== 'object') return;
           await canvas.loadFromJSON(data as Record<string, unknown>);
           backfillKinds(canvas, data);
+          applyLocksToAll(canvas);
           canvas.renderAll();
         },
         getSelectedLinePixelLength: () => {
           const canvas = fabricRef.current;
           const obj = canvas?.getActiveObject();
           if (!obj || !(obj instanceof fabric.Line)) return null;
-          const x1 = obj.x1 ?? 0;
-          const y1 = obj.y1 ?? 0;
-          const x2 = obj.x2 ?? 0;
-          const y2 = obj.y2 ?? 0;
-          return Math.hypot(x2 - x1, y2 - y1);
+          const ends = lineWorldEndpoints(obj);
+          return Math.hypot(ends.end.x - ends.start.x, ends.end.y - ends.start.y);
         },
         deleteSelected: () => {
           const canvas = fabricRef.current;
           const obj = canvas?.getActiveObject();
           if (!canvas || !obj) return;
-          canvas.remove(obj);
+          const asGroup = obj as unknown as { _objects?: fabric.Object[] };
+          if (Array.isArray(asGroup._objects) && asGroup._objects.length > 0) {
+            for (const o of asGroup._objects) canvas.remove(o);
+          } else {
+            canvas.remove(obj);
+          }
           canvas.discardActiveObject();
           canvas.requestRenderAll();
         },
@@ -544,7 +934,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         fitToContent: () => {
           const canvas = fabricRef.current;
           if (!canvas) return;
-          const objs = canvas.getObjects();
+          const objs = canvas.getObjects().filter((o) => kindOf(o));
           if (objs.length === 0) {
             canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
             canvas.requestRenderAll();
@@ -572,6 +962,47 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           canvas.setViewportTransform([zoom, 0, 0, zoom, tx, ty]);
           canvas.requestRenderAll();
         },
+        setSelectedWallLength: (metres, scaleMetersPerPixel) => {
+          const canvas = fabricRef.current;
+          if (!canvas || !Number.isFinite(metres) || metres <= 0) return;
+          if (!Number.isFinite(scaleMetersPerPixel) || scaleMetersPerPixel <= 0) return;
+          const active = canvas.getActiveObject();
+          if (!(active instanceof fabric.Line)) return;
+          const ends = lineWorldEndpoints(active);
+          const dx = ends.end.x - ends.start.x;
+          const dy = ends.end.y - ends.start.y;
+          const currentPx = Math.hypot(dx, dy);
+          if (currentPx === 0) return;
+          const targetPx = metres / scaleMetersPerPixel;
+          const ratio = targetPx / currentPx;
+          const newEnd = {
+            x: ends.start.x + dx * ratio,
+            y: ends.start.y + dy * ratio,
+          };
+          active.set({
+            x1: ends.start.x,
+            y1: ends.start.y,
+            x2: newEnd.x,
+            y2: newEnd.y,
+            left: Math.min(ends.start.x, newEnd.x),
+            top: Math.min(ends.start.y, newEnd.y),
+            scaleX: 1,
+            scaleY: 1,
+            angle: 0,
+          });
+          (active as unknown as { width: number; height: number }).width = Math.abs(
+            newEnd.x - ends.start.x,
+          );
+          (active as unknown as { width: number; height: number }).height = Math.abs(
+            newEnd.y - ends.start.y,
+          );
+          (active as unknown as { pathOffset: fabric.Point }).pathOffset = new fabric.Point(
+            (ends.start.x + newEnd.x) / 2,
+            (ends.start.y + newEnd.y) / 2,
+          );
+          active.setCoords();
+          canvas.requestRenderAll();
+        },
       }),
       [],
     );
@@ -596,9 +1027,10 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           }}
         />
         <canvas ref={canvasElRef} width={width} height={height} className="relative z-10" />
+        <div ref={handlesLayerRef} className="pointer-events-none absolute inset-0 z-20" />
         <div
           ref={hudRef}
-          className="pointer-events-none absolute z-20 rounded-md bg-popover px-2 py-0.5 font-mono text-xs text-popover-foreground shadow"
+          className="pointer-events-none absolute z-30 rounded-md bg-popover px-2 py-0.5 font-mono text-xs text-popover-foreground shadow"
           style={{ display: 'none' }}
         />
       </div>
@@ -620,40 +1052,9 @@ function backfillKinds(canvas: fabric.Canvas, json: unknown): void {
   }
 }
 
-function addFurnitureAt(
-  canvas: fabric.Canvas,
-  point: { x: number; y: number },
-  kind: FurnitureKind,
-): void {
-  const preset = FURNITURE_PRESETS[kind];
-  const rect = new fabric.Rect({
-    width: preset.w,
-    height: preset.h,
-    fill: FURNITURE_FILL,
-    stroke: STROKE,
-    strokeWidth: 1.5,
-    rx: 4,
-    ry: 4,
-    originX: 'center',
-    originY: 'center',
-  });
-  const text = new fabric.IText(preset.label, {
-    fontFamily: 'Inter, system-ui, sans-serif',
-    fontSize: 14,
-    fill: STROKE,
-    originX: 'center',
-    originY: 'center',
-    selectable: false,
-    evented: false,
-  });
-  const group = new fabric.Group([rect, text], {
-    left: snap(point.x),
-    top: snap(point.y),
-    originX: 'center',
-    originY: 'center',
-  });
-  tagged(group, 'furniture');
-  canvas.add(group);
-  canvas.setActiveObject(group);
-  canvas.requestRenderAll();
+function applyLocksToAll(canvas: fabric.Canvas): void {
+  for (const obj of canvas.getObjects()) {
+    const k = kindOf(obj);
+    if (k === 'wall' || k === 'room') applyEditableLocks(obj);
+  }
 }

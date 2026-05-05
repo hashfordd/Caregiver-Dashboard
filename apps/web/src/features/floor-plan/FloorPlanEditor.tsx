@@ -8,9 +8,10 @@ import { CalibrationStaleWarning } from './CalibrationStaleWarning';
 import { FloorPlanCanvas } from './FloorPlanCanvas';
 import { ScaleDialog } from './ScaleDialog';
 import { Toolbar } from './Toolbar';
+import { WallLengthDialog } from './WallLengthDialog';
 import { formatScale } from './canvasState';
 import { useCalibrationCount, useFloorPlan, useUpsertFloorPlan } from './floorPlanQueries';
-import type { FloorPlanCanvasHandle, FurnitureKind, ToolMode } from './types';
+import type { FloorPlanCanvasHandle, FurnitureKind, SelectionDescriptor, ToolMode } from './types';
 
 interface FloorPlanEditorProps {
   patientId: string;
@@ -26,16 +27,42 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
   const [furnitureKind, setFurnitureKind] = useState<FurnitureKind>('bed');
   const [dirty, setDirty] = useState(false);
   const [scaleOpen, setScaleOpen] = useState(false);
+  const [wallLengthOpen, setWallLengthOpen] = useState(false);
   const [warningOpen, setWarningOpen] = useState(false);
   const [pixelLength, setPixelLength] = useState<number | null>(null);
   const [scale, setScale] = useState<number | null>(null);
   const [savedTone, setSavedTone] = useState<string | null>(null);
   const [isEmpty, setIsEmpty] = useState(true);
+  const [selection, setSelection] = useState<SelectionDescriptor>({ kind: 'none' });
+  const [remoteVersionPending, setRemoteVersionPending] = useState(false);
+
+  const lastLoadedVersionRef = useRef<string | null>(null);
 
   // Hydrate scale from the loaded plan once.
   useEffect(() => {
     setScale(planQuery.data?.scale_meters_per_pixel ?? null);
   }, [planQuery.data?.id, planQuery.data?.scale_meters_per_pixel]);
+
+  // Reload the canvas when the server version changes — unless the caregiver
+  // has unsaved changes, in which case we surface a "remote update" pill so
+  // they can choose to discard or keep editing.
+  useEffect(() => {
+    const created = planQuery.data?.created_at;
+    if (!created) return;
+    if (lastLoadedVersionRef.current === created) return;
+    if (lastLoadedVersionRef.current === null) {
+      // First load — the canvas mounts with initialJson, no need to reload.
+      lastLoadedVersionRef.current = created;
+      return;
+    }
+    if (dirty) {
+      setRemoteVersionPending(true);
+      return;
+    }
+    void canvasRef.current?.deserialize(planQuery.data?.canvas_json);
+    lastLoadedVersionRef.current = created;
+    setRemoteVersionPending(false);
+  }, [planQuery.data?.created_at, planQuery.data?.canvas_json, dirty]);
 
   const handleModeChange = useCallback(
     (next: ToolMode) => {
@@ -55,6 +82,10 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
     setSavedTone(null);
   }, []);
 
+  const handleSelectionChange = useCallback((desc: SelectionDescriptor) => {
+    setSelection(desc);
+  }, []);
+
   const performSave = useCallback(async () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -68,6 +99,9 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
     setDirty(false);
     setWarningOpen(false);
     setSavedTone(`Saved · ${new Date(result.created_at).toLocaleTimeString()}`);
+    // Track the just-saved version so the refetch effect doesn't reload.
+    lastLoadedVersionRef.current = result.created_at;
+    setRemoteVersionPending(false);
   }, [patientId, planQuery.data?.id, scale, upsert]);
 
   const handleSave = useCallback(() => {
@@ -85,10 +119,25 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
     setScaleOpen(true);
   }, []);
 
+  const handleSetWallLengthClick = useCallback(() => {
+    const len = canvasRef.current?.getSelectedLinePixelLength() ?? null;
+    setPixelLength(len);
+    setWallLengthOpen(true);
+  }, []);
+
   const handleScaleConfirmed = useCallback((next: number) => {
     setScale(next);
     setDirty(true);
   }, []);
+
+  const handleWallLengthConfirmed = useCallback(
+    (metres: number) => {
+      if (scale == null) return;
+      canvasRef.current?.setSelectedWallLength(metres, scale);
+      setDirty(true);
+    },
+    [scale],
+  );
 
   const handleDelete = useCallback(() => {
     canvasRef.current?.deleteSelected();
@@ -105,6 +154,15 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
   const handleFitToContent = useCallback(() => {
     canvasRef.current?.fitToContent();
   }, []);
+
+  const handleAcceptRemote = useCallback(() => {
+    void canvasRef.current?.deserialize(planQuery.data?.canvas_json);
+    setDirty(false);
+    setRemoteVersionPending(false);
+    if (planQuery.data?.created_at) {
+      lastLoadedVersionRef.current = planQuery.data.created_at;
+    }
+  }, [planQuery.data?.canvas_json, planQuery.data?.created_at]);
 
   if (planQuery.isLoading) {
     return (
@@ -138,12 +196,14 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
         mode={mode}
         furnitureKind={furnitureKind}
         scaleLabel={formatScale(scale)}
+        scaleSet={scale != null && scale > 0}
+        selection={selection}
         dirty={dirty}
         saving={upsert.isPending}
-        canSetScale={mode === 'select'}
         onModeChange={handleModeChange}
         onFurnitureKindChange={handleFurnitureKindChange}
         onSetScale={handleSetScaleClick}
+        onSetWallLength={handleSetWallLengthClick}
         onSave={handleSave}
         onDelete={handleDelete}
         onUndo={handleUndo}
@@ -153,6 +213,15 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
 
       {savedTone && (
         <p className="rounded-md bg-accent/10 px-3 py-2 text-xs text-foreground/80">{savedTone}</p>
+      )}
+
+      {remoteVersionPending && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+          <span>Another caregiver saved a newer version of this floor plan.</span>
+          <Button size="sm" variant="outline" onClick={handleAcceptRemote}>
+            Reload (lose unsaved)
+          </Button>
+        </div>
       )}
 
       {upsert.isError && (
@@ -169,6 +238,7 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
           onDirty={handleDirty}
           onModeChange={setMode}
           onIsEmptyChange={setIsEmpty}
+          onSelectionChange={handleSelectionChange}
         />
         {isEmpty && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
@@ -176,7 +246,7 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
               <EmptyState
                 icon={<LayoutGrid className="h-10 w-10" />}
                 title="A blank canvas"
-                description="Start with the outer walls of the patient's space, then add internal rooms and key furniture. Hold Shift while drawing a wall to lock it horizontal or vertical; hold Space to pan; scroll to zoom."
+                description="Draw outer walls (Wall tool), then click Polygon to outline rooms with any shape — vertices snap to nearby wall ends. Hold Shift while drawing a wall to lock horizontal/vertical; hold Space to pan; scroll to zoom."
               />
             </div>
           </div>
@@ -184,8 +254,9 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Shortcuts: Cmd/Ctrl+Z undo · Cmd/Ctrl+Shift+Z redo · Backspace delete · Shift while drawing
-        for ortho · Space + drag to pan · scroll to zoom
+        Shortcuts: Cmd/Ctrl+Z undo · Cmd/Ctrl+Shift+Z redo · Cmd/Ctrl+A select all · Backspace
+        delete · Shift while drawing for ortho · Space + drag to pan · scroll to zoom · Enter to
+        finish a polygon · Esc to cancel
       </p>
 
       <ScaleDialog
@@ -193,6 +264,14 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
         onOpenChange={setScaleOpen}
         pixelLength={pixelLength}
         onConfirm={handleScaleConfirmed}
+      />
+
+      <WallLengthDialog
+        open={wallLengthOpen}
+        onOpenChange={setWallLengthOpen}
+        pixelLength={pixelLength}
+        scaleMetersPerPixel={scale}
+        onConfirm={handleWallLengthConfirmed}
       />
 
       <CalibrationStaleWarning
