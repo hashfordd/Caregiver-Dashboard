@@ -6,6 +6,7 @@ import {
   JOIN_DISCONNECT_NUDGE,
   canonicaliseLine,
   collectEndpoints,
+  findClosedRooms,
   findConnectedPartners,
   findConnectedWallGroup,
   findJoins,
@@ -121,6 +122,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     const handlesLayerRef = useRef<HTMLDivElement>(null);
     const labelsLayerRef = useRef<HTMLDivElement>(null);
     const joinsLayerRef = useRef<HTMLDivElement>(null);
+    const shadingLayerRef = useRef<SVGSVGElement>(null);
     const snapIndicatorRef = useRef<HTMLDivElement>(null);
     const fabricRef = useRef<fabric.Canvas | null>(null);
 
@@ -660,6 +662,37 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         renderJoins();
       };
 
+      // ─── Closed-room shading ────────────────────────────────────────────
+      // Fill any sealed wall loop with a subtle tint so the caregiver gets
+      // visual confirmation the walls really do enclose an area.
+      function renderShading() {
+        const svg = shadingLayerRef.current;
+        if (!svg) return;
+        const rooms = findClosedRooms(canvas);
+        if (rooms.length === 0) {
+          if (svg.firstChild) svg.replaceChildren();
+          return;
+        }
+        const SVG_NS = 'http://www.w3.org/2000/svg';
+        // Rebuild children rather than diff — there are typically only a
+        // handful of rooms and the operation runs at canvas-render rate,
+        // not per-frame keystroke.
+        const next = rooms.map((verts) => {
+          const points = verts
+            .map((p) => {
+              const s = screenFromWorld(p);
+              return `${s.x.toFixed(1)},${s.y.toFixed(1)}`;
+            })
+            .join(' ');
+          const el = document.createElementNS(SVG_NS, 'polygon');
+          el.setAttribute('points', points);
+          el.setAttribute('fill', 'rgba(116, 140, 171, 0.18)');
+          el.setAttribute('stroke', 'none');
+          return el;
+        });
+        svg.replaceChildren(...next);
+      }
+
       // ─── Pointer handlers ───────────────────────────────────────────────
       const handlePointerDown = (opt: fabric.TPointerEventInfo<fabric.TPointerEvent>) => {
         if (!interactiveRef.current) return;
@@ -674,29 +707,11 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         }
 
         const mode = modeRef.current;
-        if (mode === 'select') {
-          // Capture the full connected wall group up front so the rigid
-          // translate can apply the same delta to every member each
-          // frame. Doing this on first object:moving instead would read
-          // mid-drag positions and the followers would drift.
-          const target = canvas.findTarget(opt.e);
-          if (target instanceof fabric.Line && kindOf(target) === 'wall') {
-            const group = findConnectedWallGroup(canvas, target);
-            translateRef.current = {
-              wall: target,
-              startCenter: { x: target.left ?? 0, y: target.top ?? 0 },
-              followers: group
-                .filter((w) => w !== target)
-                .map((w) => ({
-                  wall: w,
-                  startCenter: { x: w.left ?? 0, y: w.top ?? 0 },
-                })),
-            };
-          } else {
-            translateRef.current = null;
-          }
-          return;
-        }
+        // Connected-wall capture happens lazily on the first
+        // object:moving event using fabric's transform.original. Doing
+        // it here was racing with Fabric's internal selection /
+        // hit-test sequence and missing the click in some cases.
+        if (mode === 'select') return;
 
         const raw = canvas.getScenePoint(opt.e);
         const gridSnapped = { x: snap(raw.x), y: snap(raw.y) };
@@ -1008,28 +1023,55 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       };
 
       // ─── Connected wall translate (whole-wall fabric drag) ──────────────
-      canvas.on('object:moving', (opt: { target?: fabric.Object }) => {
-        const t = opt.target;
-        const state = translateRef.current;
-        if (!t || !state || state.wall !== t) return;
-        const dx = (t.left ?? 0) - state.startCenter.x;
-        const dy = (t.top ?? 0) - state.startCenter.y;
-        // Translate every connected wall by the same delta so the room
-        // moves as a rigid unit. We update left/top — fabric.Line doesn't
-        // auto-recompute x1/y1/x2/y2 for left/top changes, but
-        // calcTransformMatrix uses left/top so the visual is correct.
-        // canonicaliseLine on object:modified later reconciles the
-        // stored coords back to world space.
-        for (const f of state.followers) {
-          f.wall.set({
-            left: f.startCenter.x + dx,
-            top: f.startCenter.y + dy,
-          });
-          f.wall.setCoords();
-        }
-        renderHandles();
-        renderLabelsAndJoins();
-      });
+      canvas.on(
+        'object:moving',
+        (opt: {
+          target?: fabric.Object;
+          transform?: { original?: { left?: number; top?: number } };
+        }) => {
+          const t = opt.target;
+          if (!(t instanceof fabric.Line) || kindOf(t) !== 'wall') return;
+          if (!editingRef.current) return;
+
+          // Lazy-capture state on the first moving event of this drag.
+          // Fabric records the original left/top (centre) on
+          // transform.original, so we get the TRUE drag-start position
+          // even though fabric has already nudged t.left by the time the
+          // first object:moving fires. Followers haven't been touched
+          // yet, so their current left/top is still their original.
+          if (!translateRef.current || translateRef.current.wall !== t) {
+            const origLeft = opt.transform?.original?.left ?? t.left ?? 0;
+            const origTop = opt.transform?.original?.top ?? t.top ?? 0;
+            const group = findConnectedWallGroup(canvas, t);
+            translateRef.current = {
+              wall: t,
+              startCenter: { x: origLeft, y: origTop },
+              followers: group
+                .filter((w) => w !== t)
+                .map((w) => ({
+                  wall: w,
+                  startCenter: { x: w.left ?? 0, y: w.top ?? 0 },
+                })),
+            };
+          }
+
+          const state = translateRef.current;
+          const dx = (t.left ?? 0) - state.startCenter.x;
+          const dy = (t.top ?? 0) - state.startCenter.y;
+          // Translate every connected wall by the same delta so the
+          // room moves as a rigid unit.
+          for (const f of state.followers) {
+            f.wall.set({
+              left: f.startCenter.x + dx,
+              top: f.startCenter.y + dy,
+            });
+            f.wall.setCoords();
+          }
+          renderHandles();
+          renderLabelsAndJoins();
+          renderShading();
+        },
+      );
 
       const handleObjectModified = (opt: { target?: fabric.Object }) => {
         if (!interactiveRef.current || replayingRef.current) return;
@@ -1063,17 +1105,20 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       canvas.on('object:added', () => {
         emitEmpty();
         renderLabelsAndJoins();
+        renderShading();
       });
       canvas.on('object:removed', (opt: { target?: fabric.Object }) => {
         emitEmpty();
         if (opt.target) disposeLabel(opt.target);
         renderHandles();
         renderLabelsAndJoins();
+        renderShading();
       });
       canvas.on('after:render', () => {
         updateGrid();
         renderHandles();
         renderLabelsAndJoins();
+        renderShading();
       });
       canvas.on('selection:created', () => {
         emitSelection();
@@ -1397,6 +1442,12 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
             backgroundSize: `${GRID_SIZE}px ${GRID_SIZE}px`,
             backgroundPosition: '0 0',
           }}
+        />
+        <svg
+          ref={shadingLayerRef}
+          className="pointer-events-none absolute inset-0 z-5"
+          width={width}
+          height={height}
         />
         <canvas ref={canvasElRef} width={width} height={height} className="relative z-10" />
         <div ref={labelsLayerRef} className="pointer-events-none absolute inset-0 z-15" />

@@ -218,6 +218,109 @@ export function setLineEndpoint(line: fabric.Line, endpointIdx: 0 | 1, x: number
   line.setCoords();
 }
 
+/** Find every closed wall loop on the canvas, returned as ordered
+ *  polygon vertex lists in world coords. A loop is a connected
+ *  component of the wall graph in which every node (join point) has
+ *  exactly two walls touching it — i.e. a simple cycle. Used to draw
+ *  room-shading visual feedback so the caregiver knows their walls
+ *  enclose a sealed area. */
+export function findClosedRooms(canvas: fabric.Canvas): WorldPoint[][] {
+  const walls: fabric.Line[] = canvas
+    .getObjects()
+    .filter(
+      (o): o is fabric.Line =>
+        o instanceof fabric.Line && (o as unknown as { __fpKind?: string }).__fpKind === 'wall',
+    );
+  if (walls.length < 3) return [];
+
+  const key = (x: number, y: number) => `${Math.round(x)}:${Math.round(y)}`;
+
+  // Build node map: world coord (rounded) → { x, y, walls: [{ wall, endpointIdx }] }.
+  type Node = { x: number; y: number; walls: { wall: fabric.Line; endpointIdx: 0 | 1 }[] };
+  const nodes = new Map<string, Node>();
+  // Cache wall endpoints to avoid recomputing transform matrix in tight loops.
+  const wallEnds = new Map<fabric.Line, { start: WorldPoint; end: WorldPoint }>();
+  for (const w of walls) {
+    const ends = lineWorldEndpoints(w);
+    wallEnds.set(w, ends);
+    for (const [pt, idx] of [
+      [ends.start, 0 as const],
+      [ends.end, 1 as const],
+    ] as const) {
+      const k = key(pt.x, pt.y);
+      let n = nodes.get(k);
+      if (!n) {
+        n = { x: pt.x, y: pt.y, walls: [] };
+        nodes.set(k, n);
+      }
+      n.walls.push({ wall: w, endpointIdx: idx });
+    }
+  }
+
+  const wallOtherNode = (wall: fabric.Line, here: Node): Node | undefined => {
+    const ends = wallEnds.get(wall);
+    if (!ends) return undefined;
+    const startKey = key(ends.start.x, ends.start.y);
+    const hereKey = key(here.x, here.y);
+    return nodes.get(startKey === hereKey ? key(ends.end.x, ends.end.y) : startKey);
+  };
+
+  const visitedNode = new Set<string>();
+  const rooms: WorldPoint[][] = [];
+
+  for (const [startKey, startNode] of nodes) {
+    if (visitedNode.has(startKey)) continue;
+    if (startNode.walls.length !== 2) {
+      visitedNode.add(startKey);
+      continue;
+    }
+    // Walk the loop. Pick a starting wall arbitrarily; advance via the
+    // OTHER wall at each node. Stop when we return to startNode.
+    const orderedNodes: Node[] = [startNode];
+    const orderedNodeKeys: string[] = [startKey];
+    let prevWall: fabric.Line | undefined;
+    let cur: Node | undefined = startNode;
+    let isLoop = false;
+    let degenerate = false;
+    while (cur && orderedNodes.length <= walls.length) {
+      const nextEntry = cur.walls.find((w) => w.wall !== prevWall);
+      if (!nextEntry) {
+        degenerate = true;
+        break;
+      }
+      const next = wallOtherNode(nextEntry.wall, cur);
+      if (!next) {
+        degenerate = true;
+        break;
+      }
+      const nextKey = key(next.x, next.y);
+      if (nextKey === startKey) {
+        isLoop = true;
+        break;
+      }
+      if (next.walls.length !== 2) {
+        degenerate = true;
+        break;
+      }
+      if (orderedNodeKeys.includes(nextKey)) {
+        // Self-intersecting walk — bail out to avoid infinite loops.
+        degenerate = true;
+        break;
+      }
+      orderedNodes.push(next);
+      orderedNodeKeys.push(nextKey);
+      prevWall = nextEntry.wall;
+      cur = next;
+    }
+    for (const k of orderedNodeKeys) visitedNode.add(k);
+    if (isLoop && !degenerate && orderedNodes.length >= 3) {
+      rooms.push(orderedNodes.map((n) => ({ x: n.x, y: n.y })));
+    }
+  }
+
+  return rooms;
+}
+
 /** Convert a fabric.Rect (room) into a four-vertex polygon at the same
  *  world position. Used so the user can drag corners after creating a
  *  rectangular room. */
