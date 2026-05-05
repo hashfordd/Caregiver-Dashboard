@@ -1,6 +1,15 @@
 import * as fabric from 'fabric';
 
 export const SNAP_PX = 12;
+/** Two endpoints are treated as the same join when they're within this
+ *  many world pixels of each other. Endpoints land exactly on the grid
+ *  after snap, but tiny float drift can sneak in across canonicalise
+ *  cycles. */
+export const JOIN_EPSILON = 0.5;
+/** When the caregiver clicks a join to break it, members are nudged
+ *  apart by this many pixels along radial directions so subsequent drags
+ *  no longer treat them as partners. */
+export const JOIN_DISCONNECT_NUDGE = 4;
 
 export interface WorldPoint {
   x: number;
@@ -108,6 +117,84 @@ export function setPolygonVertices(polygon: fabric.Polygon, vertices: WorldPoint
   // bbox centre. The TS types omit it, so cast.
   (polygon as unknown as { setBoundingBox: (adjust: boolean) => void }).setBoundingBox(true);
   polygon.setCoords();
+}
+
+/** A cluster of 2+ wall endpoints sharing a world coordinate. */
+export interface WallJoin {
+  x: number;
+  y: number;
+  members: { wall: fabric.Line; endpointIdx: 0 | 1 }[];
+}
+
+const joinKey = (x: number, y: number) => `${Math.round(x)}:${Math.round(y)}`;
+
+/** Find every world point where two or more wall endpoints coincide.
+ *  O(n) using a hash map keyed on rounded coords. */
+export function findJoins(canvas: fabric.Canvas): WallJoin[] {
+  const map = new Map<string, WallJoin>();
+  for (const obj of canvas.getObjects()) {
+    if (!(obj instanceof fabric.Line)) continue;
+    const k = (obj as unknown as { __fpKind?: string }).__fpKind;
+    if (k !== 'wall') continue;
+    const ends = lineWorldEndpoints(obj);
+    pushEndpoint(map, ends.start, obj, 0);
+    pushEndpoint(map, ends.end, obj, 1);
+  }
+  return [...map.values()].filter((j) => j.members.length >= 2);
+}
+
+function pushEndpoint(
+  map: Map<string, WallJoin>,
+  point: WorldPoint,
+  wall: fabric.Line,
+  endpointIdx: 0 | 1,
+): void {
+  const key = joinKey(point.x, point.y);
+  let entry = map.get(key);
+  if (!entry) {
+    entry = { x: point.x, y: point.y, members: [] };
+    map.set(key, entry);
+  }
+  entry.members.push({ wall, endpointIdx });
+}
+
+/** Return the OTHER walls' endpoints that share the given wall's
+ *  endpoint coordinate. Used to translate partners in lockstep when the
+ *  caregiver drags a wall or its endpoint. */
+export function findConnectedPartners(
+  canvas: fabric.Canvas,
+  wall: fabric.Line,
+  endpointIdx: 0 | 1,
+  epsilon = JOIN_EPSILON,
+): { wall: fabric.Line; endpointIdx: 0 | 1 }[] {
+  const ends = lineWorldEndpoints(wall);
+  const target = endpointIdx === 0 ? ends.start : ends.end;
+  const out: { wall: fabric.Line; endpointIdx: 0 | 1 }[] = [];
+  for (const obj of canvas.getObjects()) {
+    if (obj === wall) continue;
+    if (!(obj instanceof fabric.Line)) continue;
+    const k = (obj as unknown as { __fpKind?: string }).__fpKind;
+    if (k !== 'wall') continue;
+    const e = lineWorldEndpoints(obj);
+    if (Math.abs(e.start.x - target.x) < epsilon && Math.abs(e.start.y - target.y) < epsilon) {
+      out.push({ wall: obj, endpointIdx: 0 });
+    }
+    if (Math.abs(e.end.x - target.x) < epsilon && Math.abs(e.end.y - target.y) < epsilon) {
+      out.push({ wall: obj, endpointIdx: 1 });
+    }
+  }
+  return out;
+}
+
+/** Set a single endpoint of a wall in world coords. Triggers Fabric's
+ *  internal _setWidthHeight so width/height/centre stay correct. */
+export function setLineEndpoint(line: fabric.Line, endpointIdx: 0 | 1, x: number, y: number): void {
+  if (endpointIdx === 0) {
+    line.set({ x1: x, y1: y });
+  } else {
+    line.set({ x2: x, y2: y });
+  }
+  line.setCoords();
 }
 
 /** Convert a fabric.Rect (room) into a four-vertex polygon at the same

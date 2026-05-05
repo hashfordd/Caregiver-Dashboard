@@ -35,6 +35,7 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
   const [isEmpty, setIsEmpty] = useState(true);
   const [selection, setSelection] = useState<SelectionDescriptor>({ kind: 'none' });
   const [remoteVersionPending, setRemoteVersionPending] = useState(false);
+  const [showDimensions, setShowDimensions] = useState(true);
 
   const lastLoadedVersionRef = useRef<string | null>(null);
 
@@ -156,6 +157,10 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
     canvasRef.current?.fitToContent();
   }, []);
 
+  const handleToggleDimensions = useCallback(() => {
+    setShowDimensions((v) => !v);
+  }, []);
+
   const handleAcceptRemote = useCallback(() => {
     void canvasRef.current?.deserialize(planQuery.data?.canvas_json);
     setDirty(false);
@@ -201,6 +206,7 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
         selection={selection}
         dirty={dirty}
         saving={upsert.isPending}
+        showDimensions={showDimensions}
         onModeChange={handleModeChange}
         onFurnitureKindChange={handleFurnitureKindChange}
         onSetScale={handleSetScaleClick}
@@ -210,6 +216,7 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
         onUndo={handleUndo}
         onRedo={handleRedo}
         onFitToContent={handleFitToContent}
+        onToggleDimensions={handleToggleDimensions}
       />
 
       {savedTone && (
@@ -236,6 +243,7 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
           ref={canvasRef}
           initialJson={initialJson}
           scale={scale}
+          showDimensions={showDimensions}
           onDirty={handleDirty}
           onModeChange={setMode}
           onIsEmptyChange={setIsEmpty}
@@ -255,9 +263,10 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Shortcuts: Cmd/Ctrl+Z undo · Cmd/Ctrl+Shift+Z redo · Cmd/Ctrl+A select all · Backspace
-        delete · Shift while drawing for ortho · Space + drag to pan · scroll to zoom · Enter to
-        finish a polygon · Esc to cancel
+        Walls: click to start, click again to finish (next click can snap to a join). Shortcuts:
+        Cmd/Ctrl+Z undo · Cmd/Ctrl+Shift+Z redo · Cmd/Ctrl+A select all · Backspace delete · Shift
+        while drawing for ortho · Space + drag to pan · scroll to zoom · Enter to finish a polygon ·
+        Esc to cancel/exit
       </p>
 
       <ScaleDialog

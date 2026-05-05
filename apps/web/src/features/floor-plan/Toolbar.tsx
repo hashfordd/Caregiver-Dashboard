@@ -1,5 +1,7 @@
 import {
   ChevronDown,
+  Eye,
+  EyeOff,
   Maximize2,
   MousePointer2,
   Pentagon,
@@ -33,6 +35,7 @@ interface ToolbarProps {
   selection: SelectionDescriptor;
   dirty: boolean;
   saving: boolean;
+  showDimensions: boolean;
   onModeChange: (mode: ToolMode) => void;
   onFurnitureKindChange: (kind: FurnitureKind) => void;
   onSetScale: () => void;
@@ -42,6 +45,7 @@ interface ToolbarProps {
   onUndo: () => void;
   onRedo: () => void;
   onFitToContent: () => void;
+  onToggleDimensions: () => void;
 }
 
 export function Toolbar({
@@ -52,6 +56,7 @@ export function Toolbar({
   selection,
   dirty,
   saving,
+  showDimensions,
   onModeChange,
   onFurnitureKindChange,
   onSetScale,
@@ -61,6 +66,7 @@ export function Toolbar({
   onUndo,
   onRedo,
   onFitToContent,
+  onToggleDimensions,
 }: ToolbarProps) {
   const wallSelected = selection.kind === 'wall';
   const furnitureActive = mode === 'furniture';
@@ -161,6 +167,16 @@ export function Toolbar({
         title="Fit drawing to view"
       >
         <Maximize2 className="h-4 w-4" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={onToggleDimensions}
+        aria-pressed={!showDimensions}
+        aria-label={showDimensions ? 'Hide dimensions' : 'Show dimensions'}
+        title={showDimensions ? 'Hide dimension labels' : 'Show dimension labels'}
+      >
+        {showDimensions ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
       </Button>
       <div className="mx-1 h-6 w-px bg-border" />
       <Button
