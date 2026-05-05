@@ -1,36 +1,130 @@
 import * as fabric from 'fabric';
+import {
+  Armchair,
+  Bath,
+  Bed,
+  BookOpen,
+  Droplets,
+  Lamp,
+  Sofa,
+  ShowerHead,
+  Square,
+  Tv,
+  Utensils,
+} from 'lucide-react';
 import type { FurnitureKind } from './types';
 
 const STROKE = '#3e5c76';
 const FURNITURE_FILL = 'rgba(116, 140, 171, 0.18)';
 
-const LABELS: Record<FurnitureKind, string> = {
-  bed: 'Bed',
-  chair: 'Chair',
-  table: 'Table',
-  toilet: 'Toilet',
-  kitchen: 'Kitchen',
+interface FurnitureSpec {
+  label: string;
+  icon: typeof Bed;
+  realSize: { w: number; h: number };
+  fallbackPx: { w: number; h: number };
+}
+
+// Real-world default footprints in metres. Used whenever the floor plan has
+// a scale set, so a bed in a small bedroom reads as a bed not a sleeping
+// bag. Fallback pixel sizes are roughly proportional at 1px = 2cm so the
+// caregiver still sees believable shapes before they set a scale.
+const FURNITURE: Record<FurnitureKind, FurnitureSpec> = {
+  bed: {
+    label: 'Double bed',
+    icon: Bed,
+    realSize: { w: 1.4, h: 2.0 },
+    fallbackPx: { w: 70, h: 100 },
+  },
+  singleBed: {
+    label: 'Single bed',
+    icon: Bed,
+    realSize: { w: 0.9, h: 1.9 },
+    fallbackPx: { w: 45, h: 95 },
+  },
+  sofa: {
+    label: 'Sofa',
+    icon: Sofa,
+    realSize: { w: 2.0, h: 0.9 },
+    fallbackPx: { w: 100, h: 45 },
+  },
+  chair: {
+    label: 'Chair',
+    icon: Armchair,
+    realSize: { w: 0.5, h: 0.5 },
+    fallbackPx: { w: 25, h: 25 },
+  },
+  table: {
+    label: 'Dining table',
+    icon: Utensils,
+    realSize: { w: 1.6, h: 0.9 },
+    fallbackPx: { w: 80, h: 45 },
+  },
+  desk: {
+    label: 'Desk',
+    icon: BookOpen,
+    realSize: { w: 1.2, h: 0.6 },
+    fallbackPx: { w: 60, h: 30 },
+  },
+  wardrobe: {
+    label: 'Wardrobe',
+    icon: Lamp,
+    realSize: { w: 1.5, h: 0.6 },
+    fallbackPx: { w: 75, h: 30 },
+  },
+  tv: {
+    label: 'TV / cabinet',
+    icon: Tv,
+    realSize: { w: 1.4, h: 0.4 },
+    fallbackPx: { w: 70, h: 20 },
+  },
+  toilet: {
+    label: 'Toilet',
+    icon: Square,
+    realSize: { w: 0.6, h: 0.7 },
+    fallbackPx: { w: 30, h: 35 },
+  },
+  sink: {
+    label: 'Sink',
+    icon: Droplets,
+    realSize: { w: 0.6, h: 0.45 },
+    fallbackPx: { w: 30, h: 22 },
+  },
+  bath: {
+    label: 'Bath',
+    icon: Bath,
+    realSize: { w: 1.7, h: 0.75 },
+    fallbackPx: { w: 85, h: 38 },
+  },
+  shower: {
+    label: 'Shower',
+    icon: ShowerHead,
+    realSize: { w: 0.9, h: 0.9 },
+    fallbackPx: { w: 45, h: 45 },
+  },
 };
 
-// Real-world default footprint in metres. Used whenever the floor plan has
-// a scale set so a bed in a small room reads as a bed, not a sleeping bag.
-const REAL_SIZE_M: Record<FurnitureKind, { w: number; h: number }> = {
-  bed: { w: 1.4, h: 2.0 },
-  chair: { w: 0.5, h: 0.5 },
-  table: { w: 1.2, h: 0.8 },
-  toilet: { w: 0.6, h: 0.8 },
-  kitchen: { w: 1.8, h: 0.7 },
-};
+export const FURNITURE_KINDS: FurnitureKind[] = [
+  'bed',
+  'singleBed',
+  'sofa',
+  'chair',
+  'table',
+  'desk',
+  'wardrobe',
+  'tv',
+  'toilet',
+  'sink',
+  'bath',
+  'shower',
+];
 
-// Fallback sizes (in canvas pixels) used while the caregiver hasn't set a
-// scale yet. Roughly proportional to the real-world sizes at 1px = 2cm.
-const FALLBACK_PX: Record<FurnitureKind, { w: number; h: number }> = {
-  bed: { w: 70, h: 100 },
-  chair: { w: 25, h: 25 },
-  table: { w: 60, h: 40 },
-  toilet: { w: 30, h: 40 },
-  kitchen: { w: 90, h: 35 },
-};
+export function furnitureLabel(kind: FurnitureKind): string {
+  return FURNITURE[kind].label;
+}
+
+export function furnitureIcon(kind: FurnitureKind): typeof Bed {
+  return FURNITURE[kind].icon;
+}
 
 export function addFurnitureAt(
   canvas: fabric.Canvas,
@@ -39,6 +133,7 @@ export function addFurnitureAt(
   scaleMetersPerPixel: number | null,
   snapValue: (v: number) => number,
 ): fabric.Group {
+  const spec = FURNITURE[kind];
   let w: number;
   let h: number;
   if (
@@ -46,10 +141,10 @@ export function addFurnitureAt(
     Number.isFinite(scaleMetersPerPixel) &&
     scaleMetersPerPixel > 0
   ) {
-    w = REAL_SIZE_M[kind].w / scaleMetersPerPixel;
-    h = REAL_SIZE_M[kind].h / scaleMetersPerPixel;
+    w = spec.realSize.w / scaleMetersPerPixel;
+    h = spec.realSize.h / scaleMetersPerPixel;
   } else {
-    ({ w, h } = FALLBACK_PX[kind]);
+    ({ w, h } = spec.fallbackPx);
   }
   const rect = new fabric.Rect({
     width: w,
@@ -62,9 +157,9 @@ export function addFurnitureAt(
     originX: 'center',
     originY: 'center',
   });
-  const text = new fabric.IText(LABELS[kind], {
+  const text = new fabric.IText(spec.label, {
     fontFamily: 'Inter, system-ui, sans-serif',
-    fontSize: Math.max(10, Math.min(16, w / 6)),
+    fontSize: Math.max(10, Math.min(14, w / 6)),
     fill: STROKE,
     originX: 'center',
     originY: 'center',

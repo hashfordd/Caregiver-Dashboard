@@ -64,13 +64,14 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
     setRemoteVersionPending(false);
   }, [planQuery.data?.created_at, planQuery.data?.canvas_json, dirty]);
 
-  const handleModeChange = useCallback(
-    (next: ToolMode) => {
-      setMode(next);
-      canvasRef.current?.setMode(next, furnitureKind);
-    },
-    [furnitureKind],
-  );
+  const handleModeChange = useCallback((next: ToolMode) => {
+    setMode(next);
+    // Don't pass furnitureKind here — handleFurnitureKindChange has already
+    // pushed it into the canvas ref. Reading furnitureKind from React state
+    // gives us the previous render's value and silently overwrites the
+    // freshly-picked kind, which is why "click Bed" used to drop a chair.
+    canvasRef.current?.setMode(next);
+  }, []);
 
   const handleFurnitureKindChange = useCallback((kind: FurnitureKind) => {
     setFurnitureKind(kind);

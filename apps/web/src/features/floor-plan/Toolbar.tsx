@@ -1,7 +1,5 @@
 import {
-  Armchair,
-  Bed,
-  Building2,
+  ChevronDown,
   Maximize2,
   MousePointer2,
   Pentagon,
@@ -9,14 +7,22 @@ import {
   Ruler,
   Save,
   Slash,
+  Sofa,
   Square,
   StretchHorizontal,
   Trash2,
   Undo2,
-  Utensils,
+  type LucideIcon,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
+import { FURNITURE_KINDS, furnitureIcon, furnitureLabel } from './furniture';
 import type { FurnitureKind, SelectionDescriptor, ToolMode } from './types';
 
 interface ToolbarProps {
@@ -38,14 +44,6 @@ interface ToolbarProps {
   onFitToContent: () => void;
 }
 
-const FURNITURE_OPTIONS: { kind: FurnitureKind; icon: typeof Bed; label: string }[] = [
-  { kind: 'bed', icon: Bed, label: 'Bed' },
-  { kind: 'chair', icon: Armchair, label: 'Chair' },
-  { kind: 'table', icon: Square, label: 'Table' },
-  { kind: 'toilet', icon: Building2, label: 'Toilet' },
-  { kind: 'kitchen', icon: Utensils, label: 'Kitchen' },
-];
-
 export function Toolbar({
   mode,
   furnitureKind,
@@ -65,6 +63,8 @@ export function Toolbar({
   onFitToContent,
 }: ToolbarProps) {
   const wallSelected = selection.kind === 'wall';
+  const furnitureActive = mode === 'furniture';
+  const FurnitureIcon = furnitureIcon(furnitureKind);
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card p-2">
       <ModeButton
@@ -92,18 +92,39 @@ export function Toolbar({
         label="Polygon"
       />
       <div className="mx-1 h-6 w-px bg-border" />
-      {FURNITURE_OPTIONS.map((opt) => (
-        <ModeButton
-          key={opt.kind}
-          active={mode === 'furniture' && furnitureKind === opt.kind}
-          onClick={() => {
-            onFurnitureKindChange(opt.kind);
-            onModeChange('furniture');
-          }}
-          icon={opt.icon}
-          label={opt.label}
-        />
-      ))}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant={furnitureActive ? 'secondary' : 'ghost'}
+            size="sm"
+            aria-pressed={furnitureActive}
+            className={cn('gap-1.5', furnitureActive && 'shadow-sm')}
+            title="Pick a furniture item to place"
+          >
+            <FurnitureIcon className="h-4 w-4" />
+            <span className="hidden sm:inline">{furnitureLabel(furnitureKind)}</span>
+            <ChevronDown className="h-3 w-3 opacity-60" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="max-h-[60vh] overflow-y-auto">
+          {FURNITURE_KINDS.map((kind) => {
+            const Icon = furnitureIcon(kind);
+            return (
+              <DropdownMenuItem
+                key={kind}
+                onSelect={() => {
+                  onFurnitureKindChange(kind);
+                  onModeChange('furniture');
+                }}
+              >
+                <Icon className="mr-2 h-4 w-4" />
+                <span>{furnitureLabel(kind)}</span>
+                {kind === furnitureKind && <span className="ml-auto text-xs">·</span>}
+              </DropdownMenuItem>
+            );
+          })}
+        </DropdownMenuContent>
+      </DropdownMenu>
       <div className="mx-1 h-6 w-px bg-border" />
       <Button
         variant="ghost"
@@ -187,7 +208,7 @@ export function Toolbar({
 interface ModeButtonProps {
   active: boolean;
   onClick: () => void;
-  icon: typeof Bed;
+  icon: LucideIcon;
   label: string;
 }
 
@@ -205,3 +226,6 @@ function ModeButton({ active, onClick, icon: Icon, label }: ModeButtonProps) {
     </Button>
   );
 }
+
+// Re-export for any caller that wants the icon without depending on lucide
+export { Sofa };

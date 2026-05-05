@@ -33,7 +33,11 @@ const GRID_SIZE = 20;
 const HISTORY_LIMIT = 50;
 const ZOOM_MIN = 0.2;
 const ZOOM_MAX = 5;
-const VERTEX_CLOSE_PX = 12;
+// Endpoint snap window in *screen* pixels. Divided by current zoom before
+// being applied in world space so the felt distance is constant whatever
+// the zoom level.
+const SNAP_PX = 14;
+const VERTEX_CLOSE_PX = 14;
 // Custom properties we want preserved across canvas.toObject / loadFromJSON.
 // Fabric's allow-list excludes anything starting with __, so the kind tags
 // would otherwise vanish on the first save/reload — breaking countObjects().
@@ -102,6 +106,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     const gridRef = useRef<HTMLDivElement>(null);
     const hudRef = useRef<HTMLDivElement>(null);
     const handlesLayerRef = useRef<HTMLDivElement>(null);
+    const snapIndicatorRef = useRef<HTMLDivElement>(null);
     const fabricRef = useRef<fabric.Canvas | null>(null);
 
     const modeRef = useRef<ToolMode>('select');
@@ -160,6 +165,11 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         preserveObjectStacking: true,
       });
       fabricRef.current = canvas;
+      // React 19 strict mode mounts then immediately re-mounts effects in
+      // dev. Async loadFromJSON / replay continuations would otherwise try
+      // to render onto the disposed canvas — that's the "Cannot read
+      // properties of undefined (reading 'clearRect')" crash.
+      let disposed = false;
 
       // Pool of DOM handle elements, recycled across selection changes.
       const handleEls: HTMLDivElement[] = [];
@@ -203,6 +213,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         canvas
           .loadFromJSON(state as Record<string, unknown>)
           .then(() => {
+            if (disposed) return;
             backfillKinds(canvas, state);
             applyLocksToAll(canvas);
             canvas.renderAll();
@@ -213,6 +224,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
             renderHandles();
           })
           .catch((err) => {
+            if (disposed) return;
             console.error('floor-plan: replay failed', err);
             replayingRef.current = false;
           });
@@ -292,7 +304,21 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         exclude?: fabric.Object,
       ): { x: number; y: number; snapped: boolean } => {
         const eps = collectEndpoints(canvas, exclude);
-        return snapToEndpoint(p, eps);
+        const zoom = canvas.getZoom() || 1;
+        return snapToEndpoint(p, eps, SNAP_PX / zoom);
+      };
+
+      const setSnapIndicator = (world: WorldPoint | null) => {
+        const el = snapIndicatorRef.current;
+        if (!el) return;
+        if (!world) {
+          el.style.display = 'none';
+          return;
+        }
+        const screen = screenFromWorld(world);
+        el.style.display = 'block';
+        el.style.left = `${screen.x}px`;
+        el.style.top = `${screen.y}px`;
       };
 
       // ─── DOM handles ────────────────────────────────────────────────────
@@ -329,6 +355,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
             const gridSnapped = { x: snap(w.x), y: snap(w.y) };
             const epSnap = trySnapWorld(gridSnapped, active);
             const target = epSnap.snapped ? epSnap : gridSnapped;
+            setSnapIndicator(epSnap.snapped ? { x: epSnap.x, y: epSnap.y } : null);
 
             if (active instanceof fabric.Line) {
               if (idx === 0) active.set({ x1: target.x, y1: target.y });
@@ -355,6 +382,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
             snapshot();
             emitSelection();
             renderHandles();
+            setSnapIndicator(null);
           };
 
           el.addEventListener('pointermove', onMove);
@@ -409,6 +437,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         const gridSnapped = { x: snap(raw.x), y: snap(raw.y) };
         const epSnap = trySnapWorld(gridSnapped);
         const sp = epSnap.snapped ? { x: epSnap.x, y: epSnap.y } : gridSnapped;
+        if (epSnap.snapped) setSnapIndicator({ x: epSnap.x, y: epSnap.y });
 
         if (mode === 'wall') {
           const line = new fabric.Line([sp.x, sp.y, sp.x, sp.y], {
@@ -575,6 +604,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           const gridSnapped = { x: snap(raw.x), y: snap(raw.y) };
           const epSnap = trySnapWorld(gridSnapped);
           const tip = epSnap.snapped ? { x: epSnap.x, y: epSnap.y } : gridSnapped;
+          setSnapIndicator(epSnap.snapped ? { x: epSnap.x, y: epSnap.y } : null);
           const last = draft.vertices[draft.vertices.length - 1];
           if (last) {
             draft.previewLine.set({ x1: last.x, y1: last.y, x2: tip.x, y2: tip.y });
@@ -592,6 +622,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         const gridSnapped = { x: snap(raw.x), y: snap(raw.y) };
         const epSnap = trySnapWorld(gridSnapped, drawing.object);
         const sp = epSnap.snapped ? { x: epSnap.x, y: epSnap.y } : gridSnapped;
+        setSnapIndicator(epSnap.snapped ? { x: epSnap.x, y: epSnap.y } : null);
         const screen = screenFromMouse(e);
 
         if (drawing.kind === 'wall') {
@@ -672,6 +703,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         snapshot();
         drawingRef.current = null;
         setHud(null);
+        setSnapIndicator(null);
         autoRevertToSelect();
         renderHandles();
         emitSelection();
@@ -737,6 +769,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
 
       // ─── Initial load ───────────────────────────────────────────────────
       const finishLoad = () => {
+        if (disposed) return;
         backfillKinds(canvas, initialJson);
         applyLocksToAll(canvas);
         canvas.renderAll();
@@ -753,6 +786,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           .loadFromJSON(initialJson as Record<string, unknown>)
           .then(finishLoad)
           .catch((err) => {
+            if (disposed) return;
             console.error('floor-plan: loadFromJSON failed', err);
             interactiveRef.current = true;
             historyRef.current = { stack: [canvas.toObject(EXTRA_PROPS)], idx: 0 };
@@ -845,6 +879,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       window.addEventListener('keyup', onKeyUp);
 
       return () => {
+        disposed = true;
         window.removeEventListener('keydown', onKeyDown);
         window.removeEventListener('keyup', onKeyUp);
         for (const el of handleEls) el.remove();
@@ -1028,6 +1063,11 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         />
         <canvas ref={canvasElRef} width={width} height={height} className="relative z-10" />
         <div ref={handlesLayerRef} className="pointer-events-none absolute inset-0 z-20" />
+        <div
+          ref={snapIndicatorRef}
+          className="pointer-events-none absolute z-25 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-emerald-400 bg-emerald-400/30"
+          style={{ display: 'none' }}
+        />
         <div
           ref={hudRef}
           className="pointer-events-none absolute z-30 rounded-md bg-popover px-2 py-0.5 font-mono text-xs text-popover-foreground shadow"

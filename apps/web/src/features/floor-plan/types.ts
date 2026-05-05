@@ -5,7 +5,19 @@
 
 export type ToolMode = 'select' | 'wall' | 'room' | 'polygon' | 'furniture';
 
-export type FurnitureKind = 'bed' | 'chair' | 'table' | 'toilet' | 'kitchen';
+export type FurnitureKind =
+  | 'bed'
+  | 'singleBed'
+  | 'sofa'
+  | 'chair'
+  | 'table'
+  | 'desk'
+  | 'wardrobe'
+  | 'tv'
+  | 'toilet'
+  | 'sink'
+  | 'bath'
+  | 'shower';
 
 /** Snapshot of the current Fabric selection — surfaced to the editor so it
  *  can enable/disable toolbar actions like Set scale or Set length without
