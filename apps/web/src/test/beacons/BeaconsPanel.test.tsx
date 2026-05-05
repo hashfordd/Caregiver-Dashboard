@@ -3,17 +3,29 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { BeaconRow } from '@/features/beacons/types';
 
-const { useBeaconsMock, useDeleteBeaconMock, deleteMutateMock } = vi.hoisted(() => ({
-  useBeaconsMock: vi.fn(),
-  useDeleteBeaconMock: vi.fn(),
-  deleteMutateMock: vi.fn(),
-}));
+const { useBeaconsMock, useDeleteBeaconMock, deleteMutateMock, useFloorPlanMock } = vi.hoisted(
+  () => ({
+    useBeaconsMock: vi.fn(),
+    useDeleteBeaconMock: vi.fn(),
+    deleteMutateMock: vi.fn(),
+    useFloorPlanMock: vi.fn(),
+  }),
+);
 
 vi.mock('@/features/beacons/beaconQueries', () => ({
   useBeacons: (...args: unknown[]) => useBeaconsMock(...args),
   useDeleteBeacon: (...args: unknown[]) => useDeleteBeaconMock(...args),
   useUpsertBeacon: vi.fn(),
   useUpdateBeaconPosition: vi.fn(),
+}));
+
+// BeaconsPanel reads the patient's active floor plan to pass its id into
+// the pair dialog. Tests don't open the dialog, but the hook still runs
+// at the top of the component — return an empty query stub.
+vi.mock('@/features/floor-plan/floorPlanQueries', () => ({
+  useFloorPlan: (...args: unknown[]) => useFloorPlanMock(...args),
+  useUpsertFloorPlan: vi.fn(),
+  useCalibrationCount: vi.fn(),
 }));
 
 import { BeaconsPanel } from '@/features/beacons/BeaconsPanel';
@@ -53,6 +65,12 @@ beforeEach(() => {
     isError: false,
     error: null,
     variables: undefined,
+  });
+  useFloorPlanMock.mockReturnValue({
+    data: null,
+    isLoading: false,
+    isError: false,
+    error: null,
   });
 });
 

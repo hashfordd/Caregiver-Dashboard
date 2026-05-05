@@ -1,10 +1,14 @@
+import { useMemo, useState } from 'react';
 import { Bluetooth, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useFloorPlan } from '@/features/floor-plan/floorPlanQueries';
+import { useDiscoveredBeaconsStore } from '@/lib/stores/discoveredBeaconsStore';
 import { useBeacons, useDeleteBeacon } from './beaconQueries';
+import { DiscoveryList } from './DiscoveryList';
+import { PairDialog } from './PairDialog';
 import { isPlaced, type BeaconRow } from './types';
 
 interface BeaconsPanelProps {
@@ -13,7 +17,14 @@ interface BeaconsPanelProps {
 
 export function BeaconsPanel({ patientId }: BeaconsPanelProps) {
   const beaconsQuery = useBeacons(patientId);
+  const planQuery = useFloorPlan(patientId);
   const deleteBeacon = useDeleteBeacon(patientId);
+  const [pairTarget, setPairTarget] = useState<string | null>(null);
+
+  const pairedMacs = useMemo(
+    () => new Set((beaconsQuery.data ?? []).map((b) => b.mac_address)),
+    [beaconsQuery.data],
+  );
 
   if (beaconsQuery.isLoading) {
     return (
@@ -46,33 +57,117 @@ export function BeaconsPanel({ patientId }: BeaconsPanelProps) {
 
   const beacons = beaconsQuery.data ?? [];
 
-  if (beacons.length === 0) {
-    return (
-      <EmptyState
-        icon={<Bluetooth className="h-10 w-10" />}
-        title="No beacons paired yet"
-        description="Beacon discovery and pairing arrives in the next slice. For now, paired beacons appear here once a row exists in the beacons table."
-      />
-    );
-  }
-
   return (
-    <div className="space-y-2">
-      {beacons.map((b) => (
-        <BeaconCard
-          key={b.id}
-          beacon={b}
-          deleting={deleteBeacon.isPending && deleteBeacon.variables === b.id}
-          onDelete={() => deleteBeacon.mutate(b.id)}
+    <div className="space-y-6">
+      <section className="space-y-2">
+        <SectionHeader
+          title="Discovery"
+          subtitle="BLE MACs picked up by the wearable. Pair each to give it a room."
+          right={import.meta.env.DEV ? <DevInjectButton patientId={patientId} /> : null}
         />
-      ))}
-      {deleteBeacon.isError && (
-        <p className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
-          Couldn't delete: {(deleteBeacon.error as Error).message}
-        </p>
+        <DiscoveryList
+          patientId={patientId}
+          pairedMacs={pairedMacs}
+          onPair={(mac) => setPairTarget(mac)}
+        />
+      </section>
+
+      <section className="space-y-2">
+        <SectionHeader
+          title="Paired beacons"
+          subtitle={
+            beacons.length === 0
+              ? 'Nothing paired yet — pair from the discovery list above.'
+              : `${beacons.length} paired`
+          }
+        />
+        {beacons.length === 0 ? (
+          <Card>
+            <CardContent className="flex items-center gap-3 py-4">
+              <Bluetooth className="h-5 w-5 text-muted-foreground" aria-hidden />
+              <div className="text-sm text-muted-foreground">No beacons paired yet.</div>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="space-y-2">
+            {beacons.map((b) => (
+              <BeaconCard
+                key={b.id}
+                beacon={b}
+                deleting={deleteBeacon.isPending && deleteBeacon.variables === b.id}
+                onDelete={() => deleteBeacon.mutate(b.id)}
+              />
+            ))}
+            {deleteBeacon.isError && (
+              <p className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                Couldn't delete: {(deleteBeacon.error as Error).message}
+              </p>
+            )}
+          </div>
+        )}
+      </section>
+
+      {pairTarget != null && (
+        <PairDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setPairTarget(null);
+          }}
+          mac={pairTarget}
+          patientId={patientId}
+          floorPlanId={planQuery.data?.id ?? null}
+        />
       )}
     </div>
   );
+}
+
+interface SectionHeaderProps {
+  title: string;
+  subtitle: string;
+  right?: React.ReactNode;
+}
+
+function SectionHeader({ title, subtitle, right }: SectionHeaderProps) {
+  return (
+    <div className="flex items-end justify-between gap-3">
+      <div>
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+        <p className="text-xs text-muted-foreground">{subtitle}</p>
+      </div>
+      {right}
+    </div>
+  );
+}
+
+/** Dev-only fixture: drops random fake MAC samples into the discovered
+ *  store so slice 2's UI is demo-able before slice 5's real bridge
+ *  broadcast is wired up. Removed once `usePatientStream.onSignals` is
+ *  fanning out — see slice 4. */
+function DevInjectButton({ patientId }: { patientId: string }) {
+  const pushSample = useDiscoveredBeaconsStore((s) => s.pushSample);
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      onClick={() => {
+        const mac = randomMac();
+        const rssi = -55 - Math.floor(Math.random() * 30);
+        pushSample(patientId, mac, rssi);
+      }}
+    >
+      Inject fake MAC
+    </Button>
+  );
+}
+
+function randomMac(): string {
+  const hex = () =>
+    Math.floor(Math.random() * 256)
+      .toString(16)
+      .padStart(2, '0')
+      .toUpperCase();
+  return Array.from({ length: 6 }, hex).join(':');
 }
 
 interface BeaconCardProps {
