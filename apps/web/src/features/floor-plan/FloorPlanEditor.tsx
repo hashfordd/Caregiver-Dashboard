@@ -6,6 +6,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { CalibrationStaleWarning } from './CalibrationStaleWarning';
 import { FloorPlanCanvas } from './FloorPlanCanvas';
+import { ResetCanvasDialog } from './ResetCanvasDialog';
 import { ScaleDialog } from './ScaleDialog';
 import { Toolbar } from './Toolbar';
 import { WallLengthDialog } from './WallLengthDialog';
@@ -29,6 +30,7 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
   const [scaleOpen, setScaleOpen] = useState(false);
   const [wallLengthOpen, setWallLengthOpen] = useState(false);
   const [warningOpen, setWarningOpen] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
   const [pixelLength, setPixelLength] = useState<number | null>(null);
   const [scale, setScale] = useState<number | null>(null);
   const [savedTone, setSavedTone] = useState<string | null>(null);
@@ -149,6 +151,14 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
     canvasRef.current?.deleteSelected();
   }, []);
 
+  const handleResetRequest = useCallback(() => {
+    setResetOpen(true);
+  }, []);
+
+  const handleResetConfirm = useCallback(() => {
+    canvasRef.current?.clearAll();
+  }, []);
+
   const handleUndo = useCallback(() => {
     canvasRef.current?.undo();
   }, []);
@@ -230,6 +240,8 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
         onSetWallLength={handleSetWallLengthClick}
         onSave={handleSave}
         onDelete={handleDelete}
+        onReset={handleResetRequest}
+        canReset={!isEmpty}
         onUndo={handleUndo}
         onRedo={handleRedo}
         onFitToContent={handleFitToContent}
@@ -306,6 +318,12 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
         pixelLength={pixelLength}
         scaleMetersPerPixel={scale}
         onConfirm={handleWallLengthConfirmed}
+      />
+
+      <ResetCanvasDialog
+        open={resetOpen}
+        onOpenChange={setResetOpen}
+        onConfirm={handleResetConfirm}
       />
 
       <CalibrationStaleWarning

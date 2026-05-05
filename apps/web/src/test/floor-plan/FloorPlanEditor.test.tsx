@@ -36,6 +36,7 @@ vi.mock('@/features/floor-plan/FloorPlanCanvas', () => {
       deserialize: async () => {},
       getSelectedLinePixelLength: () => 200,
       deleteSelected: () => {},
+      clearAll: () => {},
       countObjects: () => ({ walls: 0, rooms: 0, furniture: 1 }),
       undo: () => {},
       redo: () => {},

@@ -347,6 +347,10 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       Object.assign(canvas as unknown as Record<string, unknown>, {
         __fpUndo: undo,
         __fpRedo: redo,
+        // clearAll is defined later in the effect (after the cancel-draft
+        // helpers), so wire it onto the canvas object via a deferred
+        // assignment below — see the call right after clearAll's
+        // definition.
       });
 
       const formatLength = (px: number): string => {
@@ -906,6 +910,38 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         canvas.requestRenderAll();
       };
 
+      // Wipe every kind-tagged object (walls, rooms, furniture) plus any
+      // in-progress draft. Pushes a snapshot afterwards so a misclick can
+      // be recovered with Cmd+Z. Note we do NOT touch scale_meters_per_pixel
+      // — that lives on the floor_plans row, not on the canvas, and the
+      // caregiver typically wants to redraw on the same calibration. F6
+      // beacons reference floor_plan_id with their own (x_canvas, y_canvas)
+      // — clearing geometry doesn't auto-delete them; that's a deliberate
+      // separation per CROSS_CUTTING §6.
+      const clearAll = () => {
+        if (!editingRef.current) return;
+        cancelWallDraft();
+        cancelPolygonDraft();
+        canvas.discardActiveObject();
+        const tagged = canvas.getObjects().filter((o) => kindOf(o));
+        if (tagged.length === 0) return;
+        for (const o of tagged) canvas.remove(o);
+        canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+        canvas.requestRenderAll();
+        emitDirty();
+        emitEmpty();
+        emitSelection();
+        snapshot();
+        updateGrid();
+        renderHandles();
+        renderLabelsAndJoins();
+        renderShading();
+      };
+
+      Object.assign(canvas as unknown as Record<string, unknown>, {
+        __fpClearAll: clearAll,
+      });
+
       const handlePointerMove = (opt: fabric.TPointerEventInfo<fabric.TPointerEvent>) => {
         if (!interactiveRef.current) return;
         const e = opt.e as MouseEvent;
@@ -1395,6 +1431,10 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           }
           canvas.discardActiveObject();
           canvas.requestRenderAll();
+        },
+        clearAll: () => {
+          const c = fabricRef.current as unknown as { __fpClearAll?: () => void } | null;
+          c?.__fpClearAll?.();
         },
         countObjects: () => {
           const canvas = fabricRef.current;

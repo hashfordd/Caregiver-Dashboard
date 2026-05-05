@@ -1,5 +1,6 @@
 import {
   ChevronDown,
+  Eraser,
   Eye,
   EyeOff,
   Lock,
@@ -46,6 +47,11 @@ interface ToolbarProps {
   onSetWallLength: () => void;
   onSave: () => void;
   onDelete: () => void;
+  onReset: () => void;
+  /** True when the canvas has at least one wall/room/furniture object —
+   *  the Reset button is hidden until then so a fresh canvas isn't
+   *  cluttered with a destructive action that does nothing. */
+  canReset: boolean;
   onUndo: () => void;
   onRedo: () => void;
   onFitToContent: () => void;
@@ -70,6 +76,8 @@ export function Toolbar({
   onSetWallLength,
   onSave,
   onDelete,
+  onReset,
+  canReset,
   onUndo,
   onRedo,
   onFitToContent,
@@ -178,6 +186,16 @@ export function Toolbar({
         title="Delete selected (Backspace)"
       >
         <Trash2 className="h-4 w-4" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={onReset}
+        disabled={toolsDisabled || !canReset}
+        aria-label="Clear canvas"
+        title="Clear every wall, room, and furniture (undoable)"
+      >
+        <Eraser className="h-4 w-4" />
       </Button>
       <Button
         variant="ghost"

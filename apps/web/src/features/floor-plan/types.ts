@@ -54,6 +54,9 @@ export interface FloorPlanCanvasHandle {
   deserialize: (data: unknown) => Promise<void>;
   getSelectedLinePixelLength: () => number | null;
   deleteSelected: () => void;
+  /** Wipe every wall, room, and furniture object in one shot. Pushes a
+   *  history snapshot so the action is undoable. No-op when not editing. */
+  clearAll: () => void;
   countObjects: () => { walls: number; rooms: number; furniture: number };
   undo: () => void;
   redo: () => void;
