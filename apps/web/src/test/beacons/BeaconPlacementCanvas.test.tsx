@@ -62,6 +62,7 @@ vi.mock('@/features/floor-plan/FloorPlanCanvas', async () => {
           armPlacement,
           setCalibrationPoints: () => {},
           armCalibrationCapture: () => {},
+          setPatientMarker: () => {},
         };
       });
       return <div data-testid="floor-plan-canvas-stub" />;

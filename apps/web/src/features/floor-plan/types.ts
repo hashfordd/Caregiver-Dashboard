@@ -99,6 +99,11 @@ export interface FloorPlanCanvasHandle {
    *  the canvas fires onCalibrationClick (the panel sets the pending
    *  spot). Pass false to disarm. */
   armCalibrationCapture: (armed: boolean) => void;
+  /** F8: render or clear the live patient marker. Pass null to hide
+   *  (e.g. when the patient is in outdoor mode, or no estimate yet).
+   *  The canvas owns a single marker DOM node that's repositioned in
+   *  place — no create/destroy churn at 1 Hz. */
+  setPatientMarker: (sprite: PatientMarkerSprite | null) => void;
 }
 
 /** A beacon as the canvas needs to render it — id, label for tooltip,
@@ -123,4 +128,16 @@ export interface CalibrationPointSprite {
   x: number;
   y: number;
   pending?: boolean;
+}
+
+/** F8 patient marker — the live position dot. `confidence` is bound to
+ *  the marker's opacity (clamped to a minimum visible value). */
+export interface PatientMarkerSprite {
+  x: number;
+  y: number;
+  /** 0..1 from `position_estimates.confidence`. */
+  confidence: number;
+  /** ISO 8601, surfaced in the marker tooltip so the caregiver can see
+   *  how stale the latest estimate is. */
+  recorded_at: string;
 }

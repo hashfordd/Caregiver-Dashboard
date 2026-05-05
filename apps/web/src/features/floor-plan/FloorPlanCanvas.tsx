@@ -24,6 +24,7 @@ import type {
   CalibrationPointSprite,
   FloorPlanCanvasHandle,
   FurnitureKind,
+  PatientMarkerSprite,
   SelectionDescriptor,
   ToolMode,
 } from './types';
@@ -160,6 +161,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     const joinsLayerRef = useRef<HTMLDivElement>(null);
     const beaconsLayerRef = useRef<HTMLDivElement>(null);
     const calibrationLayerRef = useRef<HTMLDivElement>(null);
+    const markerLayerRef = useRef<HTMLDivElement>(null);
     const shadingLayerRef = useRef<SVGSVGElement>(null);
     const snapIndicatorRef = useRef<HTMLDivElement>(null);
     const fabricRef = useRef<fabric.Canvas | null>(null);
@@ -884,6 +886,48 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         return el;
       }
 
+      // ─── F8 patient marker (live position) ──────────────────────────────
+      // Single DOM node repositioned in place as new estimates arrive.
+      // CSS handles the tween (200 ms ease-out on transform + opacity)
+      // so a 1 Hz update stream looks smooth without per-frame work.
+      // Opacity tracks confidence with a 0.3 floor so the marker never
+      // disappears entirely — F8.md UX line.
+      let markerSprite: PatientMarkerSprite | null = null;
+      let markerEl: HTMLDivElement | null = null;
+      const MIN_MARKER_OPACITY = 0.3;
+
+      function ensureMarkerEl(): HTMLDivElement | null {
+        const layer = markerLayerRef.current;
+        if (!layer) return null;
+        if (markerEl) return markerEl;
+        markerEl = document.createElement('div');
+        markerEl.className =
+          'pointer-events-auto absolute z-30 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-rose-500 shadow ring-2 ring-rose-500/30';
+        markerEl.style.transition = 'left 200ms ease-out, top 200ms ease-out, opacity 200ms';
+        layer.appendChild(markerEl);
+        return markerEl;
+      }
+
+      function renderMarker() {
+        if (markerSprite == null) {
+          if (markerEl) {
+            markerEl.style.display = 'none';
+          }
+          return;
+        }
+        const el = ensureMarkerEl();
+        if (!el) return;
+        const screen = screenFromWorld({ x: markerSprite.x, y: markerSprite.y });
+        const opacity = Math.max(MIN_MARKER_OPACITY, Math.min(1, markerSprite.confidence));
+        el.style.display = 'block';
+        el.style.left = `${screen.x}px`;
+        el.style.top = `${screen.y}px`;
+        el.style.opacity = String(opacity);
+        el.title = `Position · confidence ${(markerSprite.confidence * 100).toFixed(0)}% · ${
+          markerSprite.recorded_at
+        }`;
+      }
+
       // ─── Pointer handlers ───────────────────────────────────────────────
       const handlePointerDown = (opt: fabric.TPointerEventInfo<fabric.TPointerEvent>) => {
         // Beacon placement is the one mode where clicks matter even when
@@ -1152,6 +1196,10 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           armedCalibration = armed;
           applyCalibrationCursor();
         },
+        __fpSetPatientMarker: (sprite: PatientMarkerSprite | null) => {
+          markerSprite = sprite;
+          renderMarker();
+        },
       });
 
       const handlePointerMove = (opt: fabric.TPointerEventInfo<fabric.TPointerEvent>) => {
@@ -1387,6 +1435,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         renderShading();
         renderBeacons();
         renderCalibrationPoints();
+        renderMarker();
       });
       canvas.on('selection:created', () => {
         emitSelection();
@@ -1782,6 +1831,12 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           } | null;
           c?.__fpArmCalibration?.(armed);
         },
+        setPatientMarker: (sprite) => {
+          const c = fabricRef.current as unknown as {
+            __fpSetPatientMarker?: (sprite: PatientMarkerSprite | null) => void;
+          } | null;
+          c?.__fpSetPatientMarker?.(sprite);
+        },
       }),
       [],
     );
@@ -1829,6 +1884,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
             none so clicks pass through to the canvas, where the
             handlePointerDown calibration branch routes them. */}
         <div ref={calibrationLayerRef} className="pointer-events-none absolute inset-0 z-30" />
+        {/* z-30 sibling: live patient marker. Single child div with a
+            CSS transition so 1 Hz updates feel smooth. */}
+        <div ref={markerLayerRef} className="pointer-events-none absolute inset-0 z-30" />
         <div
           ref={snapIndicatorRef}
           className="pointer-events-none absolute z-25 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-emerald-400 bg-emerald-400/30"
