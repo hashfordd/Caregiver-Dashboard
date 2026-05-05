@@ -18,7 +18,7 @@ export function PlaceTab() {
       fallback={
         <div className="space-y-3">
           <Skeleton className="h-12 w-full" />
-          <Skeleton className="h-[600px] w-full" />
+          <Skeleton className="h-[min(82vh,960px)] min-h-[640px] w-full" />
         </div>
       }
     >

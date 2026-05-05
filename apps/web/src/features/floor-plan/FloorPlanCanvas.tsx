@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import * as fabric from 'fabric';
 import { cn } from '@/lib/utils';
 import { addFurnitureAt } from './furniture';
@@ -39,7 +39,10 @@ interface FloorPlanCanvasProps {
 }
 
 const STROKE = '#3e5c76';
-const ROOM_FILL = 'rgba(116, 140, 171, 0.06)';
+// Single fill colour shared between fabric.Polygon rooms and the SVG
+// shading drawn over closed wall loops, so a polygon and a four-wall
+// rectangle look identical once they enclose an area.
+const ROOM_FILL = 'rgba(116, 140, 171, 0.18)';
 
 const GRID_SIZE = 20;
 const HISTORY_LIMIT = 50;
@@ -109,12 +112,24 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       onModeChange,
       onIsEmptyChange,
       onSelectionChange,
-      width = 960,
-      height = 600,
+      width,
+      height,
       className,
     },
     ref,
   ) {
+    // When the caller pins explicit pixel dims (tests, embedded previews),
+    // use them. Otherwise the wrapper sizes from CSS and we measure it
+    // each frame so Fabric's pixel buffer matches the visible box.
+    const explicitDims = width != null && height != null;
+    const fallbackWidth = width ?? 960;
+    const fallbackHeight = height ?? 600;
+    const [measured, setMeasured] = useState<{ width: number; height: number }>({
+      width: fallbackWidth,
+      height: fallbackHeight,
+    });
+    const canvasWidth = explicitDims ? width : measured.width;
+    const canvasHeight = explicitDims ? height : measured.height;
     const canvasElRef = useRef<HTMLCanvasElement>(null);
     const wrapperRef = useRef<HTMLDivElement>(null);
     const gridRef = useRef<HTMLDivElement>(null);
@@ -224,8 +239,8 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     useEffect(() => {
       if (!canvasElRef.current) return;
       const canvas = new fabric.Canvas(canvasElRef.current, {
-        width,
-        height,
+        width: canvasWidth,
+        height: canvasHeight,
         backgroundColor: 'transparent',
         selection: true,
         fireRightClick: false,
@@ -237,9 +252,14 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       // to render onto the disposed canvas.
       let disposed = false;
 
-      // Pools of DOM elements, recycled across renders.
+      // Pools of DOM elements, recycled across renders. Handles and
+      // joins keep pools because their nodes carry pointer event
+      // listeners. Labels are rebuilt from scratch each render — there
+      // were ghost labels surviving across resize/zoom cycles whose
+      // origin we couldn't pin down through static analysis, and a full
+      // replaceChildren makes the bug class impossible regardless of
+      // root cause.
       const handleEls: HTMLDivElement[] = [];
-      const labelEls = new Map<fabric.Object, HTMLDivElement>();
       const joinEls: HTMLDivElement[] = [];
 
       // ─── Helpers ────────────────────────────────────────────────────────
@@ -507,50 +527,37 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       }
 
       // ─── Labels (wall lengths + furniture dimensions) ───────────────────
-      function ensureLabel(obj: fabric.Object): HTMLDivElement {
-        let el = labelEls.get(obj);
-        if (el) return el;
-        el = document.createElement('div');
-        el.className =
-          'pointer-events-none absolute z-15 -translate-x-1/2 -translate-y-1/2 rounded-md bg-card/90 px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground shadow-sm';
-        labelEls.set(obj, el);
-        labelsLayerRef.current?.appendChild(el);
-        return el;
-      }
+      const LABEL_CLASS =
+        'pointer-events-none absolute z-25 -translate-x-1/2 -translate-y-1/2 rounded-md bg-card/95 px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground shadow-sm';
 
-      function disposeLabel(obj: fabric.Object) {
-        const el = labelEls.get(obj);
-        if (el) {
-          el.remove();
-          labelEls.delete(obj);
-        }
+      function makeLabel(text: string, screen: WorldPoint): HTMLDivElement {
+        const el = document.createElement('div');
+        el.className = LABEL_CLASS;
+        el.textContent = text;
+        el.style.left = `${screen.x}px`;
+        el.style.top = `${screen.y}px`;
+        return el;
       }
 
       function renderLabels() {
         const layer = labelsLayerRef.current;
         if (!layer) return;
-        const visible = showDimensionsRef.current;
-        const live = canvas.getObjects();
-        const liveSet = new Set<fabric.Object>(live);
-        // Prune labels for removed objects.
-        for (const obj of [...labelEls.keys()]) {
-          if (!liveSet.has(obj)) disposeLabel(obj);
-        }
-        if (!visible) {
-          for (const el of labelEls.values()) el.style.display = 'none';
+        // Rebuild from scratch every call — replaceChildren drops every
+        // existing label DOM node, so any stale element from a prior
+        // viewport / size / load cycle is gone before we re-emit.
+        if (!showDimensionsRef.current) {
+          layer.replaceChildren();
           return;
         }
-        for (const obj of live) {
+        const next: HTMLDivElement[] = [];
+        for (const obj of canvas.getObjects()) {
           const k = kindOf(obj);
           if (k === 'wall' && obj instanceof fabric.Line) {
             const ends = lineWorldEndpoints(obj);
             const dx = ends.end.x - ends.start.x;
             const dy = ends.end.y - ends.start.y;
             const len = Math.hypot(dx, dy);
-            if (len < 4) {
-              disposeLabel(obj);
-              continue;
-            }
+            if (len < 4) continue;
             const mid = {
               x: (ends.start.x + ends.end.x) / 2,
               y: (ends.start.y + ends.end.y) / 2,
@@ -560,32 +567,28 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
             // the wall, not on top of it.
             const perp = { x: -dy / len, y: dx / len };
             const offset = 16;
-            const labelScreen = {
-              x: midScreen.x + perp.x * offset,
-              y: midScreen.y + perp.y * offset,
-            };
-            const el = ensureLabel(obj);
-            el.textContent = formatLength(len);
-            el.style.display = 'block';
-            el.style.left = `${labelScreen.x}px`;
-            el.style.top = `${labelScreen.y}px`;
+            next.push(
+              makeLabel(formatLength(len), {
+                x: midScreen.x + perp.x * offset,
+                y: midScreen.y + perp.y * offset,
+              }),
+            );
           } else if (k === 'furniture' && obj instanceof fabric.Group) {
             // Furniture group's left/top are the world centre (CENTER origin).
             const cx = obj.left ?? 0;
             const cy = obj.top ?? 0;
             const w = (obj.width ?? 0) * (obj.scaleX ?? 1);
             const h = (obj.height ?? 0) * (obj.scaleY ?? 1);
-            const labelWorld = { x: cx, y: cy + h / 2 };
-            const labelScreen = screenFromWorld(labelWorld);
-            const el = ensureLabel(obj);
-            el.textContent = `${formatLength(w)} × ${formatLength(h)}`;
-            el.style.display = 'block';
-            el.style.left = `${labelScreen.x}px`;
-            el.style.top = `${labelScreen.y + 12}px`;
-          } else {
-            disposeLabel(obj);
+            const labelScreen = screenFromWorld({ x: cx, y: cy + h / 2 });
+            next.push(
+              makeLabel(`${formatLength(w)} × ${formatLength(h)}`, {
+                x: labelScreen.x,
+                y: labelScreen.y + 12,
+              }),
+            );
           }
         }
+        layer.replaceChildren(...next);
       }
 
       // ─── Joins (where two or more wall endpoints coincide) ──────────────
@@ -638,11 +641,22 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         if (!layer) return;
         const joins = findJoins(canvas);
         currentJoinsRef.current = joins;
+        // Joins are an editing affordance (click to disconnect). In
+        // read-only mode they're noise — they overlap with dimension
+        // labels and clutter the view at every zoom level — so hide
+        // every join element and exit early. We still keep the joins
+        // array warm so toggling back into edit mode is instant.
+        const interactive = editingRef.current && modeRef.current === 'select';
+        if (!editingRef.current) {
+          for (const el of joinEls) {
+            if (el) el.style.display = 'none';
+          }
+          return;
+        }
         // Hide unused join elements
         for (let i = joins.length; i < joinEls.length; i++) {
           if (joinEls[i]) joinEls[i]!.style.display = 'none';
         }
-        const interactive = editingRef.current && modeRef.current === 'select';
         joins.forEach((join, i) => {
           const el = ensureJoin(i);
           const screen = screenFromWorld({ x: join.x, y: join.y });
@@ -686,7 +700,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
             .join(' ');
           const el = document.createElementNS(SVG_NS, 'polygon');
           el.setAttribute('points', points);
-          el.setAttribute('fill', 'rgba(116, 140, 171, 0.18)');
+          el.setAttribute('fill', ROOM_FILL);
           el.setAttribute('stroke', 'none');
           return el;
         });
@@ -1110,9 +1124,10 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         renderLabelsAndJoins();
         renderShading();
       });
-      canvas.on('object:removed', (opt: { target?: fabric.Object }) => {
+      canvas.on('object:removed', () => {
         emitEmpty();
-        if (opt.target) disposeLabel(opt.target);
+        // Label pool is index-based — the next renderLabels claims only
+        // as many slots as live objects need and hides the rest.
         renderHandles();
         renderLabelsAndJoins();
         renderShading();
@@ -1265,16 +1280,53 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         window.removeEventListener('keydown', onKeyDown);
         window.removeEventListener('keyup', onKeyUp);
         for (const el of handleEls) el.remove();
-        for (const el of labelEls.values()) el.remove();
         for (const el of joinEls) el.remove();
+        // Label DOM lives inside the React-managed labelsLayerRef div,
+        // so React unmounts the whole layer when the component dies —
+        // no manual teardown needed here.
         canvas.dispose();
         fabricRef.current = null;
       };
-      // initialJson + scale + showDimensions intentionally excluded — initialJson
-      // is loaded once on mount; scale and showDimensions are read via refs so
-      // toggling them doesn't re-mount the Fabric canvas.
+      // Deps intentionally empty — the Fabric canvas is created once on
+      // mount. initialJson is loaded once via the inner replay; scale and
+      // showDimensions are read via refs; size changes flow through
+      // canvas.setDimensions in a separate effect below (re-creating the
+      // canvas on every resize would lose history + selection state).
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [width, height]);
+    }, []);
+
+    // Keep the Fabric pixel buffer in sync with the wrapper's measured
+    // size. setDimensions updates both the bitmap and the CSS box without
+    // disposing the canvas, so undo history, selection, and viewport
+    // transform survive a resize.
+    useEffect(() => {
+      const canvas = fabricRef.current;
+      if (!canvas) return;
+      canvas.setDimensions({ width: canvasWidth, height: canvasHeight });
+      canvas.requestRenderAll();
+    }, [canvasWidth, canvasHeight]);
+
+    // Observe the wrapper when no explicit pixel dims are supplied. This
+    // is the path the editor page uses — the wrapper fills its CSS box
+    // (page width × viewport-relative height) and we feed those measured
+    // dims into the Fabric canvas.
+    useEffect(() => {
+      if (explicitDims) return;
+      const el = wrapperRef.current;
+      if (!el) return;
+      const apply = () => {
+        const r = el.getBoundingClientRect();
+        const w = Math.max(1, Math.floor(r.width));
+        const h = Math.max(1, Math.floor(r.height));
+        setMeasured((prev) =>
+          prev.width === w && prev.height === h ? prev : { width: w, height: h },
+        );
+      };
+      apply();
+      const obs = new ResizeObserver(apply);
+      obs.observe(el);
+      return () => obs.disconnect();
+    }, [explicitDims]);
 
     useImperativeHandle(
       ref,
@@ -1435,9 +1487,10 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         ref={wrapperRef}
         className={cn(
           'relative overflow-hidden rounded-lg border border-border bg-card',
+          !explicitDims && 'h-full w-full',
           className,
         )}
-        style={{ width, height }}
+        style={explicitDims ? { width, height } : undefined}
       >
         <div
           ref={gridRef}
@@ -1452,11 +1505,16 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         <svg
           ref={shadingLayerRef}
           className="pointer-events-none absolute inset-0 z-5"
-          width={width}
-          height={height}
+          width={canvasWidth}
+          height={canvasHeight}
         />
-        <canvas ref={canvasElRef} width={width} height={height} className="relative z-10" />
-        <div ref={labelsLayerRef} className="pointer-events-none absolute inset-0 z-15" />
+        <canvas
+          ref={canvasElRef}
+          width={canvasWidth}
+          height={canvasHeight}
+          className="relative z-10"
+        />
+        <div ref={labelsLayerRef} className="pointer-events-none absolute inset-0 z-25" />
         <div ref={handlesLayerRef} className="pointer-events-none absolute inset-0 z-30" />
         <div ref={joinsLayerRef} className="pointer-events-none absolute inset-0 z-22" />
         <div

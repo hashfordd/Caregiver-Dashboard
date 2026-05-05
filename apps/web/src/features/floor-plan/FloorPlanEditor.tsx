@@ -190,7 +190,7 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
     return (
       <div className="space-y-3">
         <Skeleton className="h-12 w-full" />
-        <Skeleton className="h-[600px] w-full" />
+        <Skeleton className="h-[min(82vh,960px)] min-h-[640px] w-full" />
       </div>
     );
   }
@@ -257,7 +257,7 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
         </p>
       )}
 
-      <div className="relative">
+      <div className="relative h-[min(82vh,960px)] min-h-[640px] w-full">
         <FloorPlanCanvas
           ref={canvasRef}
           initialJson={initialJson}

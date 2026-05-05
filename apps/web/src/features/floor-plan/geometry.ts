@@ -73,14 +73,24 @@ export function lineWorldEndpoints(line: fabric.Line): { start: WorldPoint; end:
  *  recomputes width/height and re-positions the line so its centre lands
  *  at the new geometric centre of the endpoints. Setting left/top by
  *  hand to `Math.min(...)` was making walls jump (their centre snapped
- *  to the bbox top-left). */
+ *  to the bbox top-left).
+ *
+ *  We round the resulting endpoints to the nearest integer pixel before
+ *  storing them. Each fabric drag introduces fractional-pixel drift
+ *  (mouse delta is typically not an integer), and that drift accumulates
+ *  across drags. After enough cycles, two endpoints that USED to be at
+ *  the same coord can drift into different `Math.round()` buckets, at
+ *  which point the partner-finder reports them as disconnected and the
+ *  enclosed-room shading + connected-drag silently break. Rounding the
+ *  drag delta is enough to keep neighbouring endpoints locked together
+ *  forever. */
 export function canonicaliseLine(line: fabric.Line): void {
   const { start, end } = lineWorldEndpoints(line);
   line.set({
-    x1: start.x,
-    y1: start.y,
-    x2: end.x,
-    y2: end.y,
+    x1: Math.round(start.x),
+    y1: Math.round(start.y),
+    x2: Math.round(end.x),
+    y2: Math.round(end.y),
     scaleX: 1,
     scaleY: 1,
     angle: 0,
