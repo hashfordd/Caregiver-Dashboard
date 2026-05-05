@@ -32,4 +32,7 @@ export interface FloorPlanCanvasHandle {
   getSelectedLinePixelLength: () => number | null;
   deleteSelected: () => void;
   countObjects: () => { walls: number; rooms: number; furniture: number };
+  undo: () => void;
+  redo: () => void;
+  fitToContent: () => void;
 }

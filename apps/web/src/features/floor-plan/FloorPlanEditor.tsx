@@ -30,6 +30,7 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
   const [pixelLength, setPixelLength] = useState<number | null>(null);
   const [scale, setScale] = useState<number | null>(null);
   const [savedTone, setSavedTone] = useState<string | null>(null);
+  const [isEmpty, setIsEmpty] = useState(true);
 
   // Hydrate scale from the loaded plan once.
   useEffect(() => {
@@ -93,6 +94,18 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
     canvasRef.current?.deleteSelected();
   }, []);
 
+  const handleUndo = useCallback(() => {
+    canvasRef.current?.undo();
+  }, []);
+
+  const handleRedo = useCallback(() => {
+    canvasRef.current?.redo();
+  }, []);
+
+  const handleFitToContent = useCallback(() => {
+    canvasRef.current?.fitToContent();
+  }, []);
+
   if (planQuery.isLoading) {
     return (
       <div className="space-y-3">
@@ -117,7 +130,6 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
   }
 
   const initialJson = planQuery.data?.canvas_json ?? null;
-  const isFresh = !planQuery.data;
   const calibrationCount = calibration.data ?? 0;
 
   return (
@@ -134,6 +146,9 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
         onSetScale={handleSetScaleClick}
         onSave={handleSave}
         onDelete={handleDelete}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
+        onFitToContent={handleFitToContent}
       />
 
       {savedTone && (
@@ -146,15 +161,32 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
         </p>
       )}
 
-      <FloorPlanCanvas ref={canvasRef} initialJson={initialJson} onDirty={handleDirty} />
-
-      {isFresh && (
-        <EmptyState
-          icon={<LayoutGrid className="h-10 w-10" />}
-          title="A blank canvas"
-          description="Start with the outer walls of the patient's space, then add internal rooms and key furniture. One floor plan per patient in V1; multi-floor support is V2."
+      <div className="relative">
+        <FloorPlanCanvas
+          ref={canvasRef}
+          initialJson={initialJson}
+          scale={scale}
+          onDirty={handleDirty}
+          onModeChange={setMode}
+          onIsEmptyChange={setIsEmpty}
         />
-      )}
+        {isEmpty && (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
+            <div className="pointer-events-auto max-w-md">
+              <EmptyState
+                icon={<LayoutGrid className="h-10 w-10" />}
+                title="A blank canvas"
+                description="Start with the outer walls of the patient's space, then add internal rooms and key furniture. Hold Shift while drawing a wall to lock it horizontal or vertical; hold Space to pan; scroll to zoom."
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        Shortcuts: Cmd/Ctrl+Z undo · Cmd/Ctrl+Shift+Z redo · Backspace delete · Shift while drawing
+        for ortho · Space + drag to pan · scroll to zoom
+      </p>
 
       <ScaleDialog
         open={scaleOpen}

@@ -22,26 +22,36 @@ vi.mock('@/features/floor-plan/floorPlanQueries', () => ({
 // handle. Avoids loading Fabric in jsdom and keeps tests focused on the
 // editor's orchestration.
 vi.mock('@/features/floor-plan/FloorPlanCanvas', () => {
-  const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, { onDirty: () => void }>(
-    ({ onDirty }, ref) => {
-      useImperativeHandle(ref, () => ({
-        setMode: () => {},
-        setFurnitureKind: () => {},
-        serialize: () => ({ objects: [{ type: 'rect' }] }),
-        deserialize: async () => {},
-        getSelectedLinePixelLength: () => 200,
-        deleteSelected: () => {},
-        countObjects: () => ({ walls: 0, rooms: 0, furniture: 1 }),
-      }));
-      return (
-        <div data-testid="floor-plan-canvas">
-          <button type="button" onClick={onDirty} aria-label="mark dirty">
-            mark dirty
-          </button>
-        </div>
-      );
-    },
-  );
+  const FloorPlanCanvas = forwardRef<
+    FloorPlanCanvasHandle,
+    {
+      onDirty?: () => void;
+      onIsEmptyChange?: (empty: boolean) => void;
+    }
+  >(({ onDirty, onIsEmptyChange }, ref) => {
+    useImperativeHandle(ref, () => ({
+      setMode: () => {},
+      setFurnitureKind: () => {},
+      serialize: () => ({ objects: [{ type: 'rect' }] }),
+      deserialize: async () => {},
+      getSelectedLinePixelLength: () => 200,
+      deleteSelected: () => {},
+      countObjects: () => ({ walls: 0, rooms: 0, furniture: 1 }),
+      undo: () => {},
+      redo: () => {},
+      fitToContent: () => {},
+    }));
+    return (
+      <div data-testid="floor-plan-canvas">
+        <button type="button" onClick={onDirty} aria-label="mark dirty">
+          mark dirty
+        </button>
+        <button type="button" onClick={() => onIsEmptyChange?.(false)} aria-label="mark non-empty">
+          mark non-empty
+        </button>
+      </div>
+    );
+  });
   return { FloorPlanCanvas };
 });
 

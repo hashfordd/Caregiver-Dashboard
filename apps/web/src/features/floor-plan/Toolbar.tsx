@@ -2,12 +2,15 @@ import {
   Armchair,
   Bed,
   Building2,
+  Maximize2,
   MousePointer2,
+  Redo2,
   Ruler,
   Save,
   Slash,
   Square,
   Trash2,
+  Undo2,
   Utensils,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -26,6 +29,9 @@ interface ToolbarProps {
   onSetScale: () => void;
   onSave: () => void;
   onDelete: () => void;
+  onUndo: () => void;
+  onRedo: () => void;
+  onFitToContent: () => void;
 }
 
 const FURNITURE_OPTIONS: { kind: FurnitureKind; icon: typeof Bed; label: string }[] = [
@@ -48,6 +54,9 @@ export function Toolbar({
   onSetScale,
   onSave,
   onDelete,
+  onUndo,
+  onRedo,
+  onFitToContent,
 }: ToolbarProps) {
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card p-2">
@@ -83,8 +92,41 @@ export function Toolbar({
         />
       ))}
       <div className="mx-1 h-6 w-px bg-border" />
-      <Button variant="ghost" size="sm" onClick={onDelete} aria-label="Delete selected">
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={onUndo}
+        aria-label="Undo (Cmd+Z)"
+        title="Undo (Cmd/Ctrl + Z)"
+      >
+        <Undo2 className="h-4 w-4" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={onRedo}
+        aria-label="Redo (Cmd+Shift+Z)"
+        title="Redo (Cmd/Ctrl + Shift + Z)"
+      >
+        <Redo2 className="h-4 w-4" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={onDelete}
+        aria-label="Delete selected"
+        title="Delete selected (Backspace)"
+      >
         <Trash2 className="h-4 w-4" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={onFitToContent}
+        aria-label="Fit to content"
+        title="Fit drawing to view"
+      >
+        <Maximize2 className="h-4 w-4" />
       </Button>
       <div className="mx-1 h-6 w-px bg-border" />
       <Button variant="outline" size="sm" onClick={onSetScale} disabled={!canSetScale}>
