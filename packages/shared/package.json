@@ -9,7 +9,9 @@
   "exports": {
     ".": "./src/index.ts",
     "./mqtt": "./src/mqtt/index.ts",
-    "./mqtt/*": "./src/mqtt/*.ts"
+    "./mqtt/*": "./src/mqtt/*.ts",
+    "./positioning": "./src/positioning/index.ts",
+    "./positioning/*": "./src/positioning/*.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
