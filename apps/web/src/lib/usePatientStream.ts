@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import type { SensorReadingRow } from '@alzcare/shared';
+import type { SignalsMessage } from '@alzcare/shared/mqtt';
 import { supabase } from '@/lib/supabase';
 
-export type { SensorReadingRow };
+export type { SensorReadingRow, SignalsMessage };
 
 /**
  * Realtime subscription for a single patient. Subscribes to INSERTs on
@@ -49,6 +50,11 @@ export interface PatientStreamCallbacks {
   onSensorReading?: (row: SensorReadingRow) => void;
   onPositionEstimate?: (row: PositionEstimateRow) => void;
   onAlert?: (row: AlertRow) => void;
+  /** F6: BLE/Wi-Fi RSSI samples re-broadcast by the mqtt_bridge after
+   *  validation. Signals are deliberately not persisted (Phase 2 design;
+   *  see PHASES.md) so they reach the dashboard via a Supabase Realtime
+   *  broadcast channel `patient:<id>:signals` instead of postgres_changes. */
+  onSignals?: (msg: SignalsMessage) => void;
   onError?: (error: Error) => void;
 }
 
@@ -58,6 +64,7 @@ export interface PatientStreamLastSeen {
   sensor: number | null;
   position: number | null;
   alert: number | null;
+  signals: number | null;
 }
 
 export interface PatientStreamHandle {
@@ -69,6 +76,7 @@ const INITIAL_LAST_SEEN: PatientStreamLastSeen = {
   sensor: null,
   position: null,
   alert: null,
+  signals: null,
 };
 
 export function usePatientStream(
@@ -140,8 +148,24 @@ export function usePatientStream(
         }
       });
 
+    // F6 signals broadcast lives on its own channel because Supabase
+    // Realtime requires postgres_changes and broadcast events on
+    // separate subscriptions in V1. Status of this channel is not
+    // surfaced — the postgres-channel `status` is enough for the header
+    // pill, and signals are best-effort by design.
+    const signalsChannel: RealtimeChannel = supabase
+      .channel(`patient:${patientId}:signals`)
+      .on('broadcast', { event: 'signals' }, (event) => {
+        const payload = (event as { payload?: unknown }).payload as SignalsMessage | undefined;
+        if (!payload) return;
+        setLastSeen((prev) => ({ ...prev, signals: Date.now() }));
+        callbacksRef.current.onSignals?.(payload);
+      })
+      .subscribe();
+
     return () => {
       void supabase.removeChannel(channel);
+      void supabase.removeChannel(signalsChannel);
       setStatus('idle');
     };
   }, [patientId]);

@@ -6,7 +6,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useFloorPlan } from '@/features/floor-plan/floorPlanQueries';
-import { useDiscoveredBeaconsStore } from '@/lib/stores/discoveredBeaconsStore';
+import { publishFakeSignals } from '@/lib/devSignals';
 import {
   BeaconPlacementCanvas,
   placedCount,
@@ -200,34 +200,23 @@ function SectionHeader({ title, subtitle, right }: SectionHeaderProps) {
   );
 }
 
-/** Dev-only fixture: drops random fake MAC samples into the discovered
- *  store so slice 2's UI is demo-able before slice 5's real bridge
- *  broadcast is wired up. Removed once `usePatientStream.onSignals` is
- *  fanning out — see slice 4. */
+/** Dev-only fixture: publishes a fake validated SignalsMessage on the
+ *  same broadcast channel the mqtt_bridge will publish on once slice 5
+ *  ships. Exercises the full subscribe → context → store pipeline so
+ *  the demo path matches the real path. Also reachable from the browser
+ *  console as `window.__devSignals(patientId)`. */
 function DevInjectButton({ patientId }: { patientId: string }) {
-  const pushSample = useDiscoveredBeaconsStore((s) => s.pushSample);
   return (
     <Button
       size="sm"
       variant="outline"
       onClick={() => {
-        const mac = randomMac();
-        const rssi = -55 - Math.floor(Math.random() * 30);
-        pushSample(patientId, mac, rssi);
+        void publishFakeSignals(patientId);
       }}
     >
-      Inject fake MAC
+      Inject fake signals
     </Button>
   );
-}
-
-function randomMac(): string {
-  const hex = () =>
-    Math.floor(Math.random() * 256)
-      .toString(16)
-      .padStart(2, '0')
-      .toUpperCase();
-  return Array.from({ length: 6 }, hex).join(':');
 }
 
 interface BeaconCardProps {

@@ -58,15 +58,18 @@ beforeEach(() => {
 });
 
 describe('PatientStreamProvider', () => {
-  it('subscribes to the patient channel exactly once', () => {
+  it('subscribes to the patient channel and the signals broadcast channel exactly once each', () => {
     render(
       <PatientStreamProvider patientId="p1">
         <SensorListener onRow={() => {}} />
         <SensorListener onRow={() => {}} />
       </PatientStreamProvider>,
     );
-    expect(channelMock).toHaveBeenCalledTimes(1);
+    // Two channels per patient session: postgres-changes (sensor /
+    // position / alert) plus the F6 signals broadcast.
+    expect(channelMock).toHaveBeenCalledTimes(2);
     expect(channelMock).toHaveBeenCalledWith('patient:p1');
+    expect(channelMock).toHaveBeenCalledWith('patient:p1:signals');
   });
 
   it('fans a single received row out to multiple registered listeners', () => {
@@ -117,7 +120,7 @@ describe('PatientStreamProvider', () => {
     expect(cbB).toHaveBeenCalledTimes(1);
   });
 
-  it('removes the channel when the provider unmounts', () => {
+  it('removes both channels when the provider unmounts', () => {
     const { unmount } = render(
       <PatientStreamProvider patientId="p1">
         <div />
@@ -125,6 +128,8 @@ describe('PatientStreamProvider', () => {
     );
     expect(removeChannelMock).not.toHaveBeenCalled();
     unmount();
-    expect(removeChannelMock).toHaveBeenCalledTimes(1);
+    // Postgres-changes channel + F6 signals broadcast channel both torn
+    // down. Leaking either leaks subscriptions across patient routes.
+    expect(removeChannelMock).toHaveBeenCalledTimes(2);
   });
 });

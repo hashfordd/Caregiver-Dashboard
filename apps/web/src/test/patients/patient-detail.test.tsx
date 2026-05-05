@@ -116,9 +116,12 @@ describe('PatientDetailPage', () => {
     fireEvent.click(screen.getByRole('tab', { name: /live/i }));
 
     await waitFor(() => {
-      expect(channelMock).toHaveBeenCalledTimes(1);
+      // F6 added a second broadcast channel for signals — both still
+      // open exactly once and stay subscribed across tab switches.
+      expect(channelMock).toHaveBeenCalledTimes(2);
     });
     expect(channelMock).toHaveBeenCalledWith(`patient:${PATIENT_ID}`);
+    expect(channelMock).toHaveBeenCalledWith(`patient:${PATIENT_ID}:signals`);
     expect(removeChannelMock).not.toHaveBeenCalled();
   });
 });
