@@ -186,6 +186,27 @@ export function findConnectedPartners(
   return out;
 }
 
+/** Walk the wall connectivity graph from `start`, returning every wall
+ *  reachable through chains of shared endpoints. Used so dragging any
+ *  member of a connected room translates the entire room as a rigid
+ *  group rather than just rubber-banding the shared corner. */
+export function findConnectedWallGroup(canvas: fabric.Canvas, start: fabric.Line): fabric.Line[] {
+  const visited = new Set<fabric.Line>([start]);
+  const queue: fabric.Line[] = [start];
+  while (queue.length > 0) {
+    const w = queue.shift()!;
+    for (const idx of [0, 1] as const) {
+      for (const p of findConnectedPartners(canvas, w, idx)) {
+        if (!visited.has(p.wall)) {
+          visited.add(p.wall);
+          queue.push(p.wall);
+        }
+      }
+    }
+  }
+  return [...visited];
+}
+
 /** Set a single endpoint of a wall in world coords. Triggers Fabric's
  *  internal _setWidthHeight so width/height/centre stay correct. */
 export function setLineEndpoint(line: fabric.Line, endpointIdx: 0 | 1, x: number, y: number): void {

@@ -7,6 +7,7 @@ import {
   canonicaliseLine,
   collectEndpoints,
   findConnectedPartners,
+  findConnectedWallGroup,
   findJoins,
   lineWorldEndpoints,
   polygonWorldVertices,
@@ -151,13 +152,15 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     const panningRef = useRef(false);
     const panOriginRef = useRef<{ x: number; y: number } | null>(null);
 
-    // Endpoint partners that should follow the active wall when it
-    // translates (whole-wall fabric drag) or its endpoint gets dragged via
-    // a DOM handle. Captured at drag start, applied each frame.
+    // Whole-wall fabric drag captures the full connected component once,
+    // then translates every other wall by the same delta each frame so
+    // the joined room moves rigidly. (Endpoint dragging via a DOM handle
+    // is the rubber-band case — a different code path that only moves
+    // one shared coord.)
     const translateRef = useRef<{
       wall: fabric.Line;
       startCenter: { x: number; y: number };
-      partners: { wall: fabric.Line; endpointIdx: 0 | 1; anchor: WorldPoint }[];
+      followers: { wall: fabric.Line; startCenter: { x: number; y: number } }[];
     } | null>(null);
 
     // Linear history: stack of serialised states; idx is the current entry.
@@ -672,26 +675,22 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
 
         const mode = modeRef.current;
         if (mode === 'select') {
-          // Capture potential whole-wall drag state up front so partner
-          // endpoints can follow in lockstep. We must do this *before*
-          // Fabric begins translating, otherwise startCenter/anchor read
-          // mid-drag and the join silently drifts.
+          // Capture the full connected wall group up front so the rigid
+          // translate can apply the same delta to every member each
+          // frame. Doing this on first object:moving instead would read
+          // mid-drag positions and the followers would drift.
           const target = canvas.findTarget(opt.e);
           if (target instanceof fabric.Line && kindOf(target) === 'wall') {
-            const ends = lineWorldEndpoints(target);
+            const group = findConnectedWallGroup(canvas, target);
             translateRef.current = {
               wall: target,
               startCenter: { x: target.left ?? 0, y: target.top ?? 0 },
-              partners: [
-                ...findConnectedPartners(canvas, target, 0).map((p) => ({
-                  ...p,
-                  anchor: ends.start,
+              followers: group
+                .filter((w) => w !== target)
+                .map((w) => ({
+                  wall: w,
+                  startCenter: { x: w.left ?? 0, y: w.top ?? 0 },
                 })),
-                ...findConnectedPartners(canvas, target, 1).map((p) => ({
-                  ...p,
-                  anchor: ends.end,
-                })),
-              ],
             };
           } else {
             translateRef.current = null;
@@ -1015,8 +1014,18 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         if (!t || !state || state.wall !== t) return;
         const dx = (t.left ?? 0) - state.startCenter.x;
         const dy = (t.top ?? 0) - state.startCenter.y;
-        for (const p of state.partners) {
-          setLineEndpoint(p.wall, p.endpointIdx, p.anchor.x + dx, p.anchor.y + dy);
+        // Translate every connected wall by the same delta so the room
+        // moves as a rigid unit. We update left/top — fabric.Line doesn't
+        // auto-recompute x1/y1/x2/y2 for left/top changes, but
+        // calcTransformMatrix uses left/top so the visual is correct.
+        // canonicaliseLine on object:modified later reconciles the
+        // stored coords back to world space.
+        for (const f of state.followers) {
+          f.wall.set({
+            left: f.startCenter.x + dx,
+            top: f.startCenter.y + dy,
+          });
+          f.wall.setCoords();
         }
         renderHandles();
         renderLabelsAndJoins();
@@ -1027,10 +1036,10 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         const t = opt.target;
         if (t instanceof fabric.Line && kindOf(t) === 'wall') {
           canonicaliseLine(t);
-          // Also canonicalise any partners that were translated during
-          // the drag so their stored coords stay world-space.
+          // Also canonicalise every follower that was translated during
+          // the drag so their stored x1/y1/x2/y2 stay in world space.
           if (translateRef.current && translateRef.current.wall === t) {
-            for (const p of translateRef.current.partners) canonicaliseLine(p.wall);
+            for (const f of translateRef.current.followers) canonicaliseLine(f.wall);
           }
         } else if (t instanceof fabric.Polygon && kindOf(t) === 'room') {
           setPolygonVertices(t, polygonWorldVertices(t));
