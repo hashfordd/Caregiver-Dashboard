@@ -19,6 +19,21 @@ export type ProcessOutcome =
   | { kind: 'events'; persisted: false; reason: 'phase-4' | 'validation'; details?: string }
   | { kind: 'unknown'; persisted: false; error: 'topic'; details: string };
 
+/** Bridge-side env passed in (rather than read directly) so tests can
+ *  drive the position-estimator POST without setting Deno env vars. */
+export interface BridgeEnv {
+  supabaseUrl: string;
+  serviceRoleKey: string;
+}
+
+/** F8 invocation timeout. The bridge is fire-and-await so the warn
+ *  surfaces in the same log stream as the originating signals payload,
+ *  but the estimator should never block telemetry processing — 1500 ms
+ *  is plenty for a healthy edge function (which does ~4 DB reads + a
+ *  pure pipeline + 1 insert in <100 ms typical) and short enough that
+ *  the next signals tick (~1 s away) still arrives on schedule. */
+const POSITION_ESTIMATOR_TIMEOUT_MS = 1500;
+
 // Per-patient broadcast-channel cache. Each call to supabase.channel(name)
 // creates a new socket subscription; without caching, every signals
 // message would leak a subscription. The bridge process holds these for
@@ -46,6 +61,7 @@ export async function processMessage(
   topic: string,
   message: unknown,
   supabase: SupabaseClient,
+  env?: BridgeEnv,
 ): Promise<ProcessOutcome> {
   const parsed = parseTopic(topic);
   if (!parsed) {
@@ -144,6 +160,14 @@ export async function processMessage(
         details: (err as Error).message,
       };
     }
+    // F8: fire-and-await the position_estimator. Failure here is
+    // logged but doesn't change the outcome — the next signals payload
+    // arrives in ~1 s, and telemetry must never block on positioning.
+    // We await so warns are sequenced with the originating broadcast
+    // in the log stream; the helper swallows its own errors.
+    if (env != null) {
+      await invokePositionEstimator(env, m);
+    }
     return { kind: 'signals', persisted: false, reason: 'broadcast' };
   }
 
@@ -162,4 +186,51 @@ export async function processMessage(
   }
 
   return { kind: 'unknown', persisted: false, error: 'topic', details: 'unhandled kind' };
+}
+
+/** Fire-and-await POST to the position_estimator. Wraps the fetch in
+ *  AbortSignal.timeout so a slow estimator doesn't stall the bridge,
+ *  and try/catches every failure mode (timeout, network, non-2xx) so
+ *  the broadcast outcome is stable regardless of the estimator's state.
+ *
+ *  Errors emit a structured warn carrying the originating payload's
+ *  patient_id + recorded_at so log scraping can correlate dropped
+ *  estimates against the signal stream. */
+async function invokePositionEstimator(
+  env: BridgeEnv,
+  message: { patient_id: string; recorded_at: string },
+): Promise<void> {
+  const url = `${env.supabaseUrl}/functions/v1/position_estimator`;
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${env.serviceRoleKey}`,
+      },
+      body: JSON.stringify(message),
+      signal: AbortSignal.timeout(POSITION_ESTIMATOR_TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          msg: 'mqtt_bridge: position_estimator non-2xx',
+          status: res.status,
+          patient_id: message.patient_id,
+          recorded_at: message.recorded_at,
+        }),
+      );
+    }
+  } catch (err) {
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        msg: 'mqtt_bridge: position_estimator failed',
+        err: (err as Error).message ?? String(err),
+        patient_id: message.patient_id,
+        recorded_at: message.recorded_at,
+      }),
+    );
+  }
 }

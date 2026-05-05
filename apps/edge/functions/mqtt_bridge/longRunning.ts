@@ -71,7 +71,10 @@ client.on('message', async (topic, payload) => {
     log('warn', 'invalid JSON payload', { topic, err: String(e) });
     return;
   }
-  const outcome = await processMessage(topic, message, supabase);
+  const outcome = await processMessage(topic, message, supabase, {
+    supabaseUrl: SUPABASE_URL,
+    serviceRoleKey: SUPABASE_SERVICE_ROLE_KEY,
+  });
   if (!outcome.persisted) {
     const isExpectedNoOp =
       ('reason' in outcome && outcome.reason !== 'validation') ||

@@ -193,6 +193,119 @@ describe('processMessage', () => {
     expect(supabase.__sendMock).not.toHaveBeenCalled();
   });
 
+  describe('F8 estimator invocation', () => {
+    const ENV = {
+      supabaseUrl: 'http://127.0.0.1:54321',
+      serviceRoleKey: 'service-role-key-test',
+    };
+    const VALID_SIGNALS = {
+      v: 1,
+      patient_id: PATIENT_ID,
+      device_id: DEVICE_ID,
+      recorded_at: '2026-05-04T12:00:00.000Z',
+      ble: [{ mac: 'AA:BB:CC:DD:EE:01', rssi: -55 }],
+      wifi: [],
+    };
+    let warnSpy: ReturnType<typeof vi.spyOn>;
+    beforeEach(() => {
+      warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    });
+
+    it('POSTs the validated payload to /functions/v1/position_estimator with service-role auth', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      vi.stubGlobal('fetch', fetchMock);
+      try {
+        const outcome = await processMessage(
+          `device/${PATIENT_ID}/signals`,
+          VALID_SIGNALS,
+          supabase,
+          ENV,
+        );
+        expect(outcome).toMatchObject({ kind: 'signals', reason: 'broadcast' });
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        const [url, init] = fetchMock.mock.calls[0]!;
+        expect(url).toBe('http://127.0.0.1:54321/functions/v1/position_estimator');
+        expect((init as RequestInit).method).toBe('POST');
+        const headers = (init as RequestInit).headers as Record<string, string>;
+        expect(headers.authorization).toBe('Bearer service-role-key-test');
+        expect(headers['content-type']).toBe('application/json');
+        expect(JSON.parse((init as RequestInit).body as string)).toMatchObject({
+          patient_id: PATIENT_ID,
+          recorded_at: VALID_SIGNALS.recorded_at,
+        });
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('does NOT POST when the bridge is invoked without env (back-compat for existing callers)', async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      try {
+        await processMessage(`device/${PATIENT_ID}/signals`, VALID_SIGNALS, supabase);
+        expect(fetchMock).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('logs a warn but still returns broadcast on a non-2xx estimator response', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi
+          .fn()
+          .mockResolvedValue(
+            new Response(JSON.stringify({ ok: false, error: 'db_error' }), { status: 500 }),
+          ),
+      );
+      try {
+        const outcome = await processMessage(
+          `device/${PATIENT_ID}/signals`,
+          VALID_SIGNALS,
+          supabase,
+          ENV,
+        );
+        expect(outcome).toMatchObject({ kind: 'signals', reason: 'broadcast' });
+        expect(warnSpy).toHaveBeenCalled();
+        const logged = JSON.parse(warnSpy.mock.calls[0]![0] as string);
+        expect(logged).toMatchObject({
+          level: 'warn',
+          msg: 'mqtt_bridge: position_estimator non-2xx',
+          status: 500,
+          patient_id: PATIENT_ID,
+          recorded_at: VALID_SIGNALS.recorded_at,
+        });
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('logs a warn but still returns broadcast when the estimator fetch rejects', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('socket closed')));
+      try {
+        const outcome = await processMessage(
+          `device/${PATIENT_ID}/signals`,
+          VALID_SIGNALS,
+          supabase,
+          ENV,
+        );
+        expect(outcome).toMatchObject({ kind: 'signals', reason: 'broadcast' });
+        expect(warnSpy).toHaveBeenCalled();
+        const logged = JSON.parse(warnSpy.mock.calls[0]![0] as string);
+        expect(logged).toMatchObject({
+          level: 'warn',
+          msg: 'mqtt_bridge: position_estimator failed',
+          err: 'socket closed',
+          patient_id: PATIENT_ID,
+        });
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+  });
+
   it('treats valid events as a phase-4 no-op (no insert)', async () => {
     const outcome = await processMessage(
       `device/${PATIENT_ID}/events`,

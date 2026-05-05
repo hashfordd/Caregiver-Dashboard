@@ -42,7 +42,10 @@ Deno.serve(async (req: Request) => {
     return json({ error: 'invalid JSON' }, 400);
   }
 
-  const outcome = await processMessage(body.topic, body.message, supabase);
+  const outcome = await processMessage(body.topic, body.message, supabase, {
+    supabaseUrl: SUPABASE_URL,
+    serviceRoleKey: SUPABASE_SERVICE_ROLE_KEY,
+  });
 
   if (outcome.persisted) return json(outcome, 202);
   // Validation failures get 400 so the mock generator (or firmware) can

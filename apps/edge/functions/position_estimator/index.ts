@@ -1,44 +1,33 @@
-// Edge function: position_estimator
-// Triggered after a `signals` payload is ingested. Computes an indoor
-// (trilateration + fingerprint) or outdoor (GPS) position estimate and writes
-// a row to `position_estimates`.
+// HTTP entry point for position_estimator. Triggered by mqtt_bridge
+// after it validates a SignalsMessage. The orchestration logic lives
+// in handler.ts so it can be unit-tested against a mocked Supabase
+// client (mirrors mqtt_bridge/processMessage.ts).
 //
-// TODO: F8 / POS-03..07 — implement:
-//   - RSSI → distance via per-beacon path-loss model (POS-01/POS-02)
-//   - Trilateration solver wrapping Trilateration.js (POS-03)
-//   - kNN fingerprint matcher over calibration_points (POS-04)
-//   - Fusion + confidence scoring (POS-05/POS-07)
-//   - Smoothing filter to suppress jitter (POS-06)
-//   - Indoor↔outdoor mode switch with hysteresis (POS-08)
+// CROSS_CUTTING §1: this entry holds the service-role key in env and
+// never exposes it to clients. The handler additionally compares the
+// incoming Authorization header against the same key as defence-in-depth
+// — `verify_jwt = true` in supabase/config.toml is the first line of
+// defence.
 
-interface WebhookPayload {
-  type: 'INSERT' | 'UPDATE' | 'DELETE';
-  table: string;
-  schema: string;
-  record: unknown;
-  old_record: unknown | null;
+import { createClient } from '@supabase/supabase-js';
+import { handlePositionEstimateRequest } from './handler.ts';
+
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+
+if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  console.error(
+    JSON.stringify({
+      level: 'error',
+      msg: 'position_estimator: missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY',
+    }),
+  );
 }
 
-Deno.serve(async (req: Request) => {
-  if (req.method !== 'POST') {
-    return json({ error: 'POST only' }, 405);
-  }
-
-  let payload: WebhookPayload;
-  try {
-    payload = (await req.json()) as WebhookPayload;
-  } catch {
-    return json({ error: 'invalid JSON' }, 400);
-  }
-
-  // TODO: F8 — fetch beacons + calibration_points for this patient, run the
-  //            estimator, insert position_estimates row.
-  return json({ ok: true, todo: 'F8/POS-03', received: payload.type }, 202);
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
 });
 
-function json(body: unknown, status: number): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
+Deno.serve((req: Request) =>
+  handlePositionEstimateRequest(req, supabase, { serviceRoleKey: SUPABASE_SERVICE_ROLE_KEY }),
+);
