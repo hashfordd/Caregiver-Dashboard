@@ -36,6 +36,12 @@ Format: `- **<area>** — what + why deferred + reference (feature ID / task ID)
 
 - **F7 calibration: quality glyph on placed dots** — Captured points all passed thresholds at write time, so all written rows are "good" — but caregivers may still want to distinguish "barely passed" from "well in spec" visually on the canvas. Render a small quality indicator (e.g. ring colour scale by stddev) on each dot. Requires no schema change. (F7 / UI-10)
 
+- **F8 positioning: beacon calibration sub-flow** — `beacons.tx_power` and `beacons.rssi_at_1m` columns exist but F6 leaves them NULL on insert. F8's path-loss model substitutes `DEFAULT_RSSI_AT_1M = -59` dBm (iBeacon datasheet midpoint) and emits a per-beacon warning. This is the dominant systematic error in the trilateration path; an in-app "stand the wearable 1 m from this beacon, hold for 5 s" capture flow inside the Beacons sub-tab would let caregivers calibrate per-beacon. Tighten when the F8 accuracy report shows the default is the dominant error term. (F8 / POS-02)
+
+- **F8 positioning: full mode-switch hysteresis** — F8.md POS-08 calls for ≥ 5 s of consistent candidate condition before flipping indoor↔outdoor. V1 ships the candidate directly without hysteresis because the recoverable signal from `position_estimates` is the _applied_ mode, not the per-tick candidate. Implementing real hysteresis without per-patient in-memory state requires adding `indoor_confidence` (and possibly `gps_strong`) columns so the orchestrator can count consecutive prior candidates from the row history. Additive migration; F11 zone-rule firing tolerates the V1 single-tick decisions. (F8 / POS-08)
+
+- **F8 positioning: position_estimates retention** — Rows accumulate at ~1 Hz × patients. At one patient × one week that's ~600k rows; at scale a 1-min aggregate compactor (CROSS_CUTTING §8) is needed before any deployment with >1 patient × week of history. (F8 / Phase 5)
+
 - **Husky pre-commit aggressiveness** — `lint-staged` runs ESLint + Prettier on staged files. Add a typecheck stage if false-positive PRs become a problem.
 
 - **Auth signup flow** — `LoginPage` only handles sign-in (password + magic link). Signup with role selection (professional / family) is F1 feature work. (UI-03)
