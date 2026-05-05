@@ -1023,55 +1023,55 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       };
 
       // ─── Connected wall translate (whole-wall fabric drag) ──────────────
-      canvas.on(
-        'object:moving',
-        (opt: {
-          target?: fabric.Object;
-          transform?: { original?: { left?: number; top?: number } };
-        }) => {
-          const t = opt.target;
-          if (!(t instanceof fabric.Line) || kindOf(t) !== 'wall') return;
-          if (!editingRef.current) return;
+      // Capture state on selection — fabric just made the wall active
+      // and hasn't started any drag, so left/top are the pre-drag
+      // position and followers are still at their original spots.
+      // Doing this in mouse:down was racing with Fabric's hit-test;
+      // doing it in object:moving was reading mid-drag positions for
+      // some flows.
+      const captureTranslateState = (target: fabric.Object | null | undefined) => {
+        if (!editingRef.current || !target) {
+          translateRef.current = null;
+          return;
+        }
+        if (target instanceof fabric.Line && kindOf(target) === 'wall') {
+          const group = findConnectedWallGroup(canvas, target);
+          translateRef.current = {
+            wall: target,
+            startCenter: { x: target.left ?? 0, y: target.top ?? 0 },
+            followers: group
+              .filter((w) => w !== target)
+              .map((w) => ({
+                wall: w,
+                startCenter: { x: w.left ?? 0, y: w.top ?? 0 },
+              })),
+          };
+        } else {
+          translateRef.current = null;
+        }
+      };
 
-          // Lazy-capture state on the first moving event of this drag.
-          // Fabric records the original left/top (centre) on
-          // transform.original, so we get the TRUE drag-start position
-          // even though fabric has already nudged t.left by the time the
-          // first object:moving fires. Followers haven't been touched
-          // yet, so their current left/top is still their original.
-          if (!translateRef.current || translateRef.current.wall !== t) {
-            const origLeft = opt.transform?.original?.left ?? t.left ?? 0;
-            const origTop = opt.transform?.original?.top ?? t.top ?? 0;
-            const group = findConnectedWallGroup(canvas, t);
-            translateRef.current = {
-              wall: t,
-              startCenter: { x: origLeft, y: origTop },
-              followers: group
-                .filter((w) => w !== t)
-                .map((w) => ({
-                  wall: w,
-                  startCenter: { x: w.left ?? 0, y: w.top ?? 0 },
-                })),
-            };
-          }
-
-          const state = translateRef.current;
-          const dx = (t.left ?? 0) - state.startCenter.x;
-          const dy = (t.top ?? 0) - state.startCenter.y;
-          // Translate every connected wall by the same delta so the
-          // room moves as a rigid unit.
-          for (const f of state.followers) {
-            f.wall.set({
-              left: f.startCenter.x + dx,
-              top: f.startCenter.y + dy,
-            });
-            f.wall.setCoords();
-          }
-          renderHandles();
-          renderLabelsAndJoins();
-          renderShading();
-        },
-      );
+      canvas.on('object:moving', (opt: { target?: fabric.Object }) => {
+        const t = opt.target;
+        const state = translateRef.current;
+        if (!t || !state || state.wall !== t) return;
+        if (!editingRef.current) return;
+        const dx = (t.left ?? 0) - state.startCenter.x;
+        const dy = (t.top ?? 0) - state.startCenter.y;
+        for (const f of state.followers) {
+          f.wall.set({
+            left: f.startCenter.x + dx,
+            top: f.startCenter.y + dy,
+          });
+          f.wall.setCoords();
+        }
+        // Defensive — fabric requestRenderAll runs after our handler in
+        // most paths, but make it explicit so followers always paint.
+        canvas.requestRenderAll();
+        renderHandles();
+        renderLabelsAndJoins();
+        renderShading();
+      });
 
       const handleObjectModified = (opt: { target?: fabric.Object }) => {
         if (!interactiveRef.current || replayingRef.current) return;
@@ -1086,7 +1086,10 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         } else if (t instanceof fabric.Polygon && kindOf(t) === 'room') {
           setPolygonVertices(t, polygonWorldVertices(t));
         }
-        translateRef.current = null;
+        // Re-capture from the *new* positions so a subsequent drag of
+        // the same wall (without deselecting first) still finds the
+        // group and the right anchor centres.
+        captureTranslateState(canvas.getActiveObject());
         emitDirty();
         snapshot();
         emitSelection();
@@ -1123,14 +1126,17 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       canvas.on('selection:created', () => {
         emitSelection();
         renderHandles();
+        captureTranslateState(canvas.getActiveObject());
       });
       canvas.on('selection:updated', () => {
         emitSelection();
         renderHandles();
+        captureTranslateState(canvas.getActiveObject());
       });
       canvas.on('selection:cleared', () => {
         emitSelection();
         renderHandles();
+        translateRef.current = null;
       });
 
       // ─── Initial load ───────────────────────────────────────────────────

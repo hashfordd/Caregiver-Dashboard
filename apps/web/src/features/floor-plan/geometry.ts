@@ -159,16 +159,22 @@ function pushEndpoint(
 }
 
 /** Return the OTHER walls' endpoints that share the given wall's
- *  endpoint coordinate. Used to translate partners in lockstep when the
- *  caregiver drags a wall or its endpoint. */
+ *  endpoint coordinate. Uses the same `Math.round(x):Math.round(y)` key
+ *  as findJoins, so the partner detection and the visible green-ring
+ *  join indicator never disagree about whether two walls are connected.
+ *
+ *  (The epsilon parameter is kept for API compatibility but is no longer
+ *  used — Math.round equality is strictly tighter, which is what we
+ *  want.) */
 export function findConnectedPartners(
   canvas: fabric.Canvas,
   wall: fabric.Line,
   endpointIdx: 0 | 1,
-  epsilon = JOIN_EPSILON,
 ): { wall: fabric.Line; endpointIdx: 0 | 1 }[] {
   const ends = lineWorldEndpoints(wall);
   const target = endpointIdx === 0 ? ends.start : ends.end;
+  const tx = Math.round(target.x);
+  const ty = Math.round(target.y);
   const out: { wall: fabric.Line; endpointIdx: 0 | 1 }[] = [];
   for (const obj of canvas.getObjects()) {
     if (obj === wall) continue;
@@ -176,10 +182,10 @@ export function findConnectedPartners(
     const k = (obj as unknown as { __fpKind?: string }).__fpKind;
     if (k !== 'wall') continue;
     const e = lineWorldEndpoints(obj);
-    if (Math.abs(e.start.x - target.x) < epsilon && Math.abs(e.start.y - target.y) < epsilon) {
+    if (Math.round(e.start.x) === tx && Math.round(e.start.y) === ty) {
       out.push({ wall: obj, endpointIdx: 0 });
     }
-    if (Math.abs(e.end.x - target.x) < epsilon && Math.abs(e.end.y - target.y) < epsilon) {
+    if (Math.round(e.end.x) === tx && Math.round(e.end.y) === ty) {
       out.push({ wall: obj, endpointIdx: 1 });
     }
   }
