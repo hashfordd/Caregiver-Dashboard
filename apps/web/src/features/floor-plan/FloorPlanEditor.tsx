@@ -36,6 +36,7 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
   const [selection, setSelection] = useState<SelectionDescriptor>({ kind: 'none' });
   const [remoteVersionPending, setRemoteVersionPending] = useState(false);
   const [showDimensions, setShowDimensions] = useState(true);
+  const [editing, setEditing] = useState(false);
 
   const lastLoadedVersionRef = useRef<string | null>(null);
 
@@ -104,6 +105,9 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
     // Track the just-saved version so the refetch effect doesn't reload.
     lastLoadedVersionRef.current = result.created_at;
     setRemoteVersionPending(false);
+    // Saving exits edit mode — the floor plan is locked again until the
+    // caregiver explicitly clicks Edit.
+    setEditing(false);
   }, [patientId, planQuery.data?.id, scale, upsert]);
 
   const handleSave = useCallback(() => {
@@ -161,6 +165,18 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
     setShowDimensions((v) => !v);
   }, []);
 
+  const handleEdit = useCallback(() => {
+    setEditing(true);
+  }, []);
+
+  const handleDiscard = useCallback(() => {
+    // Restore the canvas to whatever the server has on file.
+    void canvasRef.current?.deserialize(planQuery.data?.canvas_json ?? null);
+    setDirty(false);
+    setEditing(false);
+    setSavedTone(null);
+  }, [planQuery.data?.canvas_json]);
+
   const handleAcceptRemote = useCallback(() => {
     void canvasRef.current?.deserialize(planQuery.data?.canvas_json);
     setDirty(false);
@@ -207,6 +223,7 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
         dirty={dirty}
         saving={upsert.isPending}
         showDimensions={showDimensions}
+        editing={editing}
         onModeChange={handleModeChange}
         onFurnitureKindChange={handleFurnitureKindChange}
         onSetScale={handleSetScaleClick}
@@ -217,6 +234,8 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
         onRedo={handleRedo}
         onFitToContent={handleFitToContent}
         onToggleDimensions={handleToggleDimensions}
+        onEdit={handleEdit}
+        onDiscard={handleDiscard}
       />
 
       {savedTone && (
@@ -244,6 +263,7 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
           initialJson={initialJson}
           scale={scale}
           showDimensions={showDimensions}
+          editing={editing}
           onDirty={handleDirty}
           onModeChange={setMode}
           onIsEmptyChange={setIsEmpty}
@@ -255,7 +275,11 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
               <EmptyState
                 icon={<LayoutGrid className="h-10 w-10" />}
                 title="A blank canvas"
-                description="Draw outer walls (Wall tool), then click Polygon to outline rooms with any shape — vertices snap to nearby wall ends. Hold Shift while drawing a wall to lock horizontal/vertical; hold Space to pan; scroll to zoom."
+                description={
+                  editing
+                    ? 'Draw outer walls (Wall tool), then click Polygon to outline rooms with any shape — vertices snap to nearby wall ends. Hold Shift while drawing a wall to lock horizontal/vertical; hold Space to pan; scroll to zoom.'
+                    : 'No floor plan yet. Click Edit in the toolbar to start drawing.'
+                }
               />
             </div>
           </div>

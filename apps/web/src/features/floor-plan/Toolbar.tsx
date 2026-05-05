@@ -2,8 +2,10 @@ import {
   ChevronDown,
   Eye,
   EyeOff,
+  Lock,
   Maximize2,
   MousePointer2,
+  Pencil,
   Pentagon,
   Redo2,
   Ruler,
@@ -14,6 +16,7 @@ import {
   StretchHorizontal,
   Trash2,
   Undo2,
+  X,
   type LucideIcon,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -36,6 +39,7 @@ interface ToolbarProps {
   dirty: boolean;
   saving: boolean;
   showDimensions: boolean;
+  editing: boolean;
   onModeChange: (mode: ToolMode) => void;
   onFurnitureKindChange: (kind: FurnitureKind) => void;
   onSetScale: () => void;
@@ -46,6 +50,8 @@ interface ToolbarProps {
   onRedo: () => void;
   onFitToContent: () => void;
   onToggleDimensions: () => void;
+  onEdit: () => void;
+  onDiscard: () => void;
 }
 
 export function Toolbar({
@@ -57,6 +63,7 @@ export function Toolbar({
   dirty,
   saving,
   showDimensions,
+  editing,
   onModeChange,
   onFurnitureKindChange,
   onSetScale,
@@ -67,10 +74,15 @@ export function Toolbar({
   onRedo,
   onFitToContent,
   onToggleDimensions,
+  onEdit,
+  onDiscard,
 }: ToolbarProps) {
   const wallSelected = selection.kind === 'wall';
   const furnitureActive = mode === 'furniture';
   const FurnitureIcon = furnitureIcon(furnitureKind);
+  // When the floor plan is locked the user can still pan / zoom / toggle
+  // dimension labels, but every action that mutates geometry is disabled.
+  const toolsDisabled = !editing;
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card p-2">
       <ModeButton
@@ -78,24 +90,28 @@ export function Toolbar({
         onClick={() => onModeChange('select')}
         icon={MousePointer2}
         label="Select"
+        disabled={toolsDisabled}
       />
       <ModeButton
         active={mode === 'wall'}
         onClick={() => onModeChange('wall')}
         icon={Slash}
         label="Wall"
+        disabled={toolsDisabled}
       />
       <ModeButton
         active={mode === 'room'}
         onClick={() => onModeChange('room')}
         icon={Square}
         label="Room"
+        disabled={toolsDisabled}
       />
       <ModeButton
         active={mode === 'polygon'}
         onClick={() => onModeChange('polygon')}
         icon={Pentagon}
         label="Polygon"
+        disabled={toolsDisabled}
       />
       <div className="mx-1 h-6 w-px bg-border" />
       <DropdownMenu>
@@ -105,7 +121,8 @@ export function Toolbar({
             size="sm"
             aria-pressed={furnitureActive}
             className={cn('gap-1.5', furnitureActive && 'shadow-sm')}
-            title="Pick a furniture item to place"
+            title={toolsDisabled ? 'Click Edit to enable' : 'Pick a furniture item to place'}
+            disabled={toolsDisabled}
           >
             <FurnitureIcon className="h-4 w-4" />
             <span className="hidden sm:inline">{furnitureLabel(furnitureKind)}</span>
@@ -136,6 +153,7 @@ export function Toolbar({
         variant="ghost"
         size="sm"
         onClick={onUndo}
+        disabled={toolsDisabled}
         aria-label="Undo (Cmd+Z)"
         title="Undo (Cmd/Ctrl + Z)"
       >
@@ -145,6 +163,7 @@ export function Toolbar({
         variant="ghost"
         size="sm"
         onClick={onRedo}
+        disabled={toolsDisabled}
         aria-label="Redo (Cmd+Shift+Z)"
         title="Redo (Cmd/Ctrl + Shift + Z)"
       >
@@ -154,6 +173,7 @@ export function Toolbar({
         variant="ghost"
         size="sm"
         onClick={onDelete}
+        disabled={toolsDisabled}
         aria-label="Delete selected"
         title="Delete selected (Backspace)"
       >
@@ -183,7 +203,7 @@ export function Toolbar({
         variant="outline"
         size="sm"
         onClick={onSetScale}
-        disabled={!wallSelected}
+        disabled={toolsDisabled || !wallSelected}
         title={wallSelected ? 'Anchor pixels to metres using this wall' : 'Select a wall first'}
       >
         <Ruler className="h-4 w-4" />
@@ -193,7 +213,7 @@ export function Toolbar({
         variant="outline"
         size="sm"
         onClick={onSetWallLength}
-        disabled={!wallSelected || !scaleSet}
+        disabled={toolsDisabled || !wallSelected || !scaleSet}
         title={
           !wallSelected
             ? 'Select a wall first'
@@ -208,14 +228,39 @@ export function Toolbar({
       <span className="ml-1 text-xs text-muted-foreground">{scaleLabel}</span>
 
       <div className="ml-auto flex items-center gap-2">
-        {selection.kind === 'multi' && (
+        {!editing && (
+          <span className="flex items-center gap-1 text-xs text-muted-foreground">
+            <Lock className="h-3 w-3" />
+            Read-only
+          </span>
+        )}
+        {editing && selection.kind === 'multi' && (
           <span className="text-xs text-muted-foreground">{selection.count} selected</span>
         )}
-        {dirty && <span className="text-xs text-muted-foreground">unsaved</span>}
-        <Button onClick={onSave} disabled={saving || !dirty} size="sm">
-          <Save className="h-4 w-4" />
-          {saving ? 'Saving…' : 'Save'}
-        </Button>
+        {editing && dirty && <span className="text-xs text-muted-foreground">unsaved</span>}
+        {!editing ? (
+          <Button onClick={onEdit} size="sm">
+            <Pencil className="h-4 w-4" />
+            Edit
+          </Button>
+        ) : (
+          <>
+            <Button
+              onClick={onDiscard}
+              variant="outline"
+              size="sm"
+              disabled={saving}
+              title="Discard changes and revert to the last saved version"
+            >
+              <X className="h-4 w-4" />
+              Discard
+            </Button>
+            <Button onClick={onSave} disabled={saving || !dirty} size="sm">
+              <Save className="h-4 w-4" />
+              {saving ? 'Saving…' : 'Save'}
+            </Button>
+          </>
+        )}
       </div>
     </div>
   );
@@ -226,15 +271,17 @@ interface ModeButtonProps {
   onClick: () => void;
   icon: LucideIcon;
   label: string;
+  disabled?: boolean;
 }
 
-function ModeButton({ active, onClick, icon: Icon, label }: ModeButtonProps) {
+function ModeButton({ active, onClick, icon: Icon, label, disabled }: ModeButtonProps) {
   return (
     <Button
       variant={active ? 'secondary' : 'ghost'}
       size="sm"
       onClick={onClick}
       aria-pressed={active}
+      disabled={disabled}
       className={cn('gap-1.5', active && 'shadow-sm')}
     >
       <Icon className="h-4 w-4" />

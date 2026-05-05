@@ -141,6 +141,9 @@ describe('FloorPlanEditor', () => {
 
     renderEditor();
 
+    // Floor plan starts read-only — click Edit to unlock the toolbar.
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
     const saveButton = screen.getByRole('button', { name: /save/i });
     expect(saveButton).toBeDisabled();
 
@@ -171,6 +174,7 @@ describe('FloorPlanEditor', () => {
 
     renderEditor();
 
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
     fireEvent.click(screen.getByRole('button', { name: /mark dirty/i }));
     fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
 

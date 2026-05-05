@@ -23,6 +23,10 @@ interface FloorPlanCanvasProps {
   initialJson: unknown;
   scale: number | null;
   showDimensions?: boolean;
+  /** When false, the canvas is read-only — selection, dragging, drawing,
+   *  and join clicks are all disabled. Default true so callers that
+   *  don't care about the toggle keep the previous behaviour. */
+  editing?: boolean;
   onDirty?: () => void;
   onModeChange?: (next: ToolMode) => void;
   onIsEmptyChange?: (isEmpty: boolean) => void;
@@ -98,6 +102,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       initialJson,
       scale,
       showDimensions,
+      editing,
       onDirty,
       onModeChange,
       onIsEmptyChange,
@@ -138,6 +143,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     const onSelectionChangeRef = useRef(onSelectionChange);
     const scaleRef = useRef(scale);
     const showDimensionsRef = useRef(showDimensions ?? true);
+    const editingRef = useRef(editing ?? true);
 
     const interactiveRef = useRef(false);
     const replayingRef = useRef(false);
@@ -179,6 +185,36 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       const canvas = fabricRef.current;
       if (canvas) canvas.requestRenderAll();
     }, [showDimensions]);
+    useEffect(() => {
+      editingRef.current = editing ?? true;
+      const canvas = fabricRef.current;
+      if (!canvas) return;
+      const interactive = (editing ?? true) && modeRef.current === 'select';
+      canvas.selection = interactive;
+      for (const obj of canvas.getObjects()) {
+        if (kindOf(obj)) obj.evented = interactive;
+      }
+      // Drop selection + any in-progress draft when leaving edit mode.
+      if (!editing) {
+        canvas.discardActiveObject();
+        if (drawingRef.current) {
+          canvas.remove(drawingRef.current.object);
+          drawingRef.current = null;
+        }
+        if (polygonDraftRef.current) {
+          const d = polygonDraftRef.current;
+          if (d.previewLine) canvas.remove(d.previewLine);
+          if (d.polygon) canvas.remove(d.polygon);
+          polygonDraftRef.current = null;
+        }
+        // Force back to select mode so the next entry into edit mode
+        // starts cleanly.
+        modeRef.current = 'select';
+        canvas.defaultCursor = 'default';
+        onModeChangeRef.current?.('select');
+      }
+      canvas.requestRenderAll();
+    }, [editing]);
 
     useEffect(() => {
       if (!canvasElRef.current) return;
@@ -441,6 +477,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         const layer = handlesLayerRef.current;
         if (!layer) return;
         for (const el of handleEls) el.style.display = 'none';
+        if (!editingRef.current) return;
         if (modeRef.current !== 'select') return;
         const active = canvas.getActiveObject();
         if (!active) return;
@@ -562,6 +599,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
 
       function attachJoinPointer(el: HTMLDivElement, idx: number) {
         el.addEventListener('pointerdown', (e) => {
+          if (!editingRef.current) return;
           if (modeRef.current !== 'select') return;
           e.preventDefault();
           e.stopPropagation();
@@ -599,7 +637,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         for (let i = joins.length; i < joinEls.length; i++) {
           if (joinEls[i]) joinEls[i]!.style.display = 'none';
         }
-        const interactive = modeRef.current === 'select';
+        const interactive = editingRef.current && modeRef.current === 'select';
         joins.forEach((join, i) => {
           const el = ensureJoin(i);
           const screen = screenFromWorld({ x: join.x, y: join.y });
@@ -622,6 +660,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       // ─── Pointer handlers ───────────────────────────────────────────────
       const handlePointerDown = (opt: fabric.TPointerEventInfo<fabric.TPointerEvent>) => {
         if (!interactiveRef.current) return;
+        if (!editingRef.current) return;
         const e = opt.e as MouseEvent;
 
         if (spaceHeldRef.current) {
@@ -1186,14 +1225,15 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           if (kind) furnitureKindRef.current = kind;
           const canvas = fabricRef.current;
           if (!canvas) return;
-          canvas.selection = mode === 'select';
+          const interactive = editingRef.current && mode === 'select';
+          canvas.selection = interactive;
           canvas.defaultCursor = mode === 'select' ? 'default' : 'crosshair';
           // In drawing modes, prevent fabric from intercepting clicks on
           // existing geometry (so a wall-mode click on an existing wall's
           // endpoint starts a new wall instead of selecting the old one).
-          const evented = mode === 'select';
+          // In read-only mode, nothing is selectable regardless of mode.
           for (const obj of canvas.getObjects()) {
-            if (kindOf(obj)) obj.evented = evented;
+            if (kindOf(obj)) obj.evented = interactive;
           }
           // Drop any pending wall draft when leaving wall mode.
           if (prevMode === 'wall' && mode !== 'wall' && drawingRef.current?.kind === 'wall') {
@@ -1352,7 +1392,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         <canvas ref={canvasElRef} width={width} height={height} className="relative z-10" />
         <div ref={labelsLayerRef} className="pointer-events-none absolute inset-0 z-15" />
         <div ref={handlesLayerRef} className="pointer-events-none absolute inset-0 z-30" />
-        <div ref={joinsLayerRef} className="absolute inset-0 z-22" />
+        <div ref={joinsLayerRef} className="pointer-events-none absolute inset-0 z-22" />
         <div
           ref={snapIndicatorRef}
           className="pointer-events-none absolute z-25 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-emerald-400 bg-emerald-400/30"
