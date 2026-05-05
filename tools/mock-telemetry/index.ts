@@ -2,16 +2,24 @@
 // telemetry on a configurable interval against a local Supabase + Mosquitto
 // stack.
 //
-// Modes:
+// Modes (transport):
 //   --mode direct  (default) — service-role insert into sensor_readings.
 //                  Fastest dev loop. Skips the mqtt_bridge entirely.
+//                  Telemetry-only: signals are not persisted, so direct
+//                  mode is unavailable when --kind signals.
 //   --mode bridge  — POST validated payloads to the mqtt_bridge HTTP entry
 //                  (`supabase functions serve mqtt_bridge` must be running).
 //                  Exercises the bridge's processMessage SSOT over HTTP.
-//   --mode mqtt    — Publish via the broker on `device/{patient_id}/telemetry`
+//   --mode mqtt    — Publish via the broker on `device/{patient_id}/<kind>`
 //                  (`npm run broker:up && npm run bridge:start`). Exercises
-//                  the full Phase 1 spine: firmware → broker → bridge → DB
-//                  → realtime → dashboard.
+//                  the full Phase 1/2 spine: firmware → broker → bridge →
+//                  DB or realtime → dashboard.
+//
+// Kinds (message shape, orthogonal to mode):
+//   --kind telemetry  (default) — TelemetryMessage with hr/spo2/temp.
+//   --kind signals    — F6: SignalsMessage with 3 random BLE MACs at
+//                       random RSSI in [-90, -50] each tick. Bridge mode
+//                       re-broadcasts them on patient:<id>:signals.
 //
 // All modes ensure a `devices` row exists for the supplied --device-id and
 // pairs it to --patient-id (unless --no-ensure-device is set). The device
@@ -23,6 +31,7 @@ import { parseArgs } from 'node:util';
 import { createClient } from '@supabase/supabase-js';
 import mqtt from 'mqtt';
 import { buildTopic, type TelemetryMessage } from '@alzcare/shared';
+import type { SignalsMessage } from '@alzcare/shared/mqtt';
 
 const { values } = parseArgs({
   options: {
@@ -37,6 +46,7 @@ const { values } = parseArgs({
     'mqtt-username': { type: 'string', default: 'backend-bridge' },
     'mqtt-password': { type: 'string' },
     'no-ensure-device': { type: 'boolean', default: false },
+    kind: { type: 'string', default: 'telemetry' },
   },
 });
 
@@ -47,6 +57,10 @@ const MODE = ((): 'direct' | 'bridge' | 'mqtt' => {
   if (values.mode === 'bridge') return 'bridge';
   if (values.mode === 'mqtt') return 'mqtt';
   return 'direct';
+})();
+const KIND = ((): 'telemetry' | 'signals' => {
+  if (values.kind === 'signals') return 'signals';
+  return 'telemetry';
 })();
 const URL = values.url ?? 'http://127.0.0.1:54321';
 const SERVICE_KEY = values['service-key'] ?? process.env.SB_SERVICE_KEY;
@@ -63,6 +77,11 @@ function fail(message: string): never {
 if (!PATIENT_ID) fail('--patient-id is required');
 if (!DEVICE_ID) fail('--device-id is required');
 if (!SERVICE_KEY) fail('SB_SERVICE_KEY env var or --service-key flag required');
+if (KIND === 'signals' && MODE === 'direct') {
+  // Signals are deliberately not persisted in V1. Direct-mode bypass
+  // doesn't fit. Use --mode bridge to exercise the broadcast path.
+  fail('--kind signals requires --mode bridge or --mode mqtt (signals are not persisted)');
+}
 
 const supabase = createClient(URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -93,7 +112,31 @@ function nextReading(): TelemetryMessage {
   };
 }
 
-async function publishDirect(message: TelemetryMessage): Promise<void> {
+// Stable set of mock MACs so a long-running session looks like a fixed
+// installation (3 beacons in fixed rooms) rather than churning random
+// MACs every tick. RSSI jitters within a realistic range.
+const MOCK_BLE_MACS = ['AA:BB:CC:DD:EE:01', 'AA:BB:CC:DD:EE:02', 'AA:BB:CC:DD:EE:03'];
+
+function nextSignalsMessage(): SignalsMessage {
+  return {
+    v: 1,
+    patient_id: PATIENT_ID as string,
+    device_id: DEVICE_ID as string,
+    recorded_at: new Date().toISOString(),
+    ble: MOCK_BLE_MACS.map((mac) => ({
+      mac,
+      // -90 to -50 dBm spread; closer beacons read stronger.
+      rssi: -90 + Math.floor(Math.random() * 41),
+    })),
+    wifi: [],
+  };
+}
+
+async function publishDirect(message: TelemetryMessage | SignalsMessage): Promise<void> {
+  // Guarded earlier: --kind signals + --mode direct is rejected at startup
+  // because signals are deliberately not persisted in V1. The narrow here
+  // is therefore safe.
+  if (!('hr_bpm' in message)) return;
   const { error } = await supabase.from('sensor_readings').insert({
     patient_id: message.patient_id,
     device_id: message.device_id,
@@ -109,8 +152,8 @@ async function publishDirect(message: TelemetryMessage): Promise<void> {
     );
 }
 
-async function publishBridge(message: TelemetryMessage): Promise<void> {
-  const topic = buildTopic(message.patient_id, 'telemetry');
+async function publishBridge(message: TelemetryMessage | SignalsMessage): Promise<void> {
+  const topic = buildTopic(message.patient_id, KIND);
   const res = await fetch(BRIDGE_URL, {
     method: 'POST',
     headers: {
@@ -122,7 +165,7 @@ async function publishBridge(message: TelemetryMessage): Promise<void> {
   if (!res.ok) {
     console.error(`mock-telemetry: bridge ${res.status} — ${await res.text()}`);
   } else {
-    console.log(`pub bridge ${message.recorded_at}`);
+    console.log(`pub bridge ${KIND} ${message.recorded_at}`);
   }
 }
 
@@ -145,9 +188,9 @@ function startMqtt(): Promise<mqtt.MqttClient> {
   });
 }
 
-function publishMqtt(message: TelemetryMessage): Promise<void> {
+function publishMqtt(message: TelemetryMessage | SignalsMessage): Promise<void> {
   if (!mqttClient) return Promise.reject(new Error('mqtt client not connected'));
-  const topic = buildTopic(message.patient_id, 'telemetry');
+  const topic = buildTopic(message.patient_id, KIND);
   return new Promise((resolve, reject) => {
     mqttClient!.publish(topic, JSON.stringify(message), { qos: 0 }, (err) => {
       if (err) {
@@ -161,7 +204,11 @@ function publishMqtt(message: TelemetryMessage): Promise<void> {
   });
 }
 
-const publish = MODE === 'bridge' ? publishBridge : MODE === 'mqtt' ? publishMqtt : publishDirect;
+type AnyMessage = TelemetryMessage | SignalsMessage;
+const publish: (m: AnyMessage) => Promise<void> =
+  MODE === 'bridge' ? publishBridge : MODE === 'mqtt' ? publishMqtt : publishDirect;
+
+const next: () => AnyMessage = KIND === 'signals' ? nextSignalsMessage : nextReading;
 
 async function main(): Promise<void> {
   await ensureDevice();
@@ -169,11 +216,11 @@ async function main(): Promise<void> {
     mqttClient = await startMqtt();
   }
   console.log(
-    `mock-telemetry running: mode=${MODE} interval=${INTERVAL_MS}ms patient=${PATIENT_ID} device=${DEVICE_ID}`,
+    `mock-telemetry running: mode=${MODE} kind=${KIND} interval=${INTERVAL_MS}ms patient=${PATIENT_ID} device=${DEVICE_ID}`,
   );
-  await publish(nextReading());
+  await publish(next());
   setInterval(() => {
-    void publish(nextReading());
+    void publish(next());
   }, INTERVAL_MS);
 }
 

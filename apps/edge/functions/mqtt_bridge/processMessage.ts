@@ -5,14 +5,42 @@
 // in production. CROSS_CUTTING §11.
 
 import { EventMessage, parseTopic, SignalsMessage, TelemetryMessage } from '@alzcare/shared/mqtt';
-import type { SupabaseClient } from '@supabase/supabase-js';
+import type { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
 
 export type ProcessOutcome =
   | { kind: 'telemetry'; persisted: true; rowId: string }
   | { kind: 'telemetry'; persisted: false; error: 'validation' | 'persistence'; details: string }
-  | { kind: 'signals'; persisted: false; reason: 'phase-2' | 'validation'; details?: string }
+  | {
+      kind: 'signals';
+      persisted: false;
+      reason: 'broadcast' | 'broadcast-failed' | 'validation';
+      details?: string;
+    }
   | { kind: 'events'; persisted: false; reason: 'phase-4' | 'validation'; details?: string }
   | { kind: 'unknown'; persisted: false; error: 'topic'; details: string };
+
+// Per-patient broadcast-channel cache. Each call to supabase.channel(name)
+// creates a new socket subscription; without caching, every signals
+// message would leak a subscription. The bridge process holds these for
+// its lifetime — long-running mode is one process per deploy, HTTP entry
+// is one process per request worker, so the cache is bounded by patient
+// count not by message volume.
+const signalsChannelCache = new WeakMap<SupabaseClient, Map<string, RealtimeChannel>>();
+
+function getSignalsChannel(supabase: SupabaseClient, patientId: string): RealtimeChannel {
+  let perClient = signalsChannelCache.get(supabase);
+  if (!perClient) {
+    perClient = new Map();
+    signalsChannelCache.set(supabase, perClient);
+  }
+  let channel = perClient.get(patientId);
+  if (!channel) {
+    channel = supabase.channel(`patient:${patientId}:signals`);
+    channel.subscribe();
+    perClient.set(patientId, channel);
+  }
+  return channel;
+}
 
 export async function processMessage(
   topic: string,
@@ -91,8 +119,32 @@ export async function processMessage(
         details: validation.error.message,
       };
     }
-    // TODO: F6 — broadcast on patient:<id>:signals; F8 invokes position_estimator.
-    return { kind: 'signals', persisted: false, reason: 'phase-2' };
+    const m = validation.data;
+    // F6: re-broadcast the validated message on patient:<id>:signals
+    // (no DB write — Phase 2 design intentionally doesn't persist raw
+    // signals; see PHASES.md Phase 3 "If the project later needs replay-
+    // from-raw-signals"). The dashboard's usePatientStream subscribes to
+    // this channel.
+    const channel = getSignalsChannel(supabase, m.patient_id);
+    try {
+      const status = await channel.send({ type: 'broadcast', event: 'signals', payload: m });
+      if (status !== 'ok') {
+        return {
+          kind: 'signals',
+          persisted: false,
+          reason: 'broadcast-failed',
+          details: `realtime status: ${String(status)}`,
+        };
+      }
+    } catch (err) {
+      return {
+        kind: 'signals',
+        persisted: false,
+        reason: 'broadcast-failed',
+        details: (err as Error).message,
+      };
+    }
+    return { kind: 'signals', persisted: false, reason: 'broadcast' };
   }
 
   if (parsed.kind === 'events') {

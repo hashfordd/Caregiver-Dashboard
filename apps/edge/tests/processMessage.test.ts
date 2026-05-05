@@ -11,6 +11,9 @@ interface SupabaseMock extends SupabaseClient {
   __devicesUpdateMock: ReturnType<typeof vi.fn>;
   __devicesEqMock: ReturnType<typeof vi.fn>;
   __fromMock: ReturnType<typeof vi.fn>;
+  __channelMock: ReturnType<typeof vi.fn>;
+  __sendMock: ReturnType<typeof vi.fn>;
+  __subscribeMock: ReturnType<typeof vi.fn>;
 }
 
 function buildSupabase(): SupabaseMock {
@@ -25,13 +28,23 @@ function buildSupabase(): SupabaseMock {
     if (table === 'devices') return { update: devicesUpdateMock };
     return {};
   });
+  // Channel mock: signals broadcast goes through .channel(name).send(...).
+  // Default to a successful broadcast — individual tests override the
+  // send mock to simulate failure.
+  const sendMock = vi.fn().mockResolvedValue('ok');
+  const subscribeMock = vi.fn();
+  const channelMock = vi.fn(() => ({ subscribe: subscribeMock, send: sendMock }));
   const supabase = {
     from: fromMock,
+    channel: channelMock,
     __sensorInsertMock: sensorInsertMock,
     __sensorSingleMock: sensorSingleMock,
     __devicesUpdateMock: devicesUpdateMock,
     __devicesEqMock: devicesEqMock,
     __fromMock: fromMock,
+    __channelMock: channelMock,
+    __sendMock: sendMock,
+    __subscribeMock: subscribeMock,
   } as unknown as SupabaseMock;
   return supabase;
 }
@@ -106,7 +119,49 @@ describe('processMessage', () => {
     expect(supabase.__devicesUpdateMock).not.toHaveBeenCalled();
   });
 
-  it('treats valid signals as a phase-2 no-op (no insert)', async () => {
+  it('broadcasts a valid signals payload on patient:<id>:signals (no DB write)', async () => {
+    const payload = {
+      v: 1,
+      patient_id: PATIENT_ID,
+      device_id: DEVICE_ID,
+      recorded_at: '2026-05-04T12:00:00.000Z',
+      ble: [{ mac: 'AA:BB:CC:DD:EE:01', rssi: -55 }],
+      wifi: [],
+    };
+    const outcome = await processMessage(`device/${PATIENT_ID}/signals`, payload, supabase);
+
+    expect(outcome).toMatchObject({ kind: 'signals', persisted: false, reason: 'broadcast' });
+    expect(supabase.__channelMock).toHaveBeenCalledWith(`patient:${PATIENT_ID}:signals`);
+    expect(supabase.__sendMock).toHaveBeenCalledWith({
+      type: 'broadcast',
+      event: 'signals',
+      payload,
+    });
+    // Signals are not persisted — Phase 2 design.
+    expect(supabase.__sensorInsertMock).not.toHaveBeenCalled();
+    expect(supabase.__devicesUpdateMock).not.toHaveBeenCalled();
+  });
+
+  it('caches the signals channel per patient — second message re-uses the same channel object', async () => {
+    const payload = {
+      v: 1,
+      patient_id: PATIENT_ID,
+      device_id: DEVICE_ID,
+      recorded_at: '2026-05-04T12:00:00.000Z',
+      ble: [],
+      wifi: [],
+    };
+    await processMessage(`device/${PATIENT_ID}/signals`, payload, supabase);
+    await processMessage(`device/${PATIENT_ID}/signals`, payload, supabase);
+
+    // channel(name) called once; subscribe() called once. send() twice.
+    expect(supabase.__channelMock).toHaveBeenCalledTimes(1);
+    expect(supabase.__subscribeMock).toHaveBeenCalledTimes(1);
+    expect(supabase.__sendMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports broadcast-failed when the realtime send rejects', async () => {
+    supabase.__sendMock.mockRejectedValueOnce(new Error('socket closed'));
     const outcome = await processMessage(
       `device/${PATIENT_ID}/signals`,
       {
@@ -120,9 +175,22 @@ describe('processMessage', () => {
       supabase,
     );
 
-    expect(outcome).toMatchObject({ kind: 'signals', persisted: false, reason: 'phase-2' });
-    expect(supabase.__sensorInsertMock).not.toHaveBeenCalled();
-    expect(supabase.__devicesUpdateMock).not.toHaveBeenCalled();
+    expect(outcome).toMatchObject({
+      kind: 'signals',
+      persisted: false,
+      reason: 'broadcast-failed',
+      details: 'socket closed',
+    });
+  });
+
+  it('returns validation for a malformed signals payload (still no broadcast)', async () => {
+    const outcome = await processMessage(
+      `device/${PATIENT_ID}/signals`,
+      { v: 1, patient_id: PATIENT_ID, device_id: DEVICE_ID, recorded_at: 'not-a-date' },
+      supabase,
+    );
+    expect(outcome).toMatchObject({ kind: 'signals', persisted: false, reason: 'validation' });
+    expect(supabase.__sendMock).not.toHaveBeenCalled();
   });
 
   it('treats valid events as a phase-4 no-op (no insert)', async () => {

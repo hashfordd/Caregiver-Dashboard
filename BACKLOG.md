@@ -28,6 +28,8 @@ Format: `- **<area>** — what + why deferred + reference (feature ID / task ID)
 
 - **Front-end libs not yet installed** — Mapbox GL JS (F9 outdoor map) and Recharts (F4 sparklines / F13 history charts) are listed in the spec's Library Reference but not in `apps/web/package.json` since no feature uses them yet. Install at the time the relevant feature is built; pin exact versions.
 
+- **Realtime broadcast channel auth** — F6's `patient:<id>:signals` channel relies on namespacing as the auth boundary. Any authenticated caregiver can subscribe to any patient's signals channel; we don't currently enforce that they're allocated to that patient. V2: adopt Supabase Realtime Authorization when it's GA so a caregiver can only join a channel for a patient they're allocated to. Until then, it's a deliberate gap noted in `docs/features/F6.md` Risks. (F6 / SEC-01)
+
 - **Husky pre-commit aggressiveness** — `lint-staged` runs ESLint + Prettier on staged files. Add a typecheck stage if false-positive PRs become a problem.
 
 - **Auth signup flow** — `LoginPage` only handles sign-in (password + magic link). Signup with role selection (professional / family) is F1 feature work. (UI-03)
