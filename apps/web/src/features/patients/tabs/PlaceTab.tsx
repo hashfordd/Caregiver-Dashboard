@@ -19,7 +19,13 @@ const BeaconsPanel = lazy(() =>
   })),
 );
 
-const PLACE_SUB_TABS = ['floor-plan', 'beacons'] as const;
+const CalibrationPanel = lazy(() =>
+  import('@/features/calibration/CalibrationPanel').then((m) => ({
+    default: m.CalibrationPanel,
+  })),
+);
+
+const PLACE_SUB_TABS = ['floor-plan', 'beacons', 'calibration'] as const;
 type PlaceSubTab = (typeof PLACE_SUB_TABS)[number];
 
 function isPlaceSubTab(value: string): value is PlaceSubTab {
@@ -48,6 +54,7 @@ export function PlaceTab() {
       <TabsList>
         <TabsTrigger value="floor-plan">Floor plan</TabsTrigger>
         <TabsTrigger value="beacons">Beacons</TabsTrigger>
+        <TabsTrigger value="calibration">Calibration</TabsTrigger>
       </TabsList>
       <TabsContent value="floor-plan">
         <Suspense
@@ -71,6 +78,18 @@ export function PlaceTab() {
           }
         >
           <BeaconsPanel patientId={patientId} />
+        </Suspense>
+      </TabsContent>
+      <TabsContent value="calibration">
+        <Suspense
+          fallback={
+            <div className="space-y-3">
+              <Skeleton className="h-12 w-full" />
+              <Skeleton className="h-[min(60vh,720px)] min-h-[480px] w-full" />
+            </div>
+          }
+        >
+          <CalibrationPanel patientId={patientId} />
         </Suspense>
       </TabsContent>
     </Tabs>

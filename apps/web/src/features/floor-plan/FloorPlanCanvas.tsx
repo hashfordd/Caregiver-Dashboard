@@ -21,6 +21,7 @@ import {
 } from './geometry';
 import type {
   BeaconSprite,
+  CalibrationPointSprite,
   FloorPlanCanvasHandle,
   FurnitureKind,
   SelectionDescriptor,
@@ -46,6 +47,10 @@ interface FloorPlanCanvasProps {
    *  or an existing placed beacon is dragged to a new spot. The parent
    *  is expected to persist via useUpdateBeaconPosition. */
   onBeaconUpdate?: (beaconId: string, x: number, y: number) => void;
+  /** F7: fires when the user clicks on the canvas while calibration
+   *  capture is armed. Coords are snapped to the grid. Parent stores
+   *  the pending spot and disarms by calling armCalibrationCapture(false). */
+  onCalibrationClick?: (x: number, y: number) => void;
   width?: number;
   height?: number;
   className?: string;
@@ -127,6 +132,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       onIsEmptyChange,
       onSelectionChange,
       onBeaconUpdate,
+      onCalibrationClick,
       width,
       height,
       className,
@@ -153,6 +159,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     const labelsLayerRef = useRef<HTMLDivElement>(null);
     const joinsLayerRef = useRef<HTMLDivElement>(null);
     const beaconsLayerRef = useRef<HTMLDivElement>(null);
+    const calibrationLayerRef = useRef<HTMLDivElement>(null);
     const shadingLayerRef = useRef<SVGSVGElement>(null);
     const snapIndicatorRef = useRef<HTMLDivElement>(null);
     const fabricRef = useRef<fabric.Canvas | null>(null);
@@ -176,6 +183,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     const onIsEmptyChangeRef = useRef(onIsEmptyChange);
     const onSelectionChangeRef = useRef(onSelectionChange);
     const onBeaconUpdateRef = useRef(onBeaconUpdate);
+    const onCalibrationClickRef = useRef(onCalibrationClick);
     const scaleRef = useRef(scale);
     const showDimensionsRef = useRef(showDimensions ?? true);
     const editingRef = useRef(editing ?? true);
@@ -215,6 +223,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     useEffect(() => {
       onBeaconUpdateRef.current = onBeaconUpdate;
     }, [onBeaconUpdate]);
+    useEffect(() => {
+      onCalibrationClickRef.current = onCalibrationClick;
+    }, [onCalibrationClick]);
     useEffect(() => {
       scaleRef.current = scale;
     }, [scale]);
@@ -757,10 +768,12 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       function renderBeacons() {
         const layer = beaconsLayerRef.current;
         if (!layer) return;
-        // Hide every overlay when not in beacon-placement mode — the
-        // sprites stay in memory so re-entering the Beacons sub-tab
-        // restores them instantly.
-        if (modeRef.current !== 'beacon-placement') {
+        // Beacons render in beacon-placement (draggable) AND calibration
+        // (read-only — caregivers need to see beacons as visual context
+        // when capturing fingerprints) modes. Hidden in everything else
+        // so they don't clutter the editor.
+        const m = modeRef.current;
+        if (m !== 'beacon-placement' && m !== 'calibration') {
           layer.replaceChildren();
           return;
         }
@@ -772,15 +785,20 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       function makeBeaconEl(sprite: BeaconSprite): HTMLDivElement {
         const screen = screenFromWorld({ x: sprite.x!, y: sprite.y! });
         const el = document.createElement('div');
-        el.className =
-          'pointer-events-auto absolute z-30 flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full border-2 border-white bg-emerald-500 text-[9px] font-semibold text-white shadow';
+        // In calibration mode the beacon DOM is inert: pointer-events-none
+        // and no grab cursor, so the click passes through to the canvas
+        // and lands on the calibration-click handler below.
+        const interactive = modeRef.current === 'beacon-placement';
+        el.className = interactive
+          ? 'pointer-events-auto absolute z-30 flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full border-2 border-white bg-emerald-500 text-[9px] font-semibold text-white shadow'
+          : 'pointer-events-none absolute z-30 flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-white bg-emerald-500/80 text-[9px] font-semibold text-white shadow';
         el.style.left = `${screen.x}px`;
         el.style.top = `${screen.y}px`;
-        el.title = `${sprite.label} · drag to move`;
+        el.title = interactive ? `${sprite.label} · drag to move` : sprite.label;
         el.dataset.beaconId = sprite.id;
         // Inline initial — first letter of the label, falls back to dot.
         el.textContent = sprite.label.trim().charAt(0).toUpperCase() || '•';
-        attachBeaconDrag(el, sprite.id);
+        if (interactive) attachBeaconDrag(el, sprite.id);
         return el;
       }
 
@@ -825,6 +843,47 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         });
       }
 
+      // ─── F7 calibration-points overlay ──────────────────────────────────
+      // Same DOM-overlay pattern as F6 beacons. Sprites with `pending:
+      // true` render dashed + lower opacity to convey "not yet captured";
+      // already-placed sprites render solid with their derived index.
+      let calibrationSprites: CalibrationPointSprite[] = [];
+      let armedCalibration = false;
+
+      const applyCalibrationCursor = () => {
+        if (modeRef.current !== 'calibration') return;
+        canvas.defaultCursor = armedCalibration ? 'crosshair' : 'default';
+        canvas.hoverCursor = canvas.defaultCursor;
+      };
+
+      function renderCalibrationPoints() {
+        const layer = calibrationLayerRef.current;
+        if (!layer) return;
+        if (modeRef.current !== 'calibration') {
+          layer.replaceChildren();
+          return;
+        }
+        const next = calibrationSprites.map((sprite) => makeCalibrationEl(sprite));
+        layer.replaceChildren(...next);
+      }
+
+      function makeCalibrationEl(sprite: CalibrationPointSprite): HTMLDivElement {
+        const screen = screenFromWorld({ x: sprite.x, y: sprite.y });
+        const el = document.createElement('div');
+        const base =
+          'pointer-events-none absolute z-30 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full text-[9px] font-semibold text-white shadow';
+        el.className = sprite.pending
+          ? `${base} border-2 border-dashed border-white bg-amber-500/70`
+          : `${base} border-2 border-white bg-sky-500`;
+        el.style.left = `${screen.x}px`;
+        el.style.top = `${screen.y}px`;
+        el.title = sprite.pending
+          ? 'Pending capture — press Capture to start the sample window'
+          : `Calibration point ${sprite.index}`;
+        el.textContent = sprite.pending ? '·' : String(sprite.index);
+        return el;
+      }
+
       // ─── Pointer handlers ───────────────────────────────────────────────
       const handlePointerDown = (opt: fabric.TPointerEventInfo<fabric.TPointerEvent>) => {
         // Beacon placement is the one mode where clicks matter even when
@@ -838,6 +897,16 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           armedBeaconId = null;
           applyArmedCursor();
           onBeaconUpdateRef.current?.(id, sp.x, sp.y);
+          return;
+        }
+        // F7 calibration: same pattern, fires onCalibrationClick instead.
+        // Disarm is parent's job (the panel sets pending on click and
+        // flips armed off until the pending dot is cleared).
+        if (modeRef.current === 'calibration') {
+          if (!armedCalibration) return;
+          const raw = canvas.getScenePoint(opt.e);
+          const sp = { x: snap(raw.x), y: snap(raw.y) };
+          onCalibrationClickRef.current?.(sp.x, sp.y);
           return;
         }
         if (!interactiveRef.current) return;
@@ -1075,6 +1144,14 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           armedBeaconId = id;
           applyArmedCursor();
         },
+        __fpSetCalibrationPoints: (sprites: CalibrationPointSprite[]) => {
+          calibrationSprites = sprites;
+          renderCalibrationPoints();
+        },
+        __fpArmCalibration: (armed: boolean) => {
+          armedCalibration = armed;
+          applyCalibrationCursor();
+        },
       });
 
       const handlePointerMove = (opt: fabric.TPointerEventInfo<fabric.TPointerEvent>) => {
@@ -1309,6 +1386,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         renderLabelsAndJoins();
         renderShading();
         renderBeacons();
+        renderCalibrationPoints();
       });
       canvas.on('selection:created', () => {
         emitSelection();
@@ -1364,15 +1442,22 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
 
       const onKeyDown = (e: KeyboardEvent) => {
         if (isTextTarget(e.target)) return;
-        // Beacon-placement mode runs alongside the F5 canvas (e.g. when
-        // both sub-tabs are open at once via forceMount). The F5 keyboard
-        // shortcuts (Backspace = delete, Cmd+Z = undo, Cmd+A = select
-        // all, etc.) shouldn't fire from the Beacons sub-tab — only Esc,
-        // which disarms a pending placement.
+        // Beacon-placement / calibration modes run alongside the F5
+        // canvas (e.g. when sub-tabs are mounted concurrently). The F5
+        // keyboard shortcuts (Backspace = delete, Cmd+Z = undo, Cmd+A =
+        // select all, etc.) shouldn't fire from those sub-tabs — only
+        // Esc, which disarms a pending action.
         if (modeRef.current === 'beacon-placement') {
           if (e.key === 'Escape' && armedBeaconId) {
             armedBeaconId = null;
             applyArmedCursor();
+          }
+          return;
+        }
+        if (modeRef.current === 'calibration') {
+          if (e.key === 'Escape' && armedCalibration) {
+            armedCalibration = false;
+            applyCalibrationCursor();
           }
           return;
         }
@@ -1523,10 +1608,14 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           if (!canvas) return;
           const interactive = editingRef.current && mode === 'select';
           canvas.selection = interactive;
-          // Beacon-placement: cursor stays default until a beacon is armed
-          // (handled inside the heavy effect via applyArmedCursor).
+          // Beacon-placement / calibration: cursor stays default until
+          // armed (handled inside the heavy effect via the *Cursor
+          // helpers). Drawing modes (wall/room/polygon/furniture) use
+          // crosshair to convey "click here to draw".
           canvas.defaultCursor =
-            mode === 'select' || mode === 'beacon-placement' ? 'default' : 'crosshair';
+            mode === 'select' || mode === 'beacon-placement' || mode === 'calibration'
+              ? 'default'
+              : 'crosshair';
           // In drawing modes, prevent fabric from intercepting clicks on
           // existing geometry (so a wall-mode click on an existing wall's
           // endpoint starts a new wall instead of selecting the old one).
@@ -1681,6 +1770,18 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           } | null;
           c?.__fpArmPlacement?.(id);
         },
+        setCalibrationPoints: (sprites) => {
+          const c = fabricRef.current as unknown as {
+            __fpSetCalibrationPoints?: (sprites: CalibrationPointSprite[]) => void;
+          } | null;
+          c?.__fpSetCalibrationPoints?.(sprites);
+        },
+        armCalibrationCapture: (armed) => {
+          const c = fabricRef.current as unknown as {
+            __fpArmCalibration?: (armed: boolean) => void;
+          } | null;
+          c?.__fpArmCalibration?.(armed);
+        },
       }),
       [],
     );
@@ -1724,6 +1825,10 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
             children themselves carry pointer-events-auto so beacons are
             draggable while the layer stays inert under read-only modes. */}
         <div ref={beaconsLayerRef} className="pointer-events-none absolute inset-0 z-30" />
+        {/* z-30 sibling: calibration points. Children are pointer-events-
+            none so clicks pass through to the canvas, where the
+            handlePointerDown calibration branch routes them. */}
+        <div ref={calibrationLayerRef} className="pointer-events-none absolute inset-0 z-30" />
         <div
           ref={snapIndicatorRef}
           className="pointer-events-none absolute z-25 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-emerald-400 bg-emerald-400/30"

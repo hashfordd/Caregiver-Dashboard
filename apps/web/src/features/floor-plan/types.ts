@@ -13,7 +13,13 @@ export type ToolMode =
    *  read-only, the F5 keyboard shortcuts are gated off, and click events
    *  on the canvas only matter when a beacon has been armed for
    *  placement. The Beacons sub-tab is the only entry point. */
-  | 'beacon-placement';
+  | 'beacon-placement'
+  /** F7 calibration capture: walls/rooms/furniture AND placed beacons are
+   *  locked read-only (beacons render as visual context but are
+   *  non-draggable). A click on the canvas while armed sets the pending
+   *  calibration spot; the Capture button starts the 5–10 s window. The
+   *  Calibration sub-tab is the only entry point. */
+  | 'calibration';
 
 export type FurnitureKind =
   | 'bed'
@@ -84,6 +90,15 @@ export interface FloorPlanCanvasHandle {
   /** F6: arm a beacon for placement. The next click on the canvas drops
    *  it at the click coords (snapped to grid). Pass null to disarm. */
   armPlacement: (beaconId: string | null) => void;
+  /** F7: replace the rendered calibration-points overlay with the given
+   *  list. Same pattern as setBeacons — DOM layer, screenFromWorld,
+   *  rides zoom/pan. Sprites with `pending: true` render with a dashed
+   *  outline and lower opacity to convey "not yet captured". */
+  setCalibrationPoints: (sprites: CalibrationPointSprite[]) => void;
+  /** F7: arm/disarm calibration capture. When armed, the next click on
+   *  the canvas fires onCalibrationClick (the panel sets the pending
+   *  spot). Pass false to disarm. */
+  armCalibrationCapture: (armed: boolean) => void;
 }
 
 /** A beacon as the canvas needs to render it — id, label for tooltip,
@@ -96,4 +111,16 @@ export interface BeaconSprite {
    *  the side panel only, not on the canvas. */
   x: number | null;
   y: number | null;
+}
+
+/** A calibration point as the canvas needs to render it. Index is
+ *  derived panel-side from `captured_at` ordering — never persisted on
+ *  the row. `pending: true` distinguishes the click-to-mark spot before
+ *  Capture is pressed from already-written points. */
+export interface CalibrationPointSprite {
+  id: string;
+  index: number;
+  x: number;
+  y: number;
+  pending?: boolean;
 }

@@ -30,6 +30,12 @@ Format: `- **<area>** — what + why deferred + reference (feature ID / task ID)
 
 - **Realtime broadcast channel auth** — F6's `patient:<id>:signals` channel relies on namespacing as the auth boundary. Any authenticated caregiver can subscribe to any patient's signals channel; we don't currently enforce that they're allocated to that patient. V2: adopt Supabase Realtime Authorization when it's GA so a caregiver can only join a channel for a patient they're allocated to. Until then, it's a deliberate gap noted in `docs/features/F6.md` Risks. (F6 / SEC-01)
 
+- **F7 calibration: stale-calibration banner** — F5 warns on canvas edits but doesn't auto-invalidate captures. The panel should surface "this point predates a recent canvas edit" by comparing `captured_at` to `floor_plans.created_at`. Adds a join we don't currently surface in the calibration query; defer to V2 once the F8 fingerprint matcher actually consumes calibration data and stale points start mattering. (F7 / UI-08)
+
+- **F7 calibration: per-room density visualisation** — F7.md notes V1 ships count-only; V2 should colour the canvas by density (heatmap of placed points per closed-wall room) so caregivers can see under-sampled rooms before F8 matching runs. Requires a published "closed-room geometry" API from F5 which doesn't currently exist outside `findClosedRooms` in `geometry.ts`. (F7 / UI-09)
+
+- **F7 calibration: quality glyph on placed dots** — Captured points all passed thresholds at write time, so all written rows are "good" — but caregivers may still want to distinguish "barely passed" from "well in spec" visually on the canvas. Render a small quality indicator (e.g. ring colour scale by stddev) on each dot. Requires no schema change. (F7 / UI-10)
+
 - **Husky pre-commit aggressiveness** — `lint-staged` runs ESLint + Prettier on staged files. Add a typecheck stage if false-positive PRs become a problem.
 
 - **Auth signup flow** — `LoginPage` only handles sign-in (password + magic link). Signup with role selection (professional / family) is F1 feature work. (UI-03)

@@ -60,6 +60,8 @@ vi.mock('@/features/floor-plan/FloorPlanCanvas', async () => {
           setSelectedWallLength: () => {},
           setBeacons,
           armPlacement,
+          setCalibrationPoints: () => {},
+          armCalibrationCapture: () => {},
         };
       });
       return <div data-testid="floor-plan-canvas-stub" />;
