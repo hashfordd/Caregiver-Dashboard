@@ -56,7 +56,15 @@ export function lineWorldEndpoints(line: fabric.Line): { start: WorldPoint; end:
 
 /** After Fabric translates / scales a line, push the new world-space
  *  endpoints back into x1/y1/x2/y2 and reset the object's transform so the
- *  stored coords always represent absolute canvas positions. */
+ *  stored coords always represent absolute canvas positions.
+ *
+ *  IMPORTANT: in Fabric 7 the default origin is `center`, so `left` / `top`
+ *  represent the object's centre, not its top-left. Don't set them
+ *  manually — Line.set() on x1/y1/x2/y2 invokes _setWidthHeight, which
+ *  recomputes width/height and re-positions the line so its centre lands
+ *  at the new geometric centre of the endpoints. Setting left/top by
+ *  hand to `Math.min(...)` was making walls jump (their centre snapped
+ *  to the bbox top-left). */
 export function canonicaliseLine(line: fabric.Line): void {
   const { start, end } = lineWorldEndpoints(line);
   line.set({
@@ -64,20 +72,10 @@ export function canonicaliseLine(line: fabric.Line): void {
     y1: start.y,
     x2: end.x,
     y2: end.y,
-    left: Math.min(start.x, end.x),
-    top: Math.min(start.y, end.y),
     scaleX: 1,
     scaleY: 1,
     angle: 0,
   });
-  (line as unknown as { pathOffset: fabric.Point }).pathOffset = new fabric.Point(
-    (start.x + end.x) / 2,
-    (start.y + end.y) / 2,
-  );
-  // width/height are read-only on the public surface but settable on the
-  // underlying instance — Fabric uses them for hit-testing.
-  (line as unknown as { width: number; height: number }).width = Math.abs(end.x - start.x);
-  (line as unknown as { width: number; height: number }).height = Math.abs(end.y - start.y);
   line.setCoords();
 }
 
@@ -94,33 +92,21 @@ export function polygonWorldVertices(polygon: fabric.Polygon): WorldPoint[] {
 }
 
 /** Replace a polygon's vertices with the given world-space points. Resets
- *  any fabric transform so subsequent edits stay in absolute coords. */
+ *  any fabric transform; calls Polyline.setBoundingBox(true) so the
+ *  polygon's pathOffset / width / height / position are recomputed
+ *  correctly for the new vertex set (analogue of Line._setWidthHeight). */
 export function setPolygonVertices(polygon: fabric.Polygon, vertices: WorldPoint[]): void {
   if (vertices.length === 0) return;
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const v of vertices) {
-    if (v.x < minX) minX = v.x;
-    if (v.y < minY) minY = v.y;
-    if (v.x > maxX) maxX = v.x;
-    if (v.y > maxY) maxY = v.y;
-  }
-  const w = Math.max(maxX - minX, 1);
-  const h = Math.max(maxY - minY, 1);
-  const newPoints = vertices.map((v) => new fabric.Point(v.x - minX, v.y - minY));
   polygon.set({
-    points: newPoints,
-    left: minX,
-    top: minY,
+    points: vertices.map((v) => new fabric.Point(v.x, v.y)),
     scaleX: 1,
     scaleY: 1,
     angle: 0,
   });
-  polygon.pathOffset = new fabric.Point(w / 2, h / 2);
-  (polygon as unknown as { width: number; height: number }).width = w;
-  (polygon as unknown as { width: number; height: number }).height = h;
+  // setBoundingBox(true) is the public API on Polyline that recomputes
+  // pathOffset and re-positions the polygon's centre to the new vertex
+  // bbox centre. The TS types omit it, so cast.
+  (polygon as unknown as { setBoundingBox: (adjust: boolean) => void }).setBoundingBox(true);
   polygon.setCoords();
 }
 

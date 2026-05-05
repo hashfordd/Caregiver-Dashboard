@@ -1014,27 +1014,19 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
             x: ends.start.x + dx * ratio,
             y: ends.start.y + dy * ratio,
           };
+          // Setting x1/y1/x2/y2 triggers Line._setWidthHeight which recomputes
+          // width/height and re-positions the line's centre. Don't set
+          // left/top by hand — in Fabric 7 those are centre coords, not
+          // top-left, so manual values would yank the line.
           active.set({
             x1: ends.start.x,
             y1: ends.start.y,
             x2: newEnd.x,
             y2: newEnd.y,
-            left: Math.min(ends.start.x, newEnd.x),
-            top: Math.min(ends.start.y, newEnd.y),
             scaleX: 1,
             scaleY: 1,
             angle: 0,
           });
-          (active as unknown as { width: number; height: number }).width = Math.abs(
-            newEnd.x - ends.start.x,
-          );
-          (active as unknown as { width: number; height: number }).height = Math.abs(
-            newEnd.y - ends.start.y,
-          );
-          (active as unknown as { pathOffset: fabric.Point }).pathOffset = new fabric.Point(
-            (ends.start.x + newEnd.x) / 2,
-            (ends.start.y + newEnd.y) / 2,
-          );
           active.setCoords();
           canvas.requestRenderAll();
         },
