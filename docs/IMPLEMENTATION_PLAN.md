@@ -17,9 +17,11 @@ V1 prototype scope per the build spec. V2 items (ML-driven thresholds, SLAM mapp
 
 ## Status snapshot
 
-- **Phase 0 — Foundation**: ✅ Complete. Monorepo, Supabase migration applied + verified end-to-end, MQTT broker config, edge function stubs, web scaffold with auth + protected routing + `usePatientStream`, CI/CD, docs.
-- **Phase 1 — Spine**: not started. Ready to begin when F1 closure is owned.
-- **Phases 2–5**: not started.
+- **Phase 0 — Foundation**: ✅ Complete.
+- **Phase 1 — Spine**: ✅ Complete (F1, F2, F3, F4, F10).
+- **Phase 2 — Place**: ✅ Complete (F5, F6, F7).
+- **Phase 3 — Locate**: ✅ Complete (F8, F9, POS-08 hysteresis, in-app beacon calibration).
+- **Phases 4–5**: not started.
 
 ## Conventions
 

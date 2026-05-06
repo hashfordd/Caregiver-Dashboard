@@ -5,7 +5,15 @@ import type { RecentEstimate } from '@alzcare/shared/positioning';
 const SCALE = 0.02; // 50 px / m
 
 function indoorRow(t: string, x: number, y: number, conf = 0.8): RecentEstimate {
-  return { recorded_at: t, mode: 'indoor', x_canvas: x, y_canvas: y, confidence: conf };
+  return {
+    recorded_at: t,
+    mode: 'indoor',
+    x_canvas: x,
+    y_canvas: y,
+    confidence: conf,
+    indoor_confidence: conf,
+    gps_strong: false,
+  };
 }
 
 describe('smooth', () => {
@@ -51,7 +59,15 @@ describe('smooth', () => {
 
   it('skips outdoor rows in history (mode flip invalidates canvas continuity)', () => {
     const recent: RecentEstimate[] = [
-      { recorded_at: 't0', mode: 'outdoor', x_canvas: null, y_canvas: null, confidence: 0.5 },
+      {
+        recorded_at: 't0',
+        mode: 'outdoor',
+        x_canvas: null,
+        y_canvas: null,
+        confidence: 0.5,
+        indoor_confidence: 0,
+        gps_strong: true,
+      },
       indoorRow('t-1', 100, 100),
     ];
     const result = smooth({ x_canvas: 200, y_canvas: 100, fused_confidence: 0.7 }, recent, SCALE);

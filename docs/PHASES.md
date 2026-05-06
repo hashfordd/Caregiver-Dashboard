@@ -8,8 +8,8 @@ The phase boundaries are deliberate — they're the points where we stop, integr
 | ----- | ---------- | ------------------------------- | ---------------------------------------------------------------------------------------- |
 | 0     | Foundation | (scaffold)                      | ✅ Done                                                                                  |
 | 1     | Spine      | F1, F2, F3, F4, F10             | ✅ Done                                                                                  |
-| 2     | Place      | F5, F6, F7                      | Caregiver draws a 4-room space, places ≥3 beacons, captures ≥8 calibration points        |
-| 3     | Locate     | F8, F9                          | Live indoor marker < 1.5 m error on 80% samples; outdoor map switches with hysteresis    |
+| 2     | Place      | F5, F6, F7                      | ✅ Done                                                                                  |
+| 3     | Locate     | F8, F9                          | ✅ Done                                                                                  |
 | 4     | Alert      | F11, F12                        | 5 rule types configurable, alerts surface in bell within 2 s, ack persists across reload |
 | 5     | Polish     | F13 + accessibility + demo prep | Replay 1 h at 10×, CSV export, WCAG AA on critical paths, two demo dry-runs              |
 
@@ -159,7 +159,21 @@ The first option is simpler and proportional to prototype scope. It also means w
 
 ---
 
-## Phase 3 — Locate
+## Phase 3 — Locate (✅ done)
+
+What shipped: F8 (8-stage pure-function positioning pipeline + `position_estimator` edge function + live `PatientMarker` on the floor plan + `ModeIndicator`); F9 (lazy-loaded `OutdoorMapView` with `react-map-gl`/`mapbox-gl`/`@mapbox/mapbox-gl-draw`, breadcrumb fed from a 30-min Zustand slice, geofence draw/edit/save → `alert_rules` via typed `GeofenceParams` in `@alzcare/shared/rules`, `PatientPositionView` mode-router); POS-08 full 5-tick consecutive-condition hysteresis backed by additive `position_estimates.indoor_confidence` + `gps_strong` columns; in-app beacon calibration (`BeaconCalibrationDialog` writes `rssi_at_1m` + `tx_power` after a 5-s 1 m capture); `alert_rules` write policies + auto `updated_at` trigger.
+
+Verification evidence:
+
+- Algorithm-level accuracy: `apps/web/src/test/positioning/pipeline.test.ts` runs 100 synthetic noisy ticks through `runPositionPipeline` and asserts the 80th-percentile error is < 1.5 m and worst case < 3 m. Beacon dropout + recovery covered in the same suite.
+- POS-08 hysteresis: `apps/web/src/test/positioning/mode.test.ts` proves the 5-tick threshold in both directions, the consecutive-run break on a non-matching tick, and graceful degradation on legacy null-candidate priors.
+- F9 contract: `apps/web/src/test/map/geofence.test.ts` rejects unclosed/self-intersecting polygons and round-trips coordinates; `PatientPositionView.test.tsx` proves mode-driven view selection; `outdoorTrailStore.test.ts` proves the 30-min trim window.
+
+What's deferred: real-environment replay fixtures (BACKLOG — needs a captured walkthrough), `position_estimates` 1-min compaction (BACKLOG — production-only at >1 patient × week), live integration replay through `supabase functions serve` (blocked by a tooling symlink issue documented in BACKLOG; the same symlink issue forces a no-spaces deploy stage — already worked around).
+
+The original Phase 3 plan, retained below for reference.
+
+---
 
 **Goal**: When the patient is indoors, the dashboard shows a smoothed marker on the floor plan that matches reality within 1.5 m on 80% of samples. When the patient leaves the calibrated space, the view switches to an outdoor map. The switch is hysteretic and doesn't flap at the doorway.
 

@@ -35,18 +35,16 @@ export function runPositionPipeline(input: PositionPipelineInput): PositionPipel
   // position.
   if (fused == null) {
     if (signals.gps == null) return null;
-    // Outdoor-only: no indoor data to write, but we have GPS. We still
-    // ask decideMode (with indoorConfidence = 0) which, with strong
-    // GPS, will eventually flip to outdoor — until that flip the row
-    // is suppressed (we'd need a canvas position for indoor mode and
-    // we don't have one).
-    const mode = decideMode({
+    // Outdoor-only: no indoor data to write, but we have GPS. Run the
+    // mode decision (with indoorConfidence = 0); hysteresis may delay
+    // the flip until 5 consecutive outdoor candidates have agreed.
+    const decision = decideMode({
       recentEstimates,
       gpsFix: signals.gps,
       indoorConfidence: 0,
     });
-    if (mode === 'outdoor') {
-      return outdoorRow(signals, gpsConfidence(signals.gps));
+    if (decision.mode === 'outdoor') {
+      return outdoorRow(signals, gpsConfidence(signals.gps), decision);
     }
     return null;
   }
@@ -62,14 +60,14 @@ export function runPositionPipeline(input: PositionPipelineInput): PositionPipel
   });
 
   // Stage 7: mode (hysteretic).
-  const mode = decideMode({
+  const decision = decideMode({
     recentEstimates,
     gpsFix: signals.gps,
     indoorConfidence,
   });
 
-  if (mode === 'outdoor') {
-    return outdoorRow(signals, gpsConfidence(signals.gps));
+  if (decision.mode === 'outdoor') {
+    return outdoorRow(signals, gpsConfidence(signals.gps), decision);
   }
 
   // Stage 8: assemble indoor row.
@@ -81,12 +79,15 @@ export function runPositionPipeline(input: PositionPipelineInput): PositionPipel
     lat: signals.gps?.lat ?? null,
     lng: signals.gps?.lng ?? null,
     confidence: indoorConfidence,
+    indoor_confidence: decision.indoorConfidence,
+    gps_strong: decision.gpsStrong,
   };
 }
 
 function outdoorRow(
   signals: PositionPipelineInput['signals'],
   confidence: number,
+  decision: { indoorConfidence: number; gpsStrong: boolean },
 ): PositionPipelineOutput {
   return {
     recorded_at: signals.recorded_at,
@@ -96,6 +97,8 @@ function outdoorRow(
     lat: signals.gps?.lat ?? null,
     lng: signals.gps?.lng ?? null,
     confidence,
+    indoor_confidence: decision.indoorConfidence,
+    gps_strong: decision.gpsStrong,
   };
 }
 

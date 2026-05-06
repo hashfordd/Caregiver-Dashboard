@@ -3,25 +3,26 @@ import { usePatientStreamContext } from '@/features/patients/PatientStreamContex
 import { usePositionMarkerStore } from '@/lib/stores/positionMarkerStore';
 import type { PositionEstimateRow } from '@/lib/usePatientStream';
 
-/** Subscribes to the patient-stream's onPositionEstimate channel and
- *  fans rows into the position marker store. Returns the latest
- *  estimate for the current patient (or undefined when none has
- *  arrived yet).
+/** Subscribes to onPositionEstimate and fans rows into the marker store.
+ *  Returns the latest estimate for the current patient (or undefined
+ *  when none has arrived yet).
  *
- *  Cleanup: unsubscribes on unmount AND resets the store entry for
- *  this patient so a route change doesn't leak the previous tenant's
- *  marker. */
+ *  Refcounted: multiple components on the same patient page can call
+ *  this hook safely (e.g. the F9 mode-router + the indoor LivePositionView).
+ *  The store's last entry is only cleared when the last subscriber for
+ *  this patient unmounts. */
 export function usePositionMarker(): PositionEstimateRow | undefined {
   const { patientId, onPositionEstimate } = usePatientStreamContext();
   const latest = usePositionMarkerStore((s) => s.latestByPatient[patientId]);
 
   useEffect(() => {
+    usePositionMarkerStore.getState().acquire(patientId);
     const unsubscribe = onPositionEstimate((row) => {
       usePositionMarkerStore.getState().pushEstimate(patientId, row);
     });
     return () => {
       unsubscribe();
-      usePositionMarkerStore.getState().reset(patientId);
+      usePositionMarkerStore.getState().release(patientId);
     };
   }, [patientId, onPositionEstimate]);
 

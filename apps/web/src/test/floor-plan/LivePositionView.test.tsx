@@ -140,7 +140,10 @@ function renderView() {
 beforeEach(() => {
   vi.clearAllMocks();
   registeredListeners.clear();
-  usePositionMarkerStore.getState().reset(PATIENT_ID);
+  // Drain any leftover state for this patient.
+  while ((usePositionMarkerStore.getState().refcountByPatient[PATIENT_ID] ?? 0) > 0) {
+    usePositionMarkerStore.getState().release(PATIENT_ID);
+  }
 
   patientStreamContext.current = {
     patientId: PATIENT_ID,

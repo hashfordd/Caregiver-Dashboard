@@ -152,13 +152,25 @@ export interface SmoothedResult {
 /** Subset of `position_estimates` rows the pipeline reads for smoothing
  *  and mode hysteresis. Defined here independently of the web app's
  *  `PositionEstimateRow` so `packages/shared` doesn't depend on
- *  `apps/web`. */
+ *  `apps/web`.
+ *
+ *  POS-08 fields:
+ *  - `indoor_confidence` is the per-tick indoor candidate confidence
+ *    written by the orchestrator. Used to detect "indoor-weak" runs.
+ *  - `gps_strong` is the per-tick "GPS satisfies hdop + fix_age" flag.
+ *    Together these let `decideMode` count consecutive matching
+ *    candidates without re-running the upstream stages.
+ *  Both columns are nullable on rows written before the migration; the
+ *  hysteresis check treats null as "no candidate evidence either way"
+ *  and degrades gracefully. */
 export interface RecentEstimate {
   recorded_at: string;
   mode: 'indoor' | 'outdoor';
   x_canvas: number | null;
   y_canvas: number | null;
   confidence: number | null;
+  indoor_confidence: number | null;
+  gps_strong: boolean | null;
 }
 
 export interface PositionPipelineInput {
@@ -183,4 +195,9 @@ export interface PositionPipelineOutput {
   lat: number | null;
   lng: number | null;
   confidence: number;
+  /** POS-08: per-tick candidate fields that the orchestrator persists
+   *  alongside `mode` so the next invocation can apply hysteresis on
+   *  the *candidate* signal, not the *applied* mode. */
+  indoor_confidence: number;
+  gps_strong: boolean;
 }

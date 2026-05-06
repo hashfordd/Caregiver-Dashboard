@@ -61,6 +61,31 @@ export function useUpdateBeaconPosition(patientId: string) {
   });
 }
 
+export interface UpdateBeaconCalibrationInput {
+  id: string;
+  rssi_at_1m: number;
+  tx_power: number;
+}
+
+/** Writes the F8 path-loss calibration columns back to a beacon. Driven
+ *  by BeaconCalibrationDialog after a 5-s 1 m capture window. */
+export function useUpdateBeaconCalibration(patientId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: UpdateBeaconCalibrationInput): Promise<BeaconRow> => {
+      const { data, error } = await supabase
+        .from('beacons')
+        .update({ rssi_at_1m: input.rssi_at_1m, tx_power: input.tx_power })
+        .eq('id', input.id)
+        .select(BEACON_COLUMNS)
+        .single();
+      if (error) throw error;
+      return data as BeaconRow;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: beaconsKey(patientId) }),
+  });
+}
+
 export function useDeleteBeacon(patientId: string) {
   const qc = useQueryClient();
   return useMutation({

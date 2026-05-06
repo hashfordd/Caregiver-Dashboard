@@ -20,7 +20,7 @@ import {
   type RecentEstimate,
 } from './_shared/positioning/index.ts';
 
-const RECENT_ESTIMATES_LIMIT = 6; // smoothing uses 5; mode-decision can read all 6
+const RECENT_ESTIMATES_LIMIT = 6; // smoothing uses 5; POS-08 hysteresis needs ≥ 4 priors
 
 interface HandlerEnv {
   /** Service-role bearer the bridge must send. Compared by exact
@@ -116,7 +116,7 @@ export async function handlePositionEstimateRequest(
 
   const recentRes = await supabase
     .from('position_estimates')
-    .select('recorded_at, mode, x_canvas, y_canvas, confidence')
+    .select('recorded_at, mode, x_canvas, y_canvas, confidence, indoor_confidence, gps_strong')
     .eq('patient_id', m.patient_id)
     .order('recorded_at', { ascending: false })
     .limit(RECENT_ESTIMATES_LIMIT);
@@ -146,6 +146,8 @@ export async function handlePositionEstimateRequest(
       lat: result.lat,
       lng: result.lng,
       confidence: result.confidence,
+      indoor_confidence: result.indoor_confidence,
+      gps_strong: result.gps_strong,
     })
     .select('id')
     .single();

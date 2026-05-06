@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { Bluetooth, MapPin, Trash2 } from 'lucide-react';
+import { Bluetooth, MapPin, Ruler, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -7,6 +7,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useFloorPlan } from '@/features/floor-plan/floorPlanQueries';
 import { publishFakeSignals } from '@/lib/devSignals';
+import { BeaconCalibrationDialog } from './BeaconCalibrationDialog';
 import {
   BeaconPlacementCanvas,
   placedCount,
@@ -28,6 +29,7 @@ export function BeaconsPanel({ patientId }: BeaconsPanelProps) {
   const planQuery = useFloorPlan(patientId);
   const deleteBeacon = useDeleteBeacon(patientId);
   const [pairTarget, setPairTarget] = useState<string | null>(null);
+  const [calibrationTarget, setCalibrationTarget] = useState<BeaconRow | null>(null);
   const placementRef = useRef<BeaconPlacementCanvasHandle | null>(null);
 
   const pairedMacs = useMemo(
@@ -155,6 +157,7 @@ export function BeaconsPanel({ patientId }: BeaconsPanelProps) {
                 deleting={deleteBeacon.isPending && deleteBeacon.variables === b.id}
                 placementReady={placementReady}
                 onPlace={() => handlePlaceClick(b.id)}
+                onCalibrate={() => setCalibrationTarget(b)}
                 onDelete={() => deleteBeacon.mutate(b.id)}
               />
             ))}
@@ -178,6 +181,15 @@ export function BeaconsPanel({ patientId }: BeaconsPanelProps) {
           floorPlanId={plan?.id ?? null}
         />
       )}
+
+      <BeaconCalibrationDialog
+        beacon={calibrationTarget}
+        patientId={patientId}
+        open={calibrationTarget != null}
+        onOpenChange={(open) => {
+          if (!open) setCalibrationTarget(null);
+        }}
+      />
     </div>
   );
 }
@@ -224,16 +236,25 @@ interface BeaconCardProps {
   deleting: boolean;
   placementReady: boolean;
   onPlace: () => void;
+  onCalibrate: () => void;
   onDelete: () => void;
 }
 
-function BeaconCard({ beacon, deleting, placementReady, onPlace, onDelete }: BeaconCardProps) {
+function BeaconCard({
+  beacon,
+  deleting,
+  placementReady,
+  onPlace,
+  onCalibrate,
+  onDelete,
+}: BeaconCardProps) {
   const placed = isPlaced(beacon);
+  const calibrated = beacon.rssi_at_1m != null;
   return (
     <Card>
       <CardContent className="flex items-center justify-between gap-4 py-4">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="truncate text-sm font-medium text-foreground">
               {beacon.label ?? <span className="italic text-muted-foreground">Unlabelled</span>}
             </span>
@@ -242,12 +263,31 @@ function BeaconCard({ beacon, deleting, placementReady, onPlace, onDelete }: Bea
                 Unplaced
               </Badge>
             )}
+            {!calibrated && (
+              <Badge variant="outline" className="text-[10px]">
+                Uncalibrated
+              </Badge>
+            )}
+            {calibrated && (
+              <Badge variant="secondary" className="text-[10px] font-mono">
+                {beacon.rssi_at_1m} dBm @ 1 m
+              </Badge>
+            )}
           </div>
           <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
             {beacon.mac_address}
           </p>
         </div>
         <div className="flex items-center gap-1">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onCalibrate}
+            title="Calibrate path-loss reference RSSI for this beacon"
+          >
+            <Ruler className="mr-1 h-3.5 w-3.5" />
+            {calibrated ? 'Recalibrate' : 'Calibrate'}
+          </Button>
           <Button
             size="sm"
             variant="outline"

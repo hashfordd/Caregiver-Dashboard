@@ -4,11 +4,12 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { SensorCard } from '../live/SensorCard';
 import { usePatientStreamContext } from '../PatientStreamContext';
 
-// F4 fills the sensor cards; F8's LivePositionView surfaces the floor
-// plan + live marker; F10 fills the device pairing panel.
-const LivePositionView = lazy(() =>
-  import('@/features/floor-plan/LivePositionView').then((m) => ({
-    default: m.LivePositionView,
+// PatientPositionView mode-routes between F8's indoor floor-plan view
+// and F9's outdoor map. It pulls the latest estimate via usePositionMarker
+// (refcounted in the store) so consumers can mount it freely.
+const PatientPositionView = lazy(() =>
+  import('@/features/floor-plan/PatientPositionView').then((m) => ({
+    default: m.PatientPositionView,
   })),
 );
 
@@ -30,7 +31,7 @@ export function LiveTab() {
           </div>
         }
       >
-        <LivePositionView patientId={patientId} />
+        <PatientPositionView patientId={patientId} />
       </Suspense>
     </div>
   );

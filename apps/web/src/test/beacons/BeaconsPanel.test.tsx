@@ -29,7 +29,27 @@ vi.mock('@/features/beacons/beaconQueries', () => ({
   useDeleteBeacon: (...args: unknown[]) => useDeleteBeaconMock(...args),
   useUpsertBeacon: vi.fn(),
   useUpdateBeaconPosition: vi.fn(),
+  useUpdateBeaconCalibration: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
 }));
+
+// BeaconsPanel mounts BeaconCalibrationDialog (closed by default), which
+// reads the patient-stream context. Stub it so the dialog can mount even
+// when no provider is rendered around the test.
+vi.mock('@/features/patients/PatientStreamContext', async (orig) => {
+  const actual = (await orig()) as Record<string, unknown>;
+  return {
+    ...actual,
+    usePatientStreamContext: () => ({
+      patientId: '11111111-1111-1111-1111-111111111111',
+      status: 'subscribed' as const,
+      lastSeen: { sensor: null, position: null, alert: null, signals: null },
+      onSensorReading: () => () => {},
+      onPositionEstimate: () => () => {},
+      onAlert: () => () => {},
+      onSignals: () => () => {},
+    }),
+  };
+});
 
 // BeaconsPanel reads the patient's active floor plan to pass its id into
 // the pair dialog. Tests don't open the dialog, but the hook still runs

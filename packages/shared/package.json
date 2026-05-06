@@ -11,7 +11,9 @@
     "./mqtt": "./src/mqtt/index.ts",
     "./mqtt/*": "./src/mqtt/*.ts",
     "./positioning": "./src/positioning/index.ts",
-    "./positioning/*": "./src/positioning/*.ts"
+    "./positioning/*": "./src/positioning/*.ts",
+    "./rules": "./src/rules/index.ts",
+    "./rules/*": "./src/rules/*.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

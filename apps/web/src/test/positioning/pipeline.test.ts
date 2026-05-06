@@ -219,10 +219,12 @@ describe('runPositionPipeline', () => {
       // round-trip the orchestrator does).
       const newRow: RecentEstimate = {
         recorded_at: out!.recorded_at,
-        mode: 'indoor',
+        mode: out!.mode,
         x_canvas: out!.x_canvas,
         y_canvas: out!.y_canvas,
         confidence: out!.confidence,
+        indoor_confidence: out!.indoor_confidence,
+        gps_strong: out!.gps_strong,
       };
       recent = [newRow, ...recent].slice(0, 6);
     }
@@ -272,10 +274,12 @@ describe('runPositionPipeline', () => {
       positions.push({ x: out!.x_canvas, y: out!.y_canvas });
       const newRow: RecentEstimate = {
         recorded_at: out!.recorded_at,
-        mode: 'indoor',
+        mode: out!.mode,
         x_canvas: out!.x_canvas,
         y_canvas: out!.y_canvas,
         confidence: out!.confidence,
+        indoor_confidence: out!.indoor_confidence,
+        gps_strong: out!.gps_strong,
       };
       recent = [newRow, ...recent].slice(0, 6);
     }
