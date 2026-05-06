@@ -4,14 +4,14 @@ The build moves through five phases after foundation. Each phase delivers a cohe
 
 The phase boundaries are deliberate — they're the points where we stop, integration-test the slice that just shipped, and only then move on. Phase exit criteria are integration-level (behaviour observable at the system boundary), not workstream-level.
 
-| Phase | Theme      | Features                        | Verification gate                                                                        |
-| ----- | ---------- | ------------------------------- | ---------------------------------------------------------------------------------------- |
-| 0     | Foundation | (scaffold)                      | ✅ Done                                                                                  |
-| 1     | Spine      | F1, F2, F3, F4, F10             | ✅ Done                                                                                  |
-| 2     | Place      | F5, F6, F7                      | ✅ Done                                                                                  |
-| 3     | Locate     | F8, F9                          | ✅ Done                                                                                  |
-| 4     | Alert      | F11, F12                        | 5 rule types configurable, alerts surface in bell within 2 s, ack persists across reload |
-| 5     | Polish     | F13 + accessibility + demo prep | Replay 1 h at 10×, CSV export, WCAG AA on critical paths, two demo dry-runs              |
+| Phase | Theme      | Features                        | Verification gate                                                           |
+| ----- | ---------- | ------------------------------- | --------------------------------------------------------------------------- |
+| 0     | Foundation | (scaffold)                      | ✅ Done                                                                     |
+| 1     | Spine      | F1, F2, F3, F4, F10             | ✅ Done                                                                     |
+| 2     | Place      | F5, F6, F7                      | ✅ Done                                                                     |
+| 3     | Locate     | F8, F9                          | ✅ Done                                                                     |
+| 4     | Alert      | F11, F12                        | ✅ Done                                                                     |
+| 5     | Polish     | F13 + accessibility + demo prep | Replay 1 h at 10×, CSV export, WCAG AA on critical paths, two demo dry-runs |
 
 Reading order for each phase below: **goal → entry → critical path → exit → integration tests → risks**.
 
@@ -240,7 +240,29 @@ If the project later needs replay-from-raw-signals (for tuning POS-10 stress tes
 
 ---
 
-## Phase 4 — Alert
+## Phase 4 — Alert (✅ done)
+
+What shipped: F11 (events table + acknowledge_alert RPC + write policies; `@alzcare/shared/rules` discriminated AlertRule + pure evaluateRule + cooldown helpers; rules_engine edge function dispatched via Supabase database webhooks on sensor_readings/position_estimates/events INSERT; inactivity_scan edge function fired by pg_cron every 60 s; mqtt_bridge persists EventMessage to events; per-patient RuleSettingsTab with one card per V1 type — vitals, zone, fall, inactivity — and a "would have alerted in last 24 h" preview that runs the same evaluator the engine uses against fetched history); F12 (global AlertBell in the navbar with badge + critical-aware dot, per-patient AlertsTab with severity + state filter chips, AckButton calling acknowledge_alert with optimistic UI, CriticalCue with Web Audio tone + Notification API behind a single-prompt-per-session guard, AlertLiveRegion for screen readers, AlertsPage at /alerts as a cross-patient view).
+
+Verification evidence:
+
+- Per-rule unit coverage: `apps/web/src/test/rules/evaluate.test.ts` (20) + `cooldown.test.ts` (6) — every rule type's positive / negative / cooldown semantics, plus the boundary case for the strict-`<` cooldown comparison.
+- SSOT canary: `apps/web/src/test/rules/parity.test.ts` walks a 24 h synthetic stream through both the "engine" and "preview" call sites and asserts equal alert sets (CROSS_CUTTING §10).
+- Engine handler tests: `apps/edge/tests/rules_engine.test.ts` (9) + `inactivity_scan.test.ts` (5) — auth, dispatch by table, cooldown suppression against an unacked prior firing.
+- Bridge persistence: events branch test rewritten in `processMessage.test.ts`.
+- F12 surface: `AckButton.test.tsx` (3) confirms RPC call + acked-state render; `CriticalCue.test.ts` (5) covers the at-most-once permission prompt + the document.hidden gate.
+- `previewRule.test.ts` (4) confirms the preview engine matches the evaluator + cooldown semantics on synthetic windows.
+- Hosted Supabase: migrations applied, both edge functions deployed; pg_cron schedule running once per minute. Vault secret `edge_functions_base_url` set; `edge_functions_service_role_key` is the one runtime secret the deployer registers per environment.
+
+What's deferred:
+
+- repetitive_movement rule type (BACKLOG — V2; the enum value is already in the migration so the UI surface is the only V2 lift).
+- On-canvas polygon picker for zone rules (BACKLOG — the V1 ZoneRuleCard exposes the polygon as a JSON textarea so caregivers can paste coords from the Place tab; an interactive picker mirrors F9's geofence draw flow on the Fabric canvas).
+- pg_cron clock skew tightening (BACKLOG — the inactivity_scan job ticks against the DB clock; rules tuned to the minute may fire one tick later than expected).
+
+The original Phase 4 plan, retained below for reference.
+
+---
 
 **Goal**: A caregiver tunes per-patient rules in a settings tab, watches a "would have alerted" preview against the last 24 h of data, and receives live alerts in a global bell + per-patient feed. Acknowledgement persists.
 

@@ -1,5 +1,7 @@
 import { useSearchParams } from 'react-router-dom';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { AlertsTab } from '@/features/alerts/AlertsTab';
+import { RuleSettingsTab } from '@/features/alerts/RuleSettingsTab';
 import { PatientNotesSection } from './PatientNotesSection';
 import { LiveTab } from './tabs/LiveTab';
 import { PlaceTab } from './tabs/PlaceTab';
@@ -52,13 +54,13 @@ export function PatientTabs({ patientId }: Props) {
         <PlaceholderTab phase={5} feature="Movement replay, vitals charts, CSV export." />
       </TabsContent>
       <TabsContent value="alerts">
-        <PlaceholderTab phase={4} feature="Alert feed and acknowledgement workflow." />
+        <AlertsTab patientId={patientId} />
       </TabsContent>
       <TabsContent value="notes">
         <PatientNotesSection patientId={patientId} />
       </TabsContent>
       <TabsContent value="settings">
-        <PlaceholderTab phase={4} feature="Per-patient alert rule configuration." />
+        <RuleSettingsTab patientId={patientId} />
       </TabsContent>
     </Tabs>
   );

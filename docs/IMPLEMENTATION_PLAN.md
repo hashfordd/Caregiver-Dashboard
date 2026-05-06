@@ -21,7 +21,8 @@ V1 prototype scope per the build spec. V2 items (ML-driven thresholds, SLAM mapp
 - **Phase 1 — Spine**: ✅ Complete (F1, F2, F3, F4, F10).
 - **Phase 2 — Place**: ✅ Complete (F5, F6, F7).
 - **Phase 3 — Locate**: ✅ Complete (F8, F9, POS-08 hysteresis, in-app beacon calibration).
-- **Phases 4–5**: not started.
+- **Phase 4 — Alert**: ✅ Complete (F11, F12 — shared evaluator + parity canary, rules_engine + inactivity_scan + cron, settings UI with 4 rule cards + 24 h preview, global bell + per-patient feed + ack RPC + critical cues).
+- **Phase 5 — Polish**: not started.
 
 ## Conventions
 

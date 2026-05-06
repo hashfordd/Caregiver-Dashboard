@@ -4,6 +4,7 @@ import { LogOut, User as UserIcon } from 'lucide-react';
 import type { CaregiverProfile } from '@alzcare/shared';
 import { Brand } from '@/components/Brand';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { AlertBell } from '@/features/alerts/AlertBell';
 import { useAuth } from '@/features/auth/AuthProvider';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
@@ -79,6 +80,7 @@ export function AppNavbar() {
               {profile.data.company_name}
             </span>
           )}
+          <AlertBell />
           <ThemeToggle />
           <UserMenu profile={profile.data ?? null} />
         </div>
