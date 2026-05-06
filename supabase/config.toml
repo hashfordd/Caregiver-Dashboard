@@ -61,15 +61,16 @@ inspector_port = 8083
 # ----------------------------------------------------------------------------
 [functions.mqtt_bridge]
 verify_jwt = false
-import_map = "../apps/edge/deno.json"
 
 [functions.position_estimator]
-verify_jwt = true
-import_map = "../apps/edge/deno.json"
+# verify_jwt is false because the project uses the new sb_secret_* key
+# system, which the gateway's JWT verifier rejects (only legacy eyJ... JWTs
+# pass verify_jwt). Auth is enforced in handler.ts via exact-match against
+# the injected SUPABASE_SERVICE_ROLE_KEY.
+verify_jwt = false
 
 [functions.rules_engine]
 verify_jwt = true
-import_map = "../apps/edge/deno.json"
 
 [analytics]
 enabled = false

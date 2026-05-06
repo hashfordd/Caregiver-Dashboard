@@ -11,8 +11,8 @@
 //
 // Pure functions only; no DB, no env reads.
 
-import type { BleSample } from '../mqtt/signals.js';
-import type { BeaconDistance, BeaconRow } from './types.js';
+import type { BleSample } from '../mqtt/signals.ts';
+import type { BeaconDistance, BeaconRow } from './types.ts';
 
 /** Free-space path-loss exponent. Real environments are 1.8–4.0
  *  depending on materials; 2.0 is a reasonable default for a small

@@ -17,8 +17,8 @@
 //
 // Pure function. No DB, no logging beyond the stub-empty warn.
 
-import type { BleSample, WifiSample } from '../mqtt/signals.js';
-import type { CalibrationPoint, FingerprintResult } from './types.js';
+import type { BleSample, WifiSample } from '../mqtt/signals.ts';
+import type { CalibrationPoint, FingerprintResult } from './types.ts';
 
 /** RSSI substitute for "the other side did not observe this beacon /
  *  BSSID". -100 dB is roughly the noise floor; substantially worse

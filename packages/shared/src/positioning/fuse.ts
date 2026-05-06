@@ -8,7 +8,7 @@
 //
 // Pure function.
 
-import type { FingerprintResult, FusedResult, TrilaterationResult } from './types.js';
+import type { FingerprintResult, FusedResult, TrilaterationResult } from './types.ts';
 
 /** k_distance scaling factor in the fingerprint-confidence formula.
  *  20 means "a k-distance of 20 dB → 0.5 confidence"; tunable. */

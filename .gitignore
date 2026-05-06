@@ -46,3 +46,4 @@ Thumbs.db
 
 # Course artefacts (held outside the repo)
 *.docx
+.vercel

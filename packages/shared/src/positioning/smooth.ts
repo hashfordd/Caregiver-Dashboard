@@ -12,7 +12,7 @@
 //
 // Pure function.
 
-import type { FusedResult, RecentEstimate, SmoothedResult } from './types.js';
+import type { FusedResult, RecentEstimate, SmoothedResult } from './types.ts';
 
 /** Per-row weights, oldest-to-newest among the past 5. The current
  *  tick is added on top with weight 1.0 inside the function. */

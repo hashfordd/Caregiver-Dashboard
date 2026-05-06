@@ -4,7 +4,12 @@
 // Keeping a single SSOT means CI exercises the same path firmware will hit
 // in production. CROSS_CUTTING §11.
 
-import { EventMessage, parseTopic, SignalsMessage, TelemetryMessage } from '@alzcare/shared/mqtt';
+import {
+  EventMessage,
+  parseTopic,
+  SignalsMessage,
+  TelemetryMessage,
+} from './_shared/mqtt/index.ts';
 import type { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
 
 export type ProcessOutcome =

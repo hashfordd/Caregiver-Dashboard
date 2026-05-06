@@ -7,18 +7,18 @@
 //
 // Trigger: HTTP POST from mqtt_bridge after it validates a SignalsMessage.
 // Auth: service-role bearer (defence in depth alongside verify_jwt = true).
-// Side effect: one position_estimates row insert (slice 5 enables; slice
-// 3 stubs the insert behind NODE_ENV so the unit test can assert the
-// pre-insert call shape).
+// Side effect: one position_estimates row insert via the service-role
+// client. Tests inject a mocked Supabase that records insert payloads
+// without touching a real DB.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { SignalsMessage } from '@alzcare/shared/mqtt';
+import { SignalsMessage } from './_shared/mqtt/index.ts';
 import {
   runPositionPipeline,
   type BeaconRow,
   type CalibrationPoint,
   type RecentEstimate,
-} from '@alzcare/shared/positioning';
+} from './_shared/positioning/index.ts';
 
 const RECENT_ESTIMATES_LIMIT = 6; // smoothing uses 5; mode-decision can read all 6
 

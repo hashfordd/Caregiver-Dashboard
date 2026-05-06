@@ -4,14 +4,14 @@
 // caller (the `position_estimator` edge function) and are passed in via
 // `recentEstimates`.
 
-import type { PositionPipelineInput, PositionPipelineOutput } from './types.js';
-import { rssiVectorToDistances } from './pathLoss.js';
-import { trilaterate } from './trilaterate.js';
-import { fingerprintMatch } from './fingerprint.js';
-import { fuse } from './fuse.js';
-import { smooth } from './smooth.js';
-import { scoreConfidence } from './confidence.js';
-import { decideMode } from './mode.js';
+import type { PositionPipelineInput, PositionPipelineOutput } from './types.ts';
+import { rssiVectorToDistances } from './pathLoss.ts';
+import { trilaterate } from './trilaterate.ts';
+import { fingerprintMatch } from './fingerprint.ts';
+import { fuse } from './fuse.ts';
+import { smooth } from './smooth.ts';
+import { scoreConfidence } from './confidence.ts';
+import { decideMode } from './mode.ts';
 
 export function runPositionPipeline(input: PositionPipelineInput): PositionPipelineOutput | null {
   const { signals, beacons, calibrationPoints, recentEstimates, scaleMetersPerPixel } = input;

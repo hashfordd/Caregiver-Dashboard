@@ -18,8 +18,8 @@
 //
 // Pure function.
 
-import type { GpsFix } from '../mqtt/signals.js';
-import type { RecentEstimate } from './types.js';
+import type { GpsFix } from '../mqtt/signals.ts';
+import type { RecentEstimate } from './types.ts';
 
 /** GPS-quality thresholds for "outdoor-eligible" per F8.md. */
 const GPS_HDOP_MAX = 2.0;

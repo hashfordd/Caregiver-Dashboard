@@ -60,7 +60,7 @@ export interface CalibrationSignature<TSample = BleSignatureSample | WifiSignatu
 export type BleCalibrationSignature = CalibrationSignature<BleSignatureSample>;
 export type WifiCalibrationSignature = CalibrationSignature<WifiSignatureSample>;
 
-import type { SignalsMessage } from '../mqtt/signals.js';
+import type { SignalsMessage } from '../mqtt/signals.ts';
 
 // ─── F8: indoor positioning pipeline types ────────────────────────────
 //

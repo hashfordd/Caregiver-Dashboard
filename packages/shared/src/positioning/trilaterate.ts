@@ -15,7 +15,7 @@
 //
 // Pure function. No globals, no logging.
 
-import type { BeaconDistance, TrilaterationResult } from './types.js';
+import type { BeaconDistance, TrilaterationResult } from './types.ts';
 
 /** Minimum triangle area (canvas-pixels²) before the three beacons are
  *  considered colinear and the solve is rejected. Empirical: at our

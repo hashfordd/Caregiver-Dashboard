@@ -12,6 +12,18 @@ const { useBeaconsMock, useDeleteBeaconMock, deleteMutateMock, useFloorPlanMock 
   }),
 );
 
+// BeaconsPanel imports @/lib/devSignals, which eagerly evaluates
+// @/lib/supabase. That throws in CI (no VITE_SUPABASE_* env vars), so
+// stub the supabase client like the other component tests do.
+vi.mock('@/lib/supabase', () => ({
+  supabase: {
+    from: vi.fn(),
+    rpc: vi.fn(),
+    channel: vi.fn(),
+    removeChannel: vi.fn(),
+  },
+}));
+
 vi.mock('@/features/beacons/beaconQueries', () => ({
   useBeacons: (...args: unknown[]) => useBeaconsMock(...args),
   useDeleteBeacon: (...args: unknown[]) => useDeleteBeaconMock(...args),
