@@ -21,7 +21,13 @@ export type ProcessOutcome =
       reason: 'broadcast' | 'broadcast-failed' | 'validation';
       details?: string;
     }
-  | { kind: 'events'; persisted: false; reason: 'phase-4' | 'validation'; details?: string }
+  | { kind: 'events'; persisted: true; rowId: string }
+  | {
+      kind: 'events';
+      persisted: false;
+      error: 'validation' | 'persistence';
+      details: string;
+    }
   | { kind: 'unknown'; persisted: false; error: 'topic'; details: string };
 
 /** Bridge-side env passed in (rather than read directly) so tests can
@@ -182,12 +188,33 @@ export async function processMessage(
       return {
         kind: 'events',
         persisted: false,
-        reason: 'validation',
+        error: 'validation',
         details: validation.error.message,
       };
     }
-    // TODO: F11 — events table insert and rules_engine fanout.
-    return { kind: 'events', persisted: false, reason: 'phase-4' };
+    const m = validation.data;
+    const { data, error } = await supabase
+      .from('events')
+      .insert({
+        patient_id: m.patient_id,
+        device_id: m.device_id,
+        occurred_at: m.occurred_at,
+        type: m.type,
+        payload: m.payload ?? {},
+      })
+      .select('id')
+      .single();
+    if (error || !data) {
+      return {
+        kind: 'events',
+        persisted: false,
+        error: 'persistence',
+        details: error?.message ?? 'no row returned',
+      };
+    }
+    // Database webhook on events INSERT triggers rules_engine — no
+    // direct invocation here. Fall rules fire from that path.
+    return { kind: 'events', persisted: true, rowId: (data as { id: string }).id };
   }
 
   return { kind: 'unknown', persisted: false, error: 'topic', details: 'unhandled kind' };

@@ -1,43 +1,34 @@
-// Edge function: rules_engine
-// Triggered after INSERT on sensor_readings or position_estimates. Loads
-// enabled alert_rules for the patient, evaluates each rule type, and writes
-// rows to `alerts` when conditions match (with cooldown to avoid storms).
+// HTTP entry point for rules_engine. Triggered by Supabase database
+// webhooks on INSERT into sensor_readings, position_estimates, events.
+// The orchestration logic lives in handler.ts so it can be unit-tested
+// against a mocked Supabase client (mirrors mqtt_bridge / position_estimator).
 //
-// TODO: F11 / BE-08 — implement evaluators per rule type:
-//   - zone (geofence + dwell)
-//   - vitals (HR/SpO2/temp out-of-range)
-//   - fall (event-driven; usually fires from the events topic)
-//   - inactivity (no motion for N minutes)
-//   - repetitive_movement (pattern detection)
+// CROSS_CUTTING §1: this entry holds the service-role key in env and
+// never exposes it to clients. The handler additionally compares the
+// incoming Authorization header against the same key — webhook
+// invocations include `Authorization: Bearer <SERVICE_ROLE_KEY>` per
+// supabase/config.toml's `[functions.rules_engine] verify_jwt = false`
+// (Supabase's webhook surface doesn't carry a user JWT).
 
-interface WebhookPayload {
-  type: 'INSERT' | 'UPDATE' | 'DELETE';
-  table: 'sensor_readings' | 'position_estimates' | string;
-  schema: string;
-  record: unknown;
-  old_record: unknown | null;
+import { createClient } from '@supabase/supabase-js';
+import { handleRulesEngineRequest } from './handler.ts';
+
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+
+if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  console.error(
+    JSON.stringify({
+      level: 'error',
+      msg: 'rules_engine: missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY',
+    }),
+  );
 }
 
-Deno.serve(async (req: Request) => {
-  if (req.method !== 'POST') {
-    return json({ error: 'POST only' }, 405);
-  }
-
-  let payload: WebhookPayload;
-  try {
-    payload = (await req.json()) as WebhookPayload;
-  } catch {
-    return json({ error: 'invalid JSON' }, 400);
-  }
-
-  // TODO: F11 — load enabled rules, evaluate each, insert alerts rows with
-  //             cooldown windows.
-  return json({ ok: true, todo: 'F11/BE-08', received: payload.type }, 202);
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
 });
 
-function json(body: unknown, status: number): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
+Deno.serve((req: Request) =>
+  handleRulesEngineRequest(req, supabase, { serviceRoleKey: SUPABASE_SERVICE_ROLE_KEY }),
+);

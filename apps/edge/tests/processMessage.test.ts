@@ -8,6 +8,8 @@ const DEVICE_ID = '22222222-2222-2222-2222-222222222222';
 interface SupabaseMock extends SupabaseClient {
   __sensorInsertMock: ReturnType<typeof vi.fn>;
   __sensorSingleMock: ReturnType<typeof vi.fn>;
+  __eventsInsertMock: ReturnType<typeof vi.fn>;
+  __eventsSingleMock: ReturnType<typeof vi.fn>;
   __devicesUpdateMock: ReturnType<typeof vi.fn>;
   __devicesEqMock: ReturnType<typeof vi.fn>;
   __fromMock: ReturnType<typeof vi.fn>;
@@ -21,10 +23,17 @@ function buildSupabase(): SupabaseMock {
   const sensorInsertMock = vi.fn(() => ({
     select: vi.fn(() => ({ single: sensorSingleMock })),
   }));
+  // F11: events branch persists. Default to success; individual tests
+  // override __eventsSingleMock to drive the error path.
+  const eventsSingleMock = vi.fn().mockResolvedValue({ data: { id: 'ev-1' }, error: null });
+  const eventsInsertMock = vi.fn(() => ({
+    select: vi.fn(() => ({ single: eventsSingleMock })),
+  }));
   const devicesEqMock = vi.fn().mockResolvedValue({ error: null });
   const devicesUpdateMock = vi.fn(() => ({ eq: devicesEqMock }));
   const fromMock = vi.fn((table: string) => {
     if (table === 'sensor_readings') return { insert: sensorInsertMock };
+    if (table === 'events') return { insert: eventsInsertMock };
     if (table === 'devices') return { update: devicesUpdateMock };
     return {};
   });
@@ -39,6 +48,8 @@ function buildSupabase(): SupabaseMock {
     channel: channelMock,
     __sensorInsertMock: sensorInsertMock,
     __sensorSingleMock: sensorSingleMock,
+    __eventsInsertMock: eventsInsertMock,
+    __eventsSingleMock: eventsSingleMock,
     __devicesUpdateMock: devicesUpdateMock,
     __devicesEqMock: devicesEqMock,
     __fromMock: fromMock,
@@ -306,7 +317,40 @@ describe('processMessage', () => {
     });
   });
 
-  it('treats valid events as a phase-4 no-op (no insert)', async () => {
+  it('persists a valid events payload to public.events and returns rowId', async () => {
+    const outcome = await processMessage(
+      `device/${PATIENT_ID}/events`,
+      {
+        v: 1,
+        patient_id: PATIENT_ID,
+        device_id: DEVICE_ID,
+        occurred_at: '2026-05-04T12:00:00.000Z',
+        type: 'fall',
+        payload: { reason: 'impact' },
+      },
+      supabase,
+    );
+
+    expect(outcome).toEqual({ kind: 'events', persisted: true, rowId: 'ev-1' });
+    expect(supabase.__fromMock).toHaveBeenCalledWith('events');
+    expect(supabase.__eventsInsertMock).toHaveBeenCalledTimes(1);
+    expect(supabase.__eventsInsertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        patient_id: PATIENT_ID,
+        device_id: DEVICE_ID,
+        occurred_at: '2026-05-04T12:00:00.000Z',
+        type: 'fall',
+        payload: { reason: 'impact' },
+      }),
+    );
+    expect(supabase.__sensorInsertMock).not.toHaveBeenCalled();
+  });
+
+  it('returns a persistence error when the events insert fails', async () => {
+    supabase.__eventsSingleMock.mockResolvedValue({
+      data: null,
+      error: { message: 'fk_violation' },
+    });
     const outcome = await processMessage(
       `device/${PATIENT_ID}/events`,
       {
@@ -318,10 +362,12 @@ describe('processMessage', () => {
       },
       supabase,
     );
-
-    expect(outcome).toMatchObject({ kind: 'events', persisted: false, reason: 'phase-4' });
-    expect(supabase.__sensorInsertMock).not.toHaveBeenCalled();
-    expect(supabase.__devicesUpdateMock).not.toHaveBeenCalled();
+    expect(outcome).toMatchObject({
+      kind: 'events',
+      persisted: false,
+      error: 'persistence',
+      details: 'fk_violation',
+    });
   });
 
   it('rejects an unknown topic shape', async () => {
