@@ -1,14 +1,15 @@
 {
-  "name": "@alzcare/seed",
+  "name": "@alzcare/replay-signals",
   "version": "0.0.0",
   "private": true,
-  "description": "Idempotent seed script: ensures admin@bizzieapp.com + 3 demo patients + 1 device each + 60s of telemetry history.",
+  "description": "F8 verification harness — replay synthetic SignalsMessage fixtures through the bridge and report indoor-positioning accuracy against ground truth. Phase 3 deliverable.",
   "type": "module",
   "scripts": {
     "start": "tsx index.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@alzcare/shared": "*",
     "@supabase/supabase-js": "2.45.4"
   },
   "devDependencies": {

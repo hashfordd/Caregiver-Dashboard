@@ -42,6 +42,8 @@ Format: `- **<area>** — what + why deferred + reference (feature ID / task ID)
 
 - **F8 positioning: position_estimates retention** — Rows accumulate at ~1 Hz × patients. At one patient × one week that's ~600k rows; at scale a 1-min aggregate compactor (CROSS_CUTTING §8) is needed before any deployment with >1 patient × week of history. (F8 / Phase 5)
 
+- **F8 positioning: real-environment replay fixtures** — `tools/replay-signals/fixtures/walk-1.jsonl` is currently synthesised by reverse-applying the path-loss model + Gaussian RSSI noise. That catches algorithm regressions deterministically but doesn't catch model-vs-physics gaps (multipath, NLOS, body shadowing). Replace with a captured walkthrough recording before EV-05; the synthesised baseline is the algorithmic floor, not the production-accuracy ceiling. Also add per-scenario fixtures (dropout, NLOS, mode-flap) once the real-environment capture pipeline exists. (F8 / TST-14)
+
 - **Husky pre-commit aggressiveness** — `lint-staged` runs ESLint + Prettier on staged files. Add a typecheck stage if false-positive PRs become a problem.
 
 - **Auth signup flow** — `LoginPage` only handles sign-in (password + magic link). Signup with role selection (professional / family) is F1 feature work. (UI-03)

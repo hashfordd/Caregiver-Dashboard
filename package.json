@@ -32,6 +32,7 @@
     "supabase:stop": "supabase stop",
     "supabase:reset": "supabase db reset",
     "seed": "npm run start --workspace @alzcare/seed",
+    "replay:signals": "npm run start --workspace @alzcare/replay-signals --",
     "prepare": "husky"
   },
   "overrides": {
