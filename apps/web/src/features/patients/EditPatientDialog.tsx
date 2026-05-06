@@ -1,7 +1,8 @@
+import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { CreatePatientInput, type Patient } from '@alzcare/shared';
+import { UpdatePatientInput, type Patient } from '@alzcare/shared';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -18,6 +19,7 @@ import {
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  patient: Patient;
 }
 
 type FormValues = {
@@ -26,27 +28,46 @@ type FormValues = {
   description: string;
 };
 
-export function CreatePatientDialog({ open, onOpenChange }: Props) {
+function toFormValues(patient: Patient): FormValues {
+  return {
+    full_name: patient.full_name,
+    dob: patient.dob ?? '',
+    description: patient.description ?? '',
+  };
+}
+
+export function EditPatientDialog({ open, onOpenChange, patient }: Props) {
   const queryClient = useQueryClient();
   const form = useForm<FormValues>({
-    resolver: zodResolver(CreatePatientInput),
-    defaultValues: { full_name: '', dob: '', description: '' },
+    resolver: zodResolver(UpdatePatientInput),
+    defaultValues: toFormValues(patient),
   });
+
+  // Reset whenever the dialog opens for a (potentially) different patient so
+  // stale field state from a previous edit doesn't leak in.
+  useEffect(() => {
+    if (open) form.reset(toFormValues(patient));
+  }, [open, patient, form]);
 
   const mutation = useMutation({
     mutationFn: async (values: FormValues): Promise<Patient> => {
-      const { data, error } = await supabase.rpc('create_patient_with_allocation', {
-        p_full_name: values.full_name,
-        p_dob: values.dob || null,
-        p_description: values.description || null,
-      });
+      const { data, error } = await supabase
+        .from('patients')
+        .update({
+          full_name: values.full_name,
+          dob: values.dob || null,
+          description: values.description || null,
+        })
+        .eq('id', patient.id)
+        .select('id, full_name, dob, description, primary_caregiver_id, created_at')
+        .single();
       if (error) throw error;
       return data as Patient;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['patients', 'roster'] });
+      queryClient.invalidateQueries({ queryKey: ['patients', 'detail', patient.id] });
       onOpenChange(false);
-      form.reset();
       mutation.reset();
     },
   });
@@ -55,19 +76,17 @@ export function CreatePatientDialog({ open, onOpenChange }: Props) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>New patient</DialogTitle>
-          <DialogDescription>
-            Add a patient to your roster. You'll be allocated automatically.
-          </DialogDescription>
+          <DialogTitle>Edit patient</DialogTitle>
+          <DialogDescription>Update this patient's profile details.</DialogDescription>
         </DialogHeader>
         <form
           onSubmit={form.handleSubmit((values) => mutation.mutate(values))}
           className="space-y-4"
         >
           <div className="space-y-2">
-            <Label htmlFor="full_name">Full name</Label>
+            <Label htmlFor="edit_full_name">Full name</Label>
             <Input
-              id="full_name"
+              id="edit_full_name"
               autoFocus
               {...form.register('full_name')}
               aria-invalid={form.formState.errors.full_name ? true : undefined}
@@ -77,12 +96,12 @@ export function CreatePatientDialog({ open, onOpenChange }: Props) {
             )}
           </div>
           <div className="space-y-2">
-            <Label htmlFor="dob">Date of birth (optional)</Label>
-            <Input id="dob" type="date" {...form.register('dob')} />
+            <Label htmlFor="edit_dob">Date of birth (optional)</Label>
+            <Input id="edit_dob" type="date" {...form.register('dob')} />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="description">Description (optional)</Label>
-            <Textarea id="description" rows={4} {...form.register('description')} />
+            <Label htmlFor="edit_description">Description (optional)</Label>
+            <Textarea id="edit_description" rows={4} {...form.register('description')} />
           </div>
           {mutation.isError && (
             <p className="text-sm text-destructive">{(mutation.error as Error).message}</p>
@@ -92,7 +111,7 @@ export function CreatePatientDialog({ open, onOpenChange }: Props) {
               Cancel
             </Button>
             <Button type="submit" disabled={mutation.isPending}>
-              {mutation.isPending ? 'Creating…' : 'Create patient'}
+              {mutation.isPending ? 'Saving…' : 'Save changes'}
             </Button>
           </div>
         </form>

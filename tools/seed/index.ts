@@ -46,7 +46,7 @@ const PATIENTS = [
   {
     full_name: 'Margaret Holloway',
     dob: '1947-03-12',
-    notes:
+    description:
       "Mid-stage Alzheimer's. Lives at home with her daughter; carer visits twice weekly. Wandering risk after dusk.",
     deviceLabel: 'wrist · left',
     vitalsProfile: { hr: [68, 88], spo2: [95, 98], temp: [36.4, 36.9] },
@@ -54,7 +54,7 @@ const PATIENTS = [
   {
     full_name: "James O'Connor",
     dob: '1942-08-30',
-    notes:
+    description:
       'Recent diagnosis. Active and ambulatory; walks the garden twice daily. Watch for fall risk on stairs.',
     deviceLabel: 'wrist · right',
     vitalsProfile: { hr: [72, 92], spo2: [96, 99], temp: [36.5, 37.1] },
@@ -62,7 +62,7 @@ const PATIENTS = [
   {
     full_name: 'Eleanor Tanaka',
     dob: '1951-11-04',
-    notes:
+    description:
       'Late-stage care. Mostly bedridden; SpO₂ historically dips overnight — escalate below 92%.',
     deviceLabel: 'wrist · left',
     vitalsProfile: { hr: [60, 76], spo2: [92, 96], temp: [36.2, 36.7] },
@@ -70,14 +70,16 @@ const PATIENTS = [
   {
     full_name: 'Bernard Whitfield',
     dob: '1939-06-21',
-    notes: 'Vascular dementia. Uses a walker indoors; physiotherapy appointments Tue/Thu mornings.',
+    description:
+      'Vascular dementia. Uses a walker indoors; physiotherapy appointments Tue/Thu mornings.',
     deviceLabel: 'wrist · right',
     vitalsProfile: { hr: [65, 82], spo2: [94, 97], temp: [36.3, 36.8] },
   },
   {
     full_name: 'Aroha Nguyen',
     dob: '1955-02-09',
-    notes: 'Early-stage Alzheimer’s. Independent on most ADLs. Daughter is the secondary contact.',
+    description:
+      'Early-stage Alzheimer’s. Independent on most ADLs. Daughter is the secondary contact.',
     deviceLabel: 'ankle',
     vitalsProfile: { hr: [70, 90], spo2: [96, 99], temp: [36.5, 37.0] },
   },
@@ -235,7 +237,7 @@ async function main(): Promise<void> {
       {
         p_full_name: p.full_name,
         p_dob: p.dob,
-        p_notes: p.notes,
+        p_description: p.description,
       },
     );
     if (patientErr || !patientRaw) {

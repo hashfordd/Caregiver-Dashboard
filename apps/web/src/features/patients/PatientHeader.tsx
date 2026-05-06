@@ -1,8 +1,11 @@
-import { ChevronLeft } from 'lucide-react';
+import { useState } from 'react';
+import { ChevronLeft, Pencil } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { Patient } from '@alzcare/shared';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { EditPatientDialog } from './EditPatientDialog';
 import { usePatientStreamContext, type PatientStreamContextValue } from './PatientStreamContext';
 
 function ageFromDob(dob: string | null): string | null {
@@ -24,6 +27,7 @@ function initials(name: string): string {
 
 export function PatientHeader({ patient }: { patient: Patient }) {
   const { status } = usePatientStreamContext();
+  const [editOpen, setEditOpen] = useState(false);
   const age = ageFromDob(patient.dob);
 
   return (
@@ -47,17 +51,30 @@ export function PatientHeader({ patient }: { patient: Patient }) {
             <h1 className="font-serif italic text-4xl text-foreground">{patient.full_name}</h1>
             <div className="mt-1 flex items-center gap-3 text-sm text-muted-foreground">
               {age && <span>age {age}</span>}
-              {patient.notes && (
+              {patient.description && (
                 <>
                   <span aria-hidden>·</span>
-                  <span className="max-w-md truncate">{patient.notes}</span>
+                  <span className="max-w-md truncate">{patient.description}</span>
                 </>
               )}
             </div>
           </div>
         </div>
-        <ConnectionStatusPill status={status} />
+        <div className="flex items-center gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setEditOpen(true)}
+            aria-label="Edit patient"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+            Edit
+          </Button>
+          <ConnectionStatusPill status={status} />
+        </div>
       </div>
+      <EditPatientDialog open={editOpen} onOpenChange={setEditOpen} patient={patient} />
     </header>
   );
 }

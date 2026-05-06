@@ -38,12 +38,37 @@ vi.mock('@/lib/supabase', () => ({
   supabase: {
     channel: channelMock,
     removeChannel: removeChannelMock,
-    from: vi.fn(() => ({
-      select: vi.fn(() => ({
-        eq: vi.fn(() => ({ maybeSingle: maybeSingleMock })),
-      })),
-    })),
+    from: vi.fn((table: string) => {
+      if (table === 'patient_notes') {
+        // Notes section is mounted on the detail page; default to empty list
+        // so the listing renders without error and doesn't affect assertions.
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              order: vi.fn().mockResolvedValue({ data: [], error: null }),
+            })),
+          })),
+        };
+      }
+      return {
+        select: vi.fn(() => ({
+          eq: vi.fn(() => ({ maybeSingle: maybeSingleMock })),
+        })),
+      };
+    }),
   },
+}));
+
+vi.mock('@/features/auth/AuthProvider', () => ({
+  useAuth: () => ({
+    user: {
+      id: 'caregiver-1',
+      email: 'caregiver@example.com',
+      user_metadata: { full_name: 'Test Caregiver' },
+    },
+    session: null,
+    loading: false,
+  }),
 }));
 
 import { PatientDetailPage } from '@/features/patients/PatientDetailPage';
@@ -77,7 +102,7 @@ describe('PatientDetailPage', () => {
         id: PATIENT_ID,
         full_name: 'Alice Patient',
         dob: null,
-        notes: null,
+        description: null,
         primary_caregiver_id: null,
         created_at: '2026-01-01T00:00:00Z',
       },
@@ -100,7 +125,7 @@ describe('PatientDetailPage', () => {
         id: PATIENT_ID,
         full_name: 'Alice Patient',
         dob: null,
-        notes: null,
+        description: null,
         primary_caregiver_id: null,
         created_at: '2026-01-01T00:00:00Z',
       },

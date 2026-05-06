@@ -1,17 +1,22 @@
 import { useSearchParams } from 'react-router-dom';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { PatientNotesSection } from './PatientNotesSection';
 import { LiveTab } from './tabs/LiveTab';
 import { PlaceTab } from './tabs/PlaceTab';
 import { PlaceholderTab } from './tabs/PlaceholderTab';
 
-const TAB_KEYS = ['live', 'place', 'history', 'alerts', 'settings'] as const;
+const TAB_KEYS = ['live', 'place', 'history', 'alerts', 'notes', 'settings'] as const;
 type TabKey = (typeof TAB_KEYS)[number];
 
 function isTabKey(value: string): value is TabKey {
   return (TAB_KEYS as readonly string[]).includes(value);
 }
 
-export function PatientTabs() {
+interface Props {
+  patientId: string;
+}
+
+export function PatientTabs({ patientId }: Props) {
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab') ?? 'live';
   const value: TabKey = isTabKey(tabParam) ? tabParam : 'live';
@@ -34,6 +39,7 @@ export function PatientTabs() {
         <TabsTrigger value="place">Place</TabsTrigger>
         <TabsTrigger value="history">History</TabsTrigger>
         <TabsTrigger value="alerts">Alerts</TabsTrigger>
+        <TabsTrigger value="notes">Notes</TabsTrigger>
         <TabsTrigger value="settings">Settings</TabsTrigger>
       </TabsList>
       <TabsContent value="live">
@@ -47,6 +53,9 @@ export function PatientTabs() {
       </TabsContent>
       <TabsContent value="alerts">
         <PlaceholderTab phase={4} feature="Alert feed and acknowledgement workflow." />
+      </TabsContent>
+      <TabsContent value="notes">
+        <PatientNotesSection patientId={patientId} />
       </TabsContent>
       <TabsContent value="settings">
         <PlaceholderTab phase={4} feature="Per-patient alert rule configuration." />

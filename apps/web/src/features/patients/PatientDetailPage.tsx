@@ -11,7 +11,7 @@ import { PatientTabs } from './PatientTabs';
 async function fetchPatient(id: string): Promise<Patient | null> {
   const { data, error } = await supabase
     .from('patients')
-    .select('id, full_name, dob, notes, primary_caregiver_id, created_at')
+    .select('id, full_name, dob, description, primary_caregiver_id, created_at')
     .eq('id', id)
     .maybeSingle();
   if (error) throw error;
@@ -59,7 +59,7 @@ export function PatientDetailPage() {
     <main className="mx-auto max-w-7xl px-6 py-10">
       <PatientStreamProvider patientId={id}>
         <PatientHeader patient={query.data} />
-        <PatientTabs />
+        <PatientTabs patientId={id} />
       </PatientStreamProvider>
     </main>
   );

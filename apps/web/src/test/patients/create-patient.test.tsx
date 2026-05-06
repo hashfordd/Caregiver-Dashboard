@@ -36,7 +36,7 @@ describe('CreatePatientDialog', () => {
 
   it('submits via rpc with the right parameter names and closes on success', async () => {
     rpcMock.mockResolvedValue({
-      data: { id: 'p-1', full_name: 'Charlie', dob: null, notes: null },
+      data: { id: 'p-1', full_name: 'Charlie', dob: null, description: null },
       error: null,
     });
     const { qc, onOpenChange } = renderDialog();
@@ -49,7 +49,7 @@ describe('CreatePatientDialog', () => {
     expect(rpcMock).toHaveBeenCalledWith('create_patient_with_allocation', {
       p_full_name: 'Charlie',
       p_dob: null,
-      p_notes: null,
+      p_description: null,
     });
 
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
