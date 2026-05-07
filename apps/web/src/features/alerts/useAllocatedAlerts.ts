@@ -14,17 +14,31 @@ const COLUMNS =
  *  unacked alerts.
  *
  *  Implementation: a single React Query cache holds the rolling list;
- *  a single Realtime channel subscribed with an IN-filter receives
- *  INSERT + UPDATE events for any allocated patient. F11's foundation
- *  migration already adds `alerts` to the realtime publication. */
+ *  one Realtime channel subscribed with an IN-filter receives INSERT +
+ *  UPDATE events for any allocated patient. F11's foundation migration
+ *  adds `alerts` to the realtime publication.
+ *
+ *  Phase E updates:
+ *    - item 44: INSERT handler dedupes by id before prepending so a
+ *      race between subscribe and initial fetch doesn't double-count.
+ *    - item 45: a second realtime channel watches the caller's
+ *      `caregiver_patient` rows and refreshes the allocation set on
+ *      INSERT/DELETE so re-allocations reflect without page reload.
+ *    - exposes `isSuccess` so cue + live-region hooks can arm on the
+ *      query landing rather than on the first non-empty payload (the
+ *      latter swallowed criticals that landed inside the initial fetch).
+ */
 const ALLOCATED_KEY = (caregiverId: string | undefined) =>
   ['alerts', 'allocated', caregiverId ?? 'anon'] as const;
+
+const ROW_LIMIT = 200;
 
 export interface AllocatedAlertsResult {
   rows: AlertRow[];
   unackedCount: number;
   hasCritical: boolean;
   isLoading: boolean;
+  isSuccess: boolean;
   isError: boolean;
 }
 
@@ -36,22 +50,67 @@ export function useAllocatedAlerts(): AllocatedAlertsResult {
   const [allocatedPatients, setAllocatedPatients] = useState<string[]>([]);
 
   // Resolve allocated-patient ids first; the alerts subscription needs
-  // an IN(...) filter. The query is scoped via RLS — we only ever see
-  // our own caregiver_patient rows.
+  // an IN(...) filter. RLS scopes us to our own caregiver_patient rows.
+  // A separate effect below subscribes to caregiver_patient changes and
+  // refreshes this list when allocations move underfoot.
+  async function refreshAllocations(): Promise<void> {
+    if (!caregiverId) return;
+    const { data } = await supabase
+      .from('caregiver_patient')
+      .select('patient_id')
+      .eq('caregiver_id', caregiverId);
+    if (!data) return;
+    setAllocatedPatients((prev) => {
+      const next = data.map((r: { patient_id: string }) => r.patient_id).sort();
+      // Only update if the membership actually changed — stable identity
+      // avoids re-subscribing the alerts channel on every render.
+      if (prev.length === next.length && prev.every((v, i) => v === next[i])) return prev;
+      return next;
+    });
+  }
+
   useEffect(() => {
     if (!caregiverId) return;
     let active = true;
-    void supabase
-      .from('caregiver_patient')
-      .select('patient_id')
-      .eq('caregiver_id', caregiverId)
-      .then(({ data }) => {
-        if (!active || !data) return;
-        setAllocatedPatients(data.map((r: { patient_id: string }) => r.patient_id));
-      });
+    void refreshAllocations().then(() => {
+      if (!active) return;
+    });
     return () => {
       active = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [caregiverId]);
+
+  // Item 45: react to caregiver_patient INSERT/DELETE on this caregiver
+  // so the bell's allocation set + the alerts query both update without
+  // a manual refresh. Phase B's tenancy refactor means allocation now
+  // moves through the allocate_patient/unallocate_patient RPCs (admin)
+  // and the same self-leave path.
+  useEffect(() => {
+    if (!caregiverId) return;
+    const channel: RealtimeChannel = supabase
+      .channel(`caregiver_patient:caregiver:${caregiverId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'caregiver_patient',
+          filter: `caregiver_id=eq.${caregiverId}`,
+        },
+        () => {
+          void refreshAllocations();
+          // Keep the roster + lookup caches consistent so the patient
+          // detail / new "Caregivers" tab also picks up the change.
+          qc.invalidateQueries({ queryKey: ['patients', 'roster'] });
+          qc.invalidateQueries({ queryKey: ['patients', 'lookup'] });
+        },
+      )
+      .subscribe();
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [caregiverId]);
 
   const query = useQuery({
@@ -63,7 +122,7 @@ export function useAllocatedAlerts(): AllocatedAlertsResult {
         .select(COLUMNS)
         .in('patient_id', allocatedPatients)
         .order('fired_at', { ascending: false })
-        .limit(200);
+        .limit(ROW_LIMIT);
       if (error) throw error;
       return (data ?? []) as AlertRow[];
     },
@@ -81,9 +140,13 @@ export function useAllocatedAlerts(): AllocatedAlertsResult {
         (payload) => {
           const row = payload.new as AlertRow;
           qc.setQueryData<AlertRow[]>(ALLOCATED_KEY(caregiverId), (prev) => {
+            // Item 44: dedupe before prepending. The initial fetch may
+            // already include this id (race between subscribe and select),
+            // and bouncing a duplicate into the list breaks React keys
+            // + double-counts unacked.
+            if (prev?.some((r) => r.id === row.id)) return prev;
             const next = [row, ...(prev ?? [])];
-            // Keep at most 200 — same as the initial fetch cap.
-            return next.slice(0, 200);
+            return next.slice(0, ROW_LIMIT);
           });
         },
       )
@@ -111,6 +174,7 @@ export function useAllocatedAlerts(): AllocatedAlertsResult {
     unackedCount: unacked.length,
     hasCritical: unacked.some((r) => r.severity === 'critical'),
     isLoading: query.isLoading,
+    isSuccess: query.isSuccess,
     isError: query.isError,
   };
 }

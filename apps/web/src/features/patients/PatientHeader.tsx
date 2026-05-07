@@ -4,9 +4,16 @@ import { Link } from 'react-router-dom';
 import type { Patient } from '@alzcare/shared';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { useNow } from '@/lib/useNow';
 import { cn } from '@/lib/utils';
 import { EditPatientDialog } from './EditPatientDialog';
 import { usePatientStreamContext, type PatientStreamContextValue } from './PatientStreamContext';
+
+// Connection pill freshness threshold: if the channel reports
+// "subscribed" but no sensor or position update has arrived in this
+// window, downgrade the pill to "Idle" — a stuck-but-quiet stream
+// looks identical to a healthy one without this gate.
+const STALE_THRESHOLD_MS = 60_000;
 
 function ageFromDob(dob: string | null): string | null {
   if (!dob) return null;
@@ -26,9 +33,12 @@ function initials(name: string): string {
 }
 
 export function PatientHeader({ patient }: { patient: Patient }) {
-  const { status } = usePatientStreamContext();
+  const { status, lastSeen } = usePatientStreamContext();
   const [editOpen, setEditOpen] = useState(false);
   const age = ageFromDob(patient.dob);
+  // Tick every 5 s so the pill flips to "Idle" when sensor data goes
+  // quiet without requiring a fresh status callback from the channel.
+  const now = useNow(5_000);
 
   return (
     <header className="mb-6 border-b border-border/60 pb-6">
@@ -71,7 +81,7 @@ export function PatientHeader({ patient }: { patient: Patient }) {
             <Pencil className="h-3.5 w-3.5" />
             Edit
           </Button>
-          <ConnectionStatusPill status={status} />
+          <ConnectionStatusPill status={status} lastSeen={lastSeen} now={now} />
         </div>
       </div>
       <EditPatientDialog open={editOpen} onOpenChange={setEditOpen} patient={patient} />
@@ -79,15 +89,30 @@ export function PatientHeader({ patient }: { patient: Patient }) {
   );
 }
 
-function ConnectionStatusPill({ status }: { status: PatientStreamContextValue['status'] }) {
+interface PillProps {
+  status: PatientStreamContextValue['status'];
+  lastSeen: PatientStreamContextValue['lastSeen'];
+  now: number;
+}
+
+function ConnectionStatusPill({ status, lastSeen, now }: PillProps) {
+  // "Live" requires both: (1) the channel says subscribed, and
+  // (2) at least one sensor or position update arrived recently.
+  const freshest = Math.max(lastSeen.sensor ?? 0, lastSeen.position ?? 0);
+  const ageMs = freshest > 0 ? now - freshest : Infinity;
+  const isStale = freshest > 0 && ageMs > STALE_THRESHOLD_MS;
+  const subscribedButQuiet = status === 'subscribed' && (freshest === 0 || isStale);
+
   const dotClass = cn(
     'inline-block h-2 w-2 rounded-full',
-    status === 'subscribed' && 'bg-accent',
+    status === 'subscribed' && !subscribedButQuiet && 'bg-accent',
+    subscribedButQuiet && 'bg-amber-500',
     status === 'idle' && 'bg-muted-foreground/40 animate-pulse',
     (status === 'disconnected' || status === 'error') && 'bg-destructive',
   );
 
   const label = (() => {
+    if (subscribedButQuiet) return freshest === 0 ? 'Idle (no data yet)' : 'Idle';
     switch (status) {
       case 'subscribed':
         return 'Live';
@@ -104,8 +129,10 @@ function ConnectionStatusPill({ status }: { status: PatientStreamContextValue['s
   const variant: 'outline' | 'destructive' =
     status === 'error' || status === 'disconnected' ? 'destructive' : 'outline';
 
+  const tooltip = freshest > 0 ? `Last update ${Math.round(ageMs / 1000)}s ago` : undefined;
+
   return (
-    <Badge variant={variant} className="gap-1.5">
+    <Badge variant={variant} className="gap-1.5" title={tooltip}>
       <span className={dotClass} aria-hidden />
       {label}
     </Badge>

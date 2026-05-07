@@ -18,8 +18,12 @@ export type { SensorReadingRow, SignalsMessage };
  * tabs can render stale-data warnings without each opening their own
  * subscription.
  *
- * TODO: F8/F11 — move PositionEstimateRow + AlertRow into @alzcare/shared/db
- * when their owning features ship.
+ * Phase E item 40: a reconnect watchdog re-creates the postgres-changes
+ * channel after a CHANNEL_ERROR / CLOSED / TIMED_OUT transition with
+ * exponential backoff (5s → 10s → 20s, capped at 30s, max 6 attempts).
+ * Without this, a transient WS drop during a long shift left the
+ * dashboard silently disconnected — caregivers leave the tab open for
+ * hours and a single hiccup would silence every alert.
  */
 
 export interface PositionEstimateRow {
@@ -79,6 +83,10 @@ const INITIAL_LAST_SEEN: PatientStreamLastSeen = {
   signals: null,
 };
 
+const RECONNECT_BASE_MS = 5_000;
+const RECONNECT_MAX_MS = 30_000;
+const RECONNECT_MAX_ATTEMPTS = 6;
+
 export function usePatientStream(
   patientId: string | null,
   callbacks: PatientStreamCallbacks,
@@ -96,64 +104,109 @@ export function usePatientStream(
       return;
     }
 
-    const channel: RealtimeChannel = supabase
-      .channel(`patient:${patientId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'sensor_readings',
-          filter: `patient_id=eq.${patientId}`,
-        },
-        (payload) => {
-          setLastSeen((prev) => ({ ...prev, sensor: Date.now() }));
-          callbacksRef.current.onSensorReading?.(payload.new as SensorReadingRow);
-        },
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'position_estimates',
-          filter: `patient_id=eq.${patientId}`,
-        },
-        (payload) => {
-          setLastSeen((prev) => ({ ...prev, position: Date.now() }));
-          callbacksRef.current.onPositionEstimate?.(payload.new as PositionEstimateRow);
-        },
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'alerts',
-          filter: `patient_id=eq.${patientId}`,
-        },
-        (payload) => {
-          setLastSeen((prev) => ({ ...prev, alert: Date.now() }));
-          callbacksRef.current.onAlert?.(payload.new as AlertRow);
-        },
-      )
-      .subscribe((subStatus, err) => {
-        if (subStatus === 'SUBSCRIBED') {
-          setStatus('subscribed');
-        } else if (subStatus === 'CHANNEL_ERROR') {
-          setStatus('error');
-          if (err) callbacksRef.current.onError?.(err);
-        } else if (subStatus === 'CLOSED' || subStatus === 'TIMED_OUT') {
-          setStatus('disconnected');
+    let cancelled = false;
+    let activeChannel: RealtimeChannel | null = null;
+    let signalsChannel: RealtimeChannel | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let attempt = 0;
+
+    function clearReconnect(): void {
+      if (reconnectTimer != null) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+    }
+
+    function scheduleReconnect(reason: PatientStreamStatus): void {
+      if (cancelled) return;
+      if (attempt >= RECONNECT_MAX_ATTEMPTS) {
+        // Give up and stay in error state — caregivers should reload
+        // the page if they want to retry beyond the bounded window.
+        setStatus(reason);
+        return;
+      }
+      const delay = Math.min(RECONNECT_BASE_MS * 2 ** attempt, RECONNECT_MAX_MS);
+      attempt += 1;
+      clearReconnect();
+      reconnectTimer = setTimeout(() => {
+        if (cancelled) return;
+        // Tear down any stale channel first, then re-open.
+        if (activeChannel) {
+          void supabase.removeChannel(activeChannel);
+          activeChannel = null;
         }
-      });
+        openPostgresChannel();
+      }, delay);
+    }
+
+    function openPostgresChannel(): void {
+      const channel: RealtimeChannel = supabase
+        .channel(`patient:${patientId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'sensor_readings',
+            filter: `patient_id=eq.${patientId}`,
+          },
+          (payload) => {
+            setLastSeen((prev) => ({ ...prev, sensor: Date.now() }));
+            callbacksRef.current.onSensorReading?.(payload.new as SensorReadingRow);
+          },
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'position_estimates',
+            filter: `patient_id=eq.${patientId}`,
+          },
+          (payload) => {
+            setLastSeen((prev) => ({ ...prev, position: Date.now() }));
+            callbacksRef.current.onPositionEstimate?.(payload.new as PositionEstimateRow);
+          },
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'alerts',
+            filter: `patient_id=eq.${patientId}`,
+          },
+          (payload) => {
+            setLastSeen((prev) => ({ ...prev, alert: Date.now() }));
+            callbacksRef.current.onAlert?.(payload.new as AlertRow);
+          },
+        )
+        .subscribe((subStatus, err) => {
+          if (cancelled) return;
+          if (subStatus === 'SUBSCRIBED') {
+            attempt = 0; // reset backoff on a clean reconnect
+            clearReconnect();
+            setStatus('subscribed');
+          } else if (subStatus === 'CHANNEL_ERROR') {
+            setStatus('error');
+            if (err) callbacksRef.current.onError?.(err);
+            scheduleReconnect('error');
+          } else if (subStatus === 'CLOSED' || subStatus === 'TIMED_OUT') {
+            setStatus('disconnected');
+            scheduleReconnect('disconnected');
+          }
+        });
+      activeChannel = channel;
+    }
+
+    openPostgresChannel();
 
     // F6 signals broadcast lives on its own channel because Supabase
     // Realtime requires postgres_changes and broadcast events on
-    // separate subscriptions in V1. Status of this channel is not
-    // surfaced — the postgres-channel `status` is enough for the header
-    // pill, and signals are best-effort by design.
-    const signalsChannel: RealtimeChannel = supabase
+    // separate subscriptions. Status of this channel isn't surfaced —
+    // postgres-channel `status` is enough for the header pill, and
+    // signals are best-effort by design.
+    signalsChannel = supabase
       .channel(`patient:${patientId}:signals`)
       .on('broadcast', { event: 'signals' }, (event) => {
         const payload = (event as { payload?: unknown }).payload as SignalsMessage | undefined;
@@ -164,8 +217,10 @@ export function usePatientStream(
       .subscribe();
 
     return () => {
-      void supabase.removeChannel(channel);
-      void supabase.removeChannel(signalsChannel);
+      cancelled = true;
+      clearReconnect();
+      if (activeChannel) void supabase.removeChannel(activeChannel);
+      if (signalsChannel) void supabase.removeChannel(signalsChannel);
       setStatus('idle');
     };
   }, [patientId]);

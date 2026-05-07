@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import {
   AlertRuleParams,
   type AlertRule,
@@ -61,6 +62,9 @@ export interface UpsertAlertRuleInput {
   enabled: boolean;
 }
 
+/** Phase C item 47: success toasts. Sonner's <Toaster /> is mounted in
+ *  main.tsx; rule upsert/delete now confirm with a brief toast so the
+ *  caregiver sees the save took without staring at a quiet form. */
 export function useUpsertAlertRule(patientId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -93,7 +97,17 @@ export function useUpsertAlertRule(patientId: string) {
       if (error) throw error;
       return data as unknown as AlertRule;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY(patientId) }),
+    onSuccess: (_data, input) => {
+      qc.invalidateQueries({ queryKey: KEY(patientId) });
+      toast.success(input.id ? 'Rule saved' : 'Rule created', {
+        description: 'Edits take effect within ~30 s as the engine re-loads.',
+      });
+    },
+    onError: (err) => {
+      toast.error('Could not save rule', {
+        description: (err as Error).message ?? 'Unknown error',
+      });
+    },
   });
 }
 
@@ -104,6 +118,14 @@ export function useDeleteAlertRule(patientId: string) {
       const { error } = await supabase.from('alert_rules').delete().eq('id', id);
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY(patientId) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEY(patientId) });
+      toast.success('Rule deleted');
+    },
+    onError: (err) => {
+      toast.error('Could not delete rule', {
+        description: (err as Error).message ?? 'Unknown error',
+      });
+    },
   });
 }

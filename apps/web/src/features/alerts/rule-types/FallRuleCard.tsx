@@ -9,21 +9,36 @@ interface Props {
   rule: FallRule | null;
 }
 
+/** Phase C item 46: the previous version captured `params` from the
+ *  rule prop on first render and never re-synced when the rule arrived
+ *  later via the alert_rules query. As a result, saving a fall rule
+ *  before the query resolved would persist `params: {}` and clobber any
+ *  stored values. Both `setParams` and a params-reset in the useEffect
+ *  fix that. */
 export function FallRuleCard({ patientId, rule }: Props) {
   const upsert = useUpsertAlertRule(patientId);
   const remove = useDeleteAlertRule(patientId);
   const [draftSeverity, setDraftSeverity] = useState<AlertSeverity>(rule?.severity ?? 'critical');
   const [draftEnabled, setDraftEnabled] = useState<boolean>(rule?.enabled ?? true);
-  const [params] = useState<FallParams>(rule?.params ?? {});
+  const [params, setParams] = useState<FallParams>(rule?.params ?? {});
 
   useEffect(() => {
     if (rule) {
       setDraftSeverity(rule.severity);
       setDraftEnabled(rule.enabled);
+      setParams(rule.params);
+    } else {
+      setDraftSeverity('critical');
+      setDraftEnabled(true);
+      setParams({});
     }
   }, [rule]);
 
-  const dirty = rule == null || rule.severity !== draftSeverity || rule.enabled !== draftEnabled;
+  const dirty =
+    rule == null ||
+    rule.severity !== draftSeverity ||
+    rule.enabled !== draftEnabled ||
+    JSON.stringify(rule.params) !== JSON.stringify(params);
 
   const previewRule: FallRule = {
     id: rule?.id ?? 'preview',

@@ -10,6 +10,17 @@ vi.mock('@/features/alerts/useAllocatedAlerts', () => ({
   useAllocatedAlerts: mockUseAllocatedAlerts,
 }));
 
+// Phase E item 42: AlertLiveRegion now resolves patient names via
+// usePatientsLookup. Stub it to a deterministic mapping so the
+// announcement copy is testable without standing up a QueryClient.
+vi.mock('@/features/patients/usePatientsLookup', () => ({
+  usePatientsLookup: () => ({
+    byId: new Map([['11111111-2222-3333-4444-555555555555', 'Margaret Holloway']]),
+    resolve: (id: string | null | undefined) =>
+      id === '11111111-2222-3333-4444-555555555555' ? 'Margaret Holloway' : 'Unknown patient',
+  }),
+}));
+
 function alertRow(overrides: Partial<AlertRow> = {}): AlertRow {
   return {
     id: crypto.randomUUID(),
@@ -31,6 +42,7 @@ describe('AlertLiveRegion', () => {
       unackedCount: 0,
       hasCritical: false,
       isLoading: false,
+      isSuccess: true,
       isError: false,
     });
     const { container } = render(<AlertLiveRegion />);
@@ -49,6 +61,7 @@ describe('AlertLiveRegion', () => {
       unackedCount: 1,
       hasCritical: false,
       isLoading: false,
+      isSuccess: true,
       isError: false,
     });
     const { container, rerender } = render(<AlertLiveRegion />);
@@ -61,6 +74,7 @@ describe('AlertLiveRegion', () => {
         unackedCount: 2,
         hasCritical: true,
         isLoading: false,
+        isSuccess: true,
         isError: false,
       });
       rerender(<AlertLiveRegion />);

@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import type { AlertRow as AlertRowT } from '@alzcare/shared';
+import { usePatientsLookup } from '@/features/patients/usePatientsLookup';
 import { AlertRow } from './AlertRow';
 import { useAllocatedAlerts } from './useAllocatedAlerts';
 
@@ -21,6 +22,7 @@ const POPOVER_LIMIT = 6;
  *  surfaced as a red dot rather than just the neutral count. */
 export function AlertBell() {
   const { rows, unackedCount, hasCritical } = useAllocatedAlerts();
+  const lookup = usePatientsLookup();
   const unacked = rows.filter((r) => r.acknowledged_at == null).slice(0, POPOVER_LIMIT);
 
   return (
@@ -55,7 +57,7 @@ export function AlertBell() {
         ) : (
           <div className="max-h-[60vh] space-y-2 overflow-y-auto px-2 py-2">
             {unacked.map((row) => (
-              <PopoverRow key={row.id} row={row} />
+              <PopoverRow key={row.id} row={row} patientName={lookup.resolve(row.patient_id)} />
             ))}
           </div>
         )}
@@ -64,12 +66,12 @@ export function AlertBell() {
   );
 }
 
-function PopoverRow({ row }: { row: AlertRowT }) {
+function PopoverRow({ row, patientName }: { row: AlertRowT; patientName: string }) {
   return (
     <AlertRow
       alert={row}
       patientHref={`/patients/${row.patient_id}?tab=alerts`}
-      patientLabel={`Patient ${row.patient_id.slice(0, 8)}`}
+      patientLabel={patientName}
     />
   );
 }
