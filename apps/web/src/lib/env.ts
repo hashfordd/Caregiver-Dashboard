@@ -5,6 +5,12 @@
 // optional — F9's OutdoorMapView checks `mapboxToken` and renders a
 // placeholder when absent so CI builds and developers without a token
 // can still run everything else.
+//
+// Mapbox public-token security note: VITE_MAPBOX_TOKEN must be a `pk.*`
+// public token AND the Mapbox account must have a URL allowlist
+// configured covering this app's production + preview domains. Without
+// the allowlist, the token in the bundle is freely reusable for
+// billing-counted tile requests by anyone who reads the page source.
 
 const env = import.meta.env;
 

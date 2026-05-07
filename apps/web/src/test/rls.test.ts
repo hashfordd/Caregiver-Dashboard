@@ -68,7 +68,7 @@ describe.skipIf(!enabled)('RLS denial — F1 caregiver write surface', () => {
     const { data, error } = await alice.client.rpc('create_patient_with_allocation', {
       p_full_name: 'Alice Patient',
       p_dob: null,
-      p_notes: null,
+      p_description: null,
     });
     if (error || !data) throw error ?? new Error('rpc returned no data');
     alicePatientId = (data as { id: string }).id;

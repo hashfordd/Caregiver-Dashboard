@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { Brand } from '@/components/Brand';
 import { Button } from '@/components/ui/button';
@@ -9,6 +9,8 @@ import { Card, CardContent } from '@/components/ui/card';
 
 type Mode = 'password' | 'magic';
 
+type LocationState = { from?: { pathname?: string } } | null;
+
 export function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -17,6 +19,11 @@ export function LoginPage() {
   const [info, setInfo] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
+  // ProtectedRoute redirects unauthenticated users here with the original
+  // location attached as state.from so we can return them to the deep
+  // link after sign-in.
+  const redirectTo = (location.state as LocationState)?.from?.pathname ?? '/';
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -27,14 +34,14 @@ export function LoginPage() {
     if (mode === 'magic') {
       const { error: otpError } = await supabase.auth.signInWithOtp({
         email,
-        options: { emailRedirectTo: window.location.origin },
+        options: { emailRedirectTo: window.location.origin + redirectTo },
       });
       if (otpError) setError(otpError.message);
       else setInfo('Check your email for the sign-in link.');
     } else {
       const { error: pwError } = await supabase.auth.signInWithPassword({ email, password });
       if (pwError) setError(pwError.message);
-      else navigate('/');
+      else navigate(redirectTo, { replace: true });
     }
     setLoading(false);
   }

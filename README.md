@@ -2,7 +2,7 @@
 
 Caregiver-side software for the ENG40011 Alzheimer's Care Device. Wearable telemetry plus BLE/WiFi positioning signals stream over MQTT, land in Supabase via an edge function, and surface in a React dashboard via Realtime. The build spec and workstream task list are course artefacts held outside this repo.
 
-> **This repo is currently the foundational scaffold only.** Features are stubbed with `// TODO: F<n>` markers tied to the spec's feature catalogue (F1–F13). See [BACKLOG.md](./BACKLOG.md) for what's deferred and the recommended first feature to build.
+> **Status:** Phase 4 closed (F1–F12 shipped — auth + caregiver profile, patient roster + detail, device pairing, live telemetry + sensor cards, floor-plan editor, beacons + calibration, indoor position estimator with POS-08 hysteresis, outdoor map + geofence, alert rules + feed). Phase 5 (reports/demo polish) is outstanding. See [docs/IMPLEMENTATION_PLAN.md](./docs/IMPLEMENTATION_PLAN.md) for current phase status and [BACKLOG.md](./BACKLOG.md) for deferred items.
 
 For implementation planning, start at [docs/IMPLEMENTATION_PLAN.md](./docs/IMPLEMENTATION_PLAN.md) — it indexes the phase-by-phase plan ([PHASES.md](./docs/PHASES.md)), cross-cutting decisions ([CROSS_CUTTING.md](./docs/CROSS_CUTTING.md)), workstream parallelism ([PARALLEL_TRACKS.md](./docs/PARALLEL_TRACKS.md)), and the per-feature execution sheets in [docs/features/](./docs/features/).
 
@@ -93,7 +93,11 @@ npm run -w @alzcare/edge deploy:all
 
 ## Frontend deployment (Vercel)
 
-`vercel.json` at the repo root drives the build (`apps/web/dist` output). Set `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` in the Vercel project's environment variables; previews auto-build per PR via the GitHub Actions workflow.
+`vercel.json` at the repo root drives the build (`apps/web/dist` output). Set `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` (and `VITE_MAPBOX_TOKEN` if the outdoor map is in use) in the Vercel project's environment variables.
+
+Preview deploys per PR are handled by Vercel's GitHub App **independently** of this repo's GitHub Actions `verify` workflow. CI lints/typechecks/tests/builds but does not gate Vercel; configure required status checks in the GitHub repo settings if you want CI to block bad previews.
+
+The Mapbox token is a public `pk.*` token shipped in the client bundle. To prevent unrestricted reuse, configure a URL/origin allowlist on the Mapbox account dashboard covering your production domain plus the Vercel preview wildcard (`*.vercel.app` or your team's preview domain).
 
 ## Architecture cheat-sheet
 
