@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import * as fabric from 'fabric';
 import { cn } from '@/lib/utils';
+import { parseCanvasJson } from './canvasState';
 import { addFurnitureAt } from './furniture';
 import {
   JOIN_DISCONNECT_NUDGE,
@@ -1523,16 +1524,26 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         historyRef.current = { stack: [initialState], idx: 0 };
       };
 
-      if (initialJson && typeof initialJson === 'object') {
-        canvas
-          .loadFromJSON(initialJson as Record<string, unknown>)
-          .then(finishLoad)
-          .catch((err) => {
-            if (disposed) return;
-            console.error('floor-plan: loadFromJSON failed', err);
-            interactiveRef.current = true;
-            historyRef.current = { stack: [canvas.toObject(EXTRA_PROPS)], idx: 0 };
-          });
+      if (initialJson != null) {
+        // Phase F item 48: gate loadFromJSON on a Zod structural check
+        // so a malformed canvas_json (corrupt jsonb, partial migration,
+        // future schema drift) falls back to an empty canvas with a
+        // console warn instead of leaving Fabric in a broken state.
+        const parsed = parseCanvasJson(initialJson);
+        if (!parsed.ok) {
+          console.warn('floor-plan: rejected canvas_json —', parsed.error);
+          finishLoad();
+        } else {
+          canvas
+            .loadFromJSON(parsed.json as unknown as Record<string, unknown>)
+            .then(finishLoad)
+            .catch((err) => {
+              if (disposed) return;
+              console.error('floor-plan: loadFromJSON failed', err);
+              interactiveRef.current = true;
+              historyRef.current = { stack: [canvas.toObject(EXTRA_PROPS)], idx: 0 };
+            });
+        }
       } else {
         finishLoad();
       }

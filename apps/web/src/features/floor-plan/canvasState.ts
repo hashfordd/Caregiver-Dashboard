@@ -2,6 +2,8 @@
 // serialize / deserialize wrappers exist so the editor + tests can talk
 // about a single contract independent of Fabric internals.
 
+import { z } from 'zod';
+
 /**
  * Compute the meters-per-pixel ratio implied by a measured line.
  *
@@ -42,4 +44,50 @@ export function isCanvasJson(value: unknown): value is { objects: unknown[] } {
     'objects' in value &&
     Array.isArray((value as { objects: unknown }).objects)
   );
+}
+
+/**
+ * Phase F item 48: structural Zod schema for the persisted canvas blob.
+ * Permissive on individual object shapes (Fabric serialises a wide
+ * type set we don't want to enumerate), strict on the wrapper shape.
+ *
+ * `version` lives on the produced JSON whether we set it or Fabric's
+ * default does, so it's required-with-default. `background` is whatever
+ * Fabric writes — we don't validate.
+ */
+export const CanvasJsonSchema = z
+  .object({
+    version: z.string().optional(),
+    objects: z.array(z.object({ type: z.string() }).passthrough()),
+    background: z.unknown().optional(),
+  })
+  .passthrough();
+
+export type CanvasJson = z.infer<typeof CanvasJsonSchema>;
+
+export interface ParseCanvasJsonOk {
+  ok: true;
+  json: CanvasJson;
+}
+export interface ParseCanvasJsonErr {
+  ok: false;
+  error: string;
+}
+
+/**
+ * Validate persisted canvas JSON before handing it to Fabric's
+ * `loadFromJSON`. Fabric will fail-loud on a deeply malformed blob,
+ * but the failure mode is "blank canvas with a console error" — this
+ * Zod gate surfaces the failure to the editor (caller) so it can show
+ * a toast and fall back to an empty canvas with no surprises.
+ */
+export function parseCanvasJson(value: unknown): ParseCanvasJsonOk | ParseCanvasJsonErr {
+  const result = CanvasJsonSchema.safeParse(value);
+  if (result.success) return { ok: true, json: result.data };
+  // Surface only the first issue — reading 5 nested error paths is
+  // unhelpful when the editor is going to fall back anyway.
+  const issue = result.error.issues[0];
+  const path = issue?.path?.join('.') ?? '<root>';
+  const msg = issue?.message ?? 'invalid canvas JSON';
+  return { ok: false, error: `${path}: ${msg}` };
 }

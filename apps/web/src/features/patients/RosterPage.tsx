@@ -36,9 +36,10 @@ function initials(name: string): string {
     .join('');
 }
 
-function truncate(text: string, max: number): string {
-  return text.length > max ? `${text.slice(0, max)}…` : text;
-}
+// Phase F item 52: byte-count truncation removed in favour of a CSS
+// line-clamp on the rendered span — caregivers no longer lose
+// sub-sentence detail mid-character, and the full text is reachable
+// via the hover tooltip.
 
 export function RosterPage() {
   const [createOpen, setCreateOpen] = useState(false);
@@ -131,8 +132,11 @@ export function RosterPage() {
                       )}
                     </div>
                     {p.description && (
-                      <p className="mt-0.5 truncate text-sm text-muted-foreground">
-                        {truncate(p.description, 100)}
+                      <p
+                        className="mt-0.5 line-clamp-2 text-sm text-muted-foreground"
+                        title={p.description}
+                      >
+                        {p.description}
                       </p>
                     )}
                   </div>

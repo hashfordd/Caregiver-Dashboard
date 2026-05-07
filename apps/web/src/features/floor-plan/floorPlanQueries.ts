@@ -2,19 +2,26 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import type { FloorPlanRow, UpsertFloorPlanInput } from './types';
 
-const FLOOR_PLAN_COLUMNS = 'id, patient_id, name, canvas_json, scale_meters_per_pixel, created_at';
+const FLOOR_PLAN_COLUMNS =
+  'id, patient_id, name, canvas_json, scale_meters_per_pixel, created_at, is_active';
 
+/** Phase F item 49: scope reads to the active row.
+ *
+ *  The schema now allows multiple inactive plans per patient (V2 path
+ *  for "swap to a new floor plan version while keeping the old one for
+ *  replay"). The UNIQUE partial index `floor_plans_one_active_per_patient`
+ *  guarantees at most one row with `is_active = true` per patient_id.
+ *  V1's editor reads + writes the active row only. */
 export function useFloorPlan(patientId: string | undefined) {
   return useQuery({
-    queryKey: ['floor-plan', patientId],
+    queryKey: ['floor-plan', 'active', patientId],
     enabled: !!patientId,
     queryFn: async (): Promise<FloorPlanRow | null> => {
       const { data, error } = await supabase
         .from('floor_plans')
         .select(FLOOR_PLAN_COLUMNS)
         .eq('patient_id', patientId!)
-        .order('created_at', { ascending: false })
-        .limit(1)
+        .eq('is_active', true)
         .maybeSingle();
       if (error) throw error;
       return (data as FloorPlanRow | null) ?? null;
@@ -22,6 +29,10 @@ export function useFloorPlan(patientId: string | undefined) {
   });
 }
 
+/** Find-active-or-insert pattern. With the partial unique index in
+ *  place, a naive blind INSERT would fail when a tab races a save
+ *  against another tab; we eat that complexity here so the editor
+ *  doesn't need to know about it. */
 export function useUpsertFloorPlan(patientId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -31,25 +42,40 @@ export function useUpsertFloorPlan(patientId: string) {
         scale_meters_per_pixel: input.scale_meters_per_pixel,
         name: input.name ?? 'Floor plan',
       };
-      if (input.id) {
+
+      // Resolve target row id deterministically: explicit input.id wins,
+      // else the patient's active row. If neither exists, INSERT fresh.
+      let targetId: string | null = input.id ?? null;
+      if (!targetId) {
+        const { data: existing } = await supabase
+          .from('floor_plans')
+          .select('id')
+          .eq('patient_id', input.patient_id)
+          .eq('is_active', true)
+          .maybeSingle();
+        targetId = (existing as { id: string } | null)?.id ?? null;
+      }
+
+      if (targetId) {
         const { data, error } = await supabase
           .from('floor_plans')
           .update(payload)
-          .eq('id', input.id)
+          .eq('id', targetId)
           .select(FLOOR_PLAN_COLUMNS)
           .single();
         if (error) throw error;
         return data as FloorPlanRow;
       }
+
       const { data, error } = await supabase
         .from('floor_plans')
-        .insert({ ...payload, patient_id: input.patient_id })
+        .insert({ ...payload, patient_id: input.patient_id, is_active: true })
         .select(FLOOR_PLAN_COLUMNS)
         .single();
       if (error) throw error;
       return data as FloorPlanRow;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['floor-plan', patientId] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['floor-plan', 'active', patientId] }),
   });
 }
 

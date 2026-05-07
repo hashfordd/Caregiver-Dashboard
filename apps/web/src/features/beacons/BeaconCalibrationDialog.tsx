@@ -40,7 +40,13 @@ type Phase = 'idle' | 'capturing' | 'review' | 'saving' | 'done' | 'failed';
  *  Implementation pattern mirrors F7's CaptureCoordinator: subscribe to
  *  onSignals via the patient-stream context, accumulate samples for
  *  this MAC into a ref, throttled progress readout, finalise on the
- *  5 s deadline. */
+ *  5 s deadline.
+ *
+ *  Phase F item 53: caregivers can now Cancel a running capture
+ *  (tears the listener + timers down without writing) and see a live
+ *  countdown of how many seconds remain in the window. Previously the
+ *  only options during capture were "wait it out" or "close the dialog
+ *  and hope tearDown ran" — neither obvious. */
 export function BeaconCalibrationDialog({
   beacon,
   patientId,
@@ -53,6 +59,7 @@ export function BeaconCalibrationDialog({
   const [phase, setPhase] = useState<Phase>('idle');
   const [reason, setReason] = useState<string | undefined>();
   const [progress, setProgress] = useState(0);
+  const [secondsRemaining, setSecondsRemaining] = useState(0);
   const [sampleCount, setSampleCount] = useState(0);
   const [meanRssi, setMeanRssi] = useState<number | null>(null);
 
@@ -78,6 +85,7 @@ export function BeaconCalibrationDialog({
       setPhase('idle');
       setReason(undefined);
       setProgress(0);
+      setSecondsRemaining(0);
       setSampleCount(0);
       setMeanRssi(null);
     }
@@ -95,6 +103,7 @@ export function BeaconCalibrationDialog({
     setPhase('capturing');
     setReason(undefined);
     setProgress(0);
+    setSecondsRemaining(Math.ceil(CAPTURE_WINDOW_MS / 1000));
     setSampleCount(0);
     setMeanRssi(null);
     stateRef.current = { rssis: [], startedAt: Date.now() };
@@ -113,7 +122,9 @@ export function BeaconCalibrationDialog({
       const s = stateRef.current;
       if (!s) return;
       const elapsed = Date.now() - s.startedAt;
+      const remaining = Math.max(0, CAPTURE_WINDOW_MS - elapsed);
       setProgress(Math.min(1, elapsed / CAPTURE_WINDOW_MS));
+      setSecondsRemaining(Math.ceil(remaining / 1000));
       setSampleCount(s.rssis.length);
       if (s.rssis.length > 0) {
         setMeanRssi(s.rssis.reduce((a, b) => a + b, 0) / s.rssis.length);
@@ -123,6 +134,17 @@ export function BeaconCalibrationDialog({
     deadlineRef.current = setTimeout(() => {
       finalise();
     }, CAPTURE_WINDOW_MS);
+  };
+
+  const cancelCapture = () => {
+    tearDown();
+    stateRef.current = null;
+    setPhase('idle');
+    setReason(undefined);
+    setProgress(0);
+    setSecondsRemaining(0);
+    setSampleCount(0);
+    setMeanRssi(null);
   };
 
   const finalise = () => {
@@ -188,7 +210,7 @@ export function BeaconCalibrationDialog({
             <div className="space-y-2">
               <div className="flex items-center gap-2 text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                Capturing… {Math.round(progress * 100)}% · {sampleCount} samples
+                Capturing… {secondsRemaining} s remaining · {sampleCount} samples
                 {meanRssi != null && <span className="ml-1">· mean {meanRssi.toFixed(1)} dBm</span>}
               </div>
               <div className="h-2 w-full rounded-full bg-muted">
@@ -235,9 +257,14 @@ export function BeaconCalibrationDialog({
             </Button>
           )}
           {phase === 'capturing' && (
-            <Button variant="outline" disabled>
-              Capturing…
-            </Button>
+            <>
+              <Button variant="outline" onClick={cancelCapture}>
+                Cancel
+              </Button>
+              <Button variant="outline" disabled>
+                Capturing… {secondsRemaining} s
+              </Button>
+            </>
           )}
           {phase === 'review' && (
             <>

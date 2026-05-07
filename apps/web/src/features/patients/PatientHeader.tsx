@@ -57,14 +57,21 @@ export function PatientHeader({ patient }: { patient: Patient }) {
           >
             {initials(patient.full_name)}
           </div>
-          <div>
+          <div className="min-w-0">
             <h1 className="font-serif italic text-4xl text-foreground">{patient.full_name}</h1>
-            <div className="mt-1 flex items-center gap-3 text-sm text-muted-foreground">
-              {age && <span>age {age}</span>}
+            <div className="mt-1 flex items-baseline gap-3 text-sm text-muted-foreground">
+              {age && <span className="shrink-0">age {age}</span>}
               {patient.description && (
                 <>
-                  <span aria-hidden>·</span>
-                  <span className="max-w-md truncate">{patient.description}</span>
+                  <span aria-hidden className="shrink-0">
+                    ·
+                  </span>
+                  {/* Phase F item 52: line-clamp + title attribute so the
+                      full description shows on hover instead of being silently
+                      truncated mid-sentence by the previous max-w-md+truncate. */}
+                  <span className="line-clamp-2 max-w-2xl" title={patient.description}>
+                    {patient.description}
+                  </span>
                 </>
               )}
             </div>

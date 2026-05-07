@@ -43,7 +43,7 @@ function position(t: string, x: number, y: number): PositionEstimateRow {
   };
 }
 
-function event(t: string, type: string): EventRow {
+function event(t: string, type: EventRow['type']): EventRow {
   return {
     id: `ev-${t}`,
     patient_id: PATIENT,

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Pause, Play } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { History as HistoryIcon } from 'lucide-react';
@@ -20,12 +21,16 @@ interface Props {
 // playhead are rendered. Dots older than this are removed immediately.
 const TRAIL_MS = 60_000;
 
-// RAF tick interval for live playback. We advance `tickMs` of data
-// per 10 ms of wall clock at 1× speed; speed multiplier scales tickMs.
-const WALL_TICK_MS = 10;
-
-const SPEED_OPTIONS = [1, 5, 10] as const;
+const SPEED_OPTIONS = [10, 60, 300] as const;
 type Speed = (typeof SPEED_OPTIONS)[number];
+
+// Phase F item 50: when the gap between two consecutive rows exceeds
+// this many ms (in replay-real-time, i.e. wall-clock × speed), snap
+// the playhead forward instead of waiting through it. Caregivers see
+// the slider + timestamp jump (which makes the gap obvious) without
+// having to wait through an overnight pause at any speed. Setting this
+// to Infinity gives a strict "1× = real-time" replay.
+const QUIET_SKIP_MS = 30_000;
 
 // Only indoor rows with valid canvas coords are usable for replay.
 function isReplayable(row: PositionHistoryRow): row is PositionHistoryRow & {
@@ -46,13 +51,18 @@ export function ReplayScrubber({ patientId, range, canvasJson, scaleMetersPerPix
   }, [query.data]);
 
   // Scrubber state. idx is the index of the *current* row (the leading
-  // edge of the playhead); -1 means "before the start".
+  // edge of the playhead); -1 means "before the start". headTimeMs is
+  // the playhead expressed in row-time coordinates so a single-tick
+  // advance moves a constant number of *recorded* milliseconds rather
+  // than averaging across the whole range — gaps in the data render as
+  // visible gaps in the slider movement.
   const [idx, setIdx] = useState(-1);
   const idxRef = useRef(-1);
+  const headTimeRef = useRef<number>(0);
   const [playing, setPlaying] = useState(false);
   const playingRef = useRef(false);
-  const [speed, setSpeed] = useState<Speed>(1);
-  const speedRef = useRef<Speed>(1);
+  const [speed, setSpeed] = useState<Speed>(60);
+  const speedRef = useRef<Speed>(60);
 
   // When rows change (range change), reset to the beginning.
   useEffect(() => {
@@ -60,6 +70,7 @@ export function ReplayScrubber({ patientId, range, canvasJson, scaleMetersPerPix
     idxRef.current = -1;
     setPlaying(false);
     playingRef.current = false;
+    headTimeRef.current = 0;
     canvasRef.current?.setReplayDots([]);
   }, [query.data]);
 
@@ -93,13 +104,16 @@ export function ReplayScrubber({ patientId, range, canvasJson, scaleMetersPerPix
     canvasRef.current?.setReplayDots(sprites);
   }, []);
 
-  // RAF-based playback loop. Advances by `speed × WALL_TICK_MS` ms of
-  // data per 10 ms wall clock so at 10× speed each RAF tick advances
-  // 100 ms of data — matching the F13 spec (t=30 s wall → row ≈ 30).
+  // Phase F item 50: RAF loop drives `headTimeMs` (in row-time
+  // coordinates) forward by `wallDelta × speed` ms each tick. The
+  // visible idx is whatever row's recorded_at most recently fell at or
+  // before headTime. A long gap to the next row blocks idx advancement
+  // for the duration of that gap (real-time × speed) — except when the
+  // gap exceeds QUIET_SKIP_MS replay-real-time, in which case the
+  // playhead snaps forward to the next row. That makes overnight gaps
+  // visible without making them painful.
   const rafRef = useRef<number | null>(null);
   const lastRafTs = useRef<number | null>(null);
-  // Fractional row accumulator so sub-row advances don't get dropped.
-  const rowDebt = useRef(0);
 
   const stopRaf = useCallback(() => {
     if (rafRef.current != null) {
@@ -107,7 +121,6 @@ export function ReplayScrubber({ patientId, range, canvasJson, scaleMetersPerPix
       rafRef.current = null;
     }
     lastRafTs.current = null;
-    rowDebt.current = 0;
   }, []);
 
   const startRaf = useCallback(() => {
@@ -126,26 +139,35 @@ export function ReplayScrubber({ patientId, range, canvasJson, scaleMetersPerPix
         return;
       }
 
-      // How many ms of recorded data to advance.
-      const dataDelta = wallDelta * speedRef.current;
-      const msPerRow =
-        currentRows.length > 1
-          ? (new Date(currentRows[currentRows.length - 1]!.recorded_at).getTime() -
-              new Date(currentRows[0]!.recorded_at).getTime()) /
-            (currentRows.length - 1)
-          : 1000;
-
-      rowDebt.current += dataDelta / msPerRow;
-      const advance = Math.floor(rowDebt.current);
-      rowDebt.current -= advance;
-
-      if (advance === 0) {
-        // Sub-row advance — queue the next frame without moving the scrubber.
-        rafRef.current = requestAnimationFrame(tick);
-        return;
+      // Initialise the playhead on first tick from the current idx.
+      if (headTimeRef.current === 0) {
+        const startIdx = Math.max(0, idxRef.current);
+        headTimeRef.current = new Date(currentRows[startIdx]!.recorded_at).getTime();
       }
 
-      const nextIdx = Math.min(idxRef.current + advance, currentRows.length - 1);
+      const advance = wallDelta * speedRef.current;
+      headTimeRef.current += advance;
+
+      // Walk idx forward while the playhead has crossed subsequent rows.
+      let nextIdx = idxRef.current;
+      while (nextIdx < currentRows.length - 1) {
+        const nextRow = currentRows[nextIdx + 1]!;
+        const nextRowMs = new Date(nextRow.recorded_at).getTime();
+        if (headTimeRef.current >= nextRowMs) {
+          nextIdx += 1;
+          continue;
+        }
+        // Playhead sits in a gap before nextRow. If the remaining gap
+        // exceeds QUIET_SKIP_MS in replay-real-time (i.e. wall seconds
+        // at the current speed), snap forward instead of waiting.
+        const remainingMs = nextRowMs - headTimeRef.current;
+        if (remainingMs / speedRef.current > QUIET_SKIP_MS) {
+          headTimeRef.current = nextRowMs;
+          nextIdx += 1;
+          continue;
+        }
+        break;
+      }
 
       if (nextIdx !== idxRef.current) {
         idxRef.current = nextIdx;
@@ -154,7 +176,6 @@ export function ReplayScrubber({ patientId, range, canvasJson, scaleMetersPerPix
       }
 
       if (nextIdx >= currentRows.length - 1) {
-        // Reached the end — pause.
         playingRef.current = false;
         setPlaying(false);
         return;
@@ -176,7 +197,15 @@ export function ReplayScrubber({ patientId, range, canvasJson, scaleMetersPerPix
       if (idxRef.current >= rows.current.length - 1) {
         idxRef.current = 0;
         setIdx(0);
+        const first = rows.current[0];
+        headTimeRef.current = first ? new Date(first.recorded_at).getTime() : 0;
         renderTrail(0);
+      } else {
+        // Re-anchor the playhead to whatever row we paused at — avoids
+        // a jump if the user paused, scrubbed, then resumed.
+        const startIdx = Math.max(0, idxRef.current);
+        const startRow = rows.current[startIdx];
+        if (startRow) headTimeRef.current = new Date(startRow.recorded_at).getTime();
       }
       startRaf();
     } else {
@@ -209,6 +238,8 @@ export function ReplayScrubber({ patientId, range, canvasJson, scaleMetersPerPix
       const next = Math.max(0, Math.min(total - 1, idxRef.current + delta));
       idxRef.current = next;
       setIdx(next);
+      const nextRow = rows.current[next];
+      if (nextRow) headTimeRef.current = new Date(nextRow.recorded_at).getTime();
       renderTrail(next);
     },
     [togglePlay, stopRaf, renderTrail],
@@ -223,6 +254,8 @@ export function ReplayScrubber({ patientId, range, canvasJson, scaleMetersPerPix
       const next = Number(e.target.value);
       idxRef.current = next;
       setIdx(next);
+      const nextRow = rows.current[next];
+      if (nextRow) headTimeRef.current = new Date(nextRow.recorded_at).getTime();
       renderTrail(next);
     },
     [stopRaf, renderTrail],
@@ -241,7 +274,7 @@ export function ReplayScrubber({ patientId, range, canvasJson, scaleMetersPerPix
     return (
       <div className="space-y-3">
         <Skeleton className="h-10 w-full" />
-        <Skeleton className="h-[min(60vh,720px)] min-h-[480px] w-full" />
+        <Skeleton className="aspect-[4/3] max-h-[720px] min-h-[280px] sm:min-h-[420px] w-full" />
       </div>
     );
   }
@@ -279,9 +312,9 @@ export function ReplayScrubber({ patientId, range, canvasJson, scaleMetersPerPix
           type="button"
           aria-label={playing ? 'Pause replay' : 'Play replay'}
           onClick={togglePlay}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-card text-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-card text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          {playing ? '⏸' : '▶'}
+          {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
         </button>
 
         <label className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -323,7 +356,7 @@ export function ReplayScrubber({ patientId, range, canvasJson, scaleMetersPerPix
       </label>
 
       {/* Canvas */}
-      <div className="h-[min(60vh,720px)] min-h-[480px] w-full overflow-hidden rounded-lg border border-border">
+      <div className="aspect-[4/3] max-h-[720px] min-h-[280px] sm:min-h-[420px] w-full overflow-hidden rounded-lg border border-border">
         <ReplayCanvas
           ref={canvasRef}
           canvasJson={canvasJson}

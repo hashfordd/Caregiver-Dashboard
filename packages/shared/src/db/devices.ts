@@ -6,8 +6,10 @@ export const Device = z.object({
   firmware_version: z.string().nullable(),
   label: z.string().nullable(),
   paired_patient_id: z.string().uuid().nullable(),
-  last_seen_at: z.string().nullable(),
-  created_at: z.string(),
+  // Phase F item 60: timestamps now require ISO 8601 with offset to
+  // match what Supabase + Postgres emit for timestamptz columns.
+  last_seen_at: z.string().datetime({ offset: true }).nullable(),
+  created_at: z.string().datetime({ offset: true }),
 });
 export type Device = z.infer<typeof Device>;
 

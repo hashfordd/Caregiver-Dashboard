@@ -27,15 +27,26 @@ interface QualityReadoutProps {
    *  caregiver distinguish "no signals because the wearable is off" from
    *  "no signals because the broker dropped". */
   streamStatus: 'idle' | 'subscribed' | 'disconnected' | 'error';
+  /** Phase F item 53: seconds left in the current capture window
+   *  (initial or extended). The status pill reads "Capturing… 3 s
+   *  left" or "Extending… 4 s left" so caregivers know how long to
+   *  hold still. */
+  secondsRemaining?: number;
 }
 
-export function QualityReadout({ status, snapshot, reason, streamStatus }: QualityReadoutProps) {
+export function QualityReadout({
+  status,
+  snapshot,
+  reason,
+  streamStatus,
+  secondsRemaining,
+}: QualityReadoutProps) {
   const total = snapshot?.total ?? 0;
   const pct = Math.min(100, Math.round((total / MIN_SAMPLES_TOTAL) * 100));
   return (
     <div className="space-y-2 rounded-md border border-border bg-card/60 px-3 py-2 text-xs">
       <div className="flex items-center justify-between gap-2">
-        <span className="font-medium text-foreground">{statusLabel(status)}</span>
+        <span className="font-medium text-foreground">{statusLabel(status, secondsRemaining)}</span>
         <span className="text-muted-foreground">
           stream: <span className="font-mono">{streamStatus}</span>
         </span>
@@ -69,14 +80,18 @@ export function QualityReadout({ status, snapshot, reason, streamStatus }: Quali
   );
 }
 
-function statusLabel(status: CaptureStatus): string {
+function statusLabel(status: CaptureStatus, secondsRemaining: number | undefined): string {
+  const remaining =
+    typeof secondsRemaining === 'number' && secondsRemaining > 0
+      ? ` ${secondsRemaining}s left`
+      : '';
   switch (status) {
     case 'idle':
       return 'Ready';
     case 'capturing':
-      return 'Capturing…';
+      return `Capturing…${remaining}`;
     case 'extending':
-      return 'Extending window…';
+      return `Extending window…${remaining}`;
     case 'finalising':
       return 'Finalising…';
     case 'success':

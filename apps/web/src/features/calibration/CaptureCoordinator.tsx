@@ -28,7 +28,12 @@ const SNAPSHOT_INTERVAL_MS = 100; // 10 Hz readout refresh
 /** Owns the running aggregator state + timers for one capture window.
  *  Subscribes to onSignals via the patient-stream context, accumulates
  *  samples, runs the slice-3 quality check, and (on success) inserts
- *  the row via useCaptureCalibrationPoint. */
+ *  the row via useCaptureCalibrationPoint.
+ *
+ *  Phase F item 53: caregivers can now Cancel a running capture and
+ *  see a live countdown of how many seconds remain in the current
+ *  window. The countdown handles the extension correctly — it resets
+ *  to the extension delta when the initial window expires below floor. */
 export function CaptureCoordinator({
   floorPlanId,
   pending,
@@ -41,12 +46,16 @@ export function CaptureCoordinator({
   const [status, setStatus] = useState<CaptureStatus>('idle');
   const [reason, setReason] = useState<string | undefined>();
   const [snapshot, setSnapshot] = useState<QualitySnapshot | null>(null);
+  const [secondsRemaining, setSecondsRemaining] = useState(0);
 
   // Capture-side state lives in refs so timers + the streaming listener
   // mutate it without per-sample renders. The QualityReadout only
   // re-renders on the throttled snapshot pump below.
   const stateRef = useRef<AggregatorState | null>(null);
   const startedAtRef = useRef<number>(0);
+  /** Wall-clock instant at which the current window's deadline fires.
+   *  Used to drive the countdown UI through the extension transition. */
+  const deadlineAtRef = useRef<number>(0);
   const deadlineRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const snapshotTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const unsubscribeRef = useRef<(() => void) | null>(null);
@@ -65,6 +74,7 @@ export function CaptureCoordinator({
     if (finalisedRef.current) return;
     finalisedRef.current = true;
     setStatus('finalising');
+    setSecondsRemaining(0);
     const state = stateRef.current ?? createAggregatorState();
     const elapsed = Date.now() - startedAtRef.current;
     const { ble, wifi } = finaliseSignature(state, elapsed);
@@ -108,8 +118,10 @@ export function CaptureCoordinator({
     finalisedRef.current = false;
     stateRef.current = createAggregatorState();
     startedAtRef.current = Date.now();
+    deadlineAtRef.current = startedAtRef.current + INITIAL_WINDOW_MS;
     setStatus('capturing');
     setReason(undefined);
+    setSecondsRemaining(Math.ceil(INITIAL_WINDOW_MS / 1000));
     setSnapshot({ total: 0, ble: 0, wifi: 0, topBle: [] });
 
     // Subscribe via the context's register fn — returns an unsub.
@@ -119,11 +131,13 @@ export function CaptureCoordinator({
       accumulateSample(s, msg);
     });
 
-    // Throttled readout pump.
+    // Throttled readout pump + countdown tick.
     snapshotTimerRef.current = setInterval(() => {
       const s = stateRef.current;
       if (!s) return;
       setSnapshot(deriveSnapshot(s));
+      const remaining = Math.max(0, deadlineAtRef.current - Date.now());
+      setSecondsRemaining(Math.ceil(remaining / 1000));
     }, SNAPSHOT_INTERVAL_MS);
 
     // 5-s deadline. If we're below the sample floor, extend to 10 s.
@@ -145,11 +159,28 @@ export function CaptureCoordinator({
       }
       // Extend.
       setStatus('extending');
+      const extensionMs = EXTENDED_WINDOW_MS - INITIAL_WINDOW_MS;
+      deadlineAtRef.current = Date.now() + extensionMs;
+      setSecondsRemaining(Math.ceil(extensionMs / 1000));
       deadlineRef.current = setTimeout(() => {
         void finaliseAndWrite();
-      }, EXTENDED_WINDOW_MS - INITIAL_WINDOW_MS);
+      }, extensionMs);
     }, INITIAL_WINDOW_MS);
   }, [finaliseAndWrite, onSignals, streamStatus, tearDown]);
+
+  /** Phase F item 53: explicit cancel during the running capture.
+   *  Tears down listener + timers, discards any in-flight aggregation,
+   *  and returns the UI to idle so the caregiver can re-position and
+   *  try again without waiting through the deadline. */
+  const cancelCapture = useCallback(() => {
+    finalisedRef.current = true;
+    tearDown();
+    stateRef.current = null;
+    setStatus('idle');
+    setReason(undefined);
+    setSnapshot(null);
+    setSecondsRemaining(0);
+  }, [tearDown]);
 
   // Cleanup on unmount or pending-change. Cancelling the capture (e.g.
   // user navigated away) discards in-flight aggregation without writing.
@@ -167,6 +198,7 @@ export function CaptureCoordinator({
       setStatus('idle');
       setReason(undefined);
       setSnapshot(null);
+      setSecondsRemaining(0);
     }
   }, [pending, status]);
 
@@ -196,8 +228,13 @@ export function CaptureCoordinator({
               Cancel
             </Button>
           )}
+          {isRunning && status !== 'finalising' && (
+            <Button size="sm" variant="outline" onClick={cancelCapture}>
+              Stop capture
+            </Button>
+          )}
           <Button size="sm" disabled={!canCapture} onClick={startCapture}>
-            {isRunning ? 'Capturing…' : 'Capture'}
+            {isRunning ? `Capturing… ${secondsRemaining}s` : 'Capture'}
           </Button>
         </div>
       </div>
@@ -207,6 +244,7 @@ export function CaptureCoordinator({
           snapshot={snapshot}
           reason={reason}
           streamStatus={streamStatus}
+          secondsRemaining={secondsRemaining}
         />
       )}
     </div>

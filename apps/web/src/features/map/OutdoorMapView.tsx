@@ -59,10 +59,17 @@ function OutdoorMapViewBody({ patientId, estimate }: OutdoorMapViewProps) {
 
   // Sync the draft polygon with the persisted one when the server-side
   // rule changes (initial load, or another tab updating it).
+  //
+  // Phase F item 51: skip the sync while the user is editing — a
+  // background refetch landing mid-edit (TanStack revalidation, page
+  // focus, another tab's update) would otherwise stomp the in-progress
+  // polygon and reset the direction picker. The sync resumes the next
+  // time `editing` flips back to false.
   useEffect(() => {
+    if (editing) return;
     setDraftPolygon(geofenceQuery.data?.params.geofence ?? null);
     setDraftDirection(geofenceQuery.data?.params.direction ?? 'exit');
-  }, [geofenceQuery.data]);
+  }, [geofenceQuery.data, editing]);
 
   // Fly to the latest fix when one arrives. Only re-fly when the
   // coordinate actually changes — avoids fighting the user when they
