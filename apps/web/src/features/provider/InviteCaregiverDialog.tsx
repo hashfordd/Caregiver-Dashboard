@@ -11,6 +11,13 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { useInviteCaregiver } from '@/features/provider/providerQueries';
 
 interface Props {
@@ -65,7 +72,8 @@ export function InviteCaregiverDialog({ open, onOpenChange }: Props) {
         <DialogHeader>
           <DialogTitle>Invite a caregiver</DialogTitle>
           <DialogDescription>
-            They'll receive a link to join {role === 'admin' ? 'as another admin' : 'this provider'}.
+            They'll receive a link to join {role === 'admin' ? 'as another admin' : 'this provider'}
+            .
           </DialogDescription>
         </DialogHeader>
 
@@ -85,15 +93,15 @@ export function InviteCaregiverDialog({ open, onOpenChange }: Props) {
             </div>
             <div className="space-y-2">
               <Label htmlFor="invite_role">Role</Label>
-              <select
-                id="invite_role"
-                value={role}
-                onChange={(e) => setRole(e.target.value as CaregiverProviderRole)}
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-              >
-                <option value="member">Member</option>
-                <option value="admin">Admin</option>
-              </select>
+              <Select value={role} onValueChange={(v) => setRole(v as CaregiverProviderRole)}>
+                <SelectTrigger id="invite_role" aria-label="Role">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="member">Member</SelectItem>
+                  <SelectItem value="admin">Admin</SelectItem>
+                </SelectContent>
+              </Select>
               <p className="text-xs text-muted-foreground">
                 Members see allocated patients only. Admins see every patient in the provider and
                 can invite teammates.

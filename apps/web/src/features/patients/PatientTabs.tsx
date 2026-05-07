@@ -4,6 +4,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AlertsTab } from '@/features/alerts/AlertsTab';
 import { RuleSettingsTab } from '@/features/alerts/RuleSettingsTab';
 import { Skeleton } from '@/components/ui/skeleton';
+import { TabErrorBoundary } from '@/components/RootErrorBoundary';
 import { CaregiversTab } from './CaregiversTab';
 import { PatientNotesSection } from './PatientNotesSection';
 import { LiveTab } from './tabs/LiveTab';
@@ -48,37 +49,51 @@ export function PatientTabs({ patientId }: Props) {
           on touch — see /touch-pan-x — without affecting desktop layout. */}
       <div className="-mx-2 overflow-x-auto px-2 sm:mx-0 sm:px-0">
         <TabsList className="min-w-max">
-        <TabsTrigger value="live">Live</TabsTrigger>
-        <TabsTrigger value="place">Place</TabsTrigger>
-        <TabsTrigger value="history">History</TabsTrigger>
-        <TabsTrigger value="alerts">Alerts</TabsTrigger>
-        <TabsTrigger value="notes">Notes</TabsTrigger>
-        <TabsTrigger value="caregivers">Caregivers</TabsTrigger>
-        <TabsTrigger value="settings">Settings</TabsTrigger>
+          <TabsTrigger value="live">Live</TabsTrigger>
+          <TabsTrigger value="place">Place</TabsTrigger>
+          <TabsTrigger value="history">History</TabsTrigger>
+          <TabsTrigger value="alerts">Alerts</TabsTrigger>
+          <TabsTrigger value="notes">Notes</TabsTrigger>
+          <TabsTrigger value="caregivers">Caregivers</TabsTrigger>
+          <TabsTrigger value="settings">Settings</TabsTrigger>
         </TabsList>
       </div>
       <TabsContent value="live">
-        <LiveTab />
+        <TabErrorBoundary label="Live">
+          <LiveTab />
+        </TabErrorBoundary>
       </TabsContent>
       <TabsContent value="place">
-        <PlaceTab />
+        <TabErrorBoundary label="Place">
+          <PlaceTab />
+        </TabErrorBoundary>
       </TabsContent>
       <TabsContent value="history">
-        <Suspense fallback={<Skeleton className="h-96 w-full" />}>
-          <HistoryTab patientId={patientId} />
-        </Suspense>
+        <TabErrorBoundary label="History">
+          <Suspense fallback={<Skeleton className="h-96 w-full" />}>
+            <HistoryTab patientId={patientId} />
+          </Suspense>
+        </TabErrorBoundary>
       </TabsContent>
       <TabsContent value="alerts">
-        <AlertsTab patientId={patientId} />
+        <TabErrorBoundary label="Alerts">
+          <AlertsTab patientId={patientId} />
+        </TabErrorBoundary>
       </TabsContent>
       <TabsContent value="notes">
-        <PatientNotesSection patientId={patientId} />
+        <TabErrorBoundary label="Notes">
+          <PatientNotesSection patientId={patientId} />
+        </TabErrorBoundary>
       </TabsContent>
       <TabsContent value="caregivers">
-        <CaregiversTab patientId={patientId} />
+        <TabErrorBoundary label="Caregivers">
+          <CaregiversTab patientId={patientId} />
+        </TabErrorBoundary>
       </TabsContent>
       <TabsContent value="settings">
-        <RuleSettingsTab patientId={patientId} />
+        <TabErrorBoundary label="Settings">
+          <RuleSettingsTab patientId={patientId} />
+        </TabErrorBoundary>
       </TabsContent>
     </Tabs>
   );

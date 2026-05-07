@@ -6,6 +6,13 @@ import { MapPin, Save, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { hasMapboxToken, mapboxToken } from '@/lib/env';
 import { ModeIndicator } from '@/features/floor-plan/ModeIndicator';
 import type { PositionEstimateRow } from '@/lib/usePatientStream';
@@ -96,14 +103,18 @@ function OutdoorMapViewBody({ patientId, estimate }: OutdoorMapViewProps) {
         <div className="flex flex-wrap items-center gap-2">
           {editing ? (
             <>
-              <select
+              <Select
                 value={draftDirection}
-                onChange={(e) => setDraftDirection(e.target.value as GeofenceDirection)}
-                className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+                onValueChange={(v) => setDraftDirection(v as GeofenceDirection)}
               >
-                <option value="exit">Alert on exit</option>
-                <option value="enter">Alert on entry</option>
-              </select>
+                <SelectTrigger className="h-9 w-44" aria-label="Alert direction">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="exit">Alert on exit</SelectItem>
+                  <SelectItem value="enter">Alert on entry</SelectItem>
+                </SelectContent>
+              </Select>
               <Button
                 size="sm"
                 disabled={!draftPolygon || !dirty || upsert.isPending}

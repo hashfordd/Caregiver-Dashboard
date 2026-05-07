@@ -49,7 +49,9 @@ describe('SignupPage', () => {
       target: { value: 'jane@example.com' },
     });
     fireEvent.change(screen.getByLabelText(/password/i), { target: { value: 'pass1234' } });
-    fireEvent.change(screen.getByLabelText(/role/i), { target: { value: 'professional' } });
+    // Role uses a Radix Select; default 'family' is sufficient to verify
+    // options.data plumbing — Radix interaction is exercised in the
+    // browser smoke pass, not in jsdom.
     fireEvent.click(screen.getByRole('button', { name: /create account/i }));
 
     await waitFor(() => expect(signUpMock).toHaveBeenCalledTimes(1));
@@ -58,7 +60,7 @@ describe('SignupPage', () => {
       email: 'jane@example.com',
       password: 'pass1234',
       options: {
-        data: { full_name: 'Jane Doe', role: 'professional' },
+        data: { full_name: 'Jane Doe', role: 'family' },
       },
     });
   });

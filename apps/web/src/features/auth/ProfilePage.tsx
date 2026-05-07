@@ -11,6 +11,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 const profileSchema = z.object({
   full_name: z.string().min(1, 'Required'),
@@ -134,17 +141,23 @@ export function ProfilePage() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="role">Role</Label>
-                <select
-                  id="role"
-                  {...form.register('role')}
-                  className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                <Select
+                  value={form.watch('role')}
+                  onValueChange={(v) =>
+                    form.setValue('role', v as ProfileFormValues['role'], { shouldDirty: true })
+                  }
                 >
-                  {CaregiverRole.options.map((r) => (
-                    <option key={r} value={r}>
-                      {r === 'professional' ? 'Professional caregiver' : 'Family caregiver'}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger id="role" aria-label="Role">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CaregiverRole.options.map((r) => (
+                      <SelectItem key={r} value={r}>
+                        {r === 'professional' ? 'Professional caregiver' : 'Family caregiver'}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
             <div className="space-y-2">
