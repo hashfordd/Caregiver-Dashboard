@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+# Phase H item 78: typecheck on pre-push.
+#
+# Pre-commit only runs lint-staged (per BACKLOG: keep commits fast).
+# Pre-push gates wrong-typed code before it leaves the laptop —
+# pushing a typecheck-broken branch wastes the CI runner and burns
+# review attention on a fixable problem.
+#
+# Skip with: git push --no-verify
+npm run typecheck

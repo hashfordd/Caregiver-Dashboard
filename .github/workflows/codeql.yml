@@ -1,0 +1,46 @@
+name: CodeQL
+
+# Phase H item 72: GitHub-native SAST. Free for public + student
+# repos; surfaces JS/TS injection, prototype-pollution,
+# hardcoded-secret patterns, etc. on every PR. Weekly schedule on
+# main catches issues that merged before the rule was published.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 5 * * 1' # 05:00 UTC every Monday
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: CodeQL · javascript-typescript
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          # The default queries already include security-and-quality —
+          # explicit here for clarity / future tuning.
+          queries: security-and-quality
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:javascript-typescript'

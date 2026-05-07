@@ -59,6 +59,27 @@ function fail(msg: string): never {
   process.exit(2);
 }
 
+/** Phase H item 70: refuse to target non-local URLs by default. The
+ *  harness writes to position_estimates and posts to the bridge with a
+ *  service-role key; pointing at prod would inject fake estimates and
+ *  trigger live alerts. Pass --allow-non-local or set
+ *  ALLOW_NON_LOCAL=1 to override (e.g. for staging accuracy runs). */
+function isLocalUrl(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    return u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '::1';
+  } catch {
+    return false;
+  }
+}
+
+function assertLocalOrAllowed(label: string, raw: string, allowNonLocal: boolean): void {
+  if (isLocalUrl(raw) || allowNonLocal) return;
+  fail(
+    `refusing to target non-local ${label} (${raw}). Pass --allow-non-local or set ALLOW_NON_LOCAL=1 to override.`,
+  );
+}
+
 /** Park-Miller LCG — deterministic per-seed; gives the harness a
  *  reproducible noise sequence so accuracy numbers are stable. */
 function rng(seed: number): () => number {
@@ -201,6 +222,8 @@ async function run(args: string[]): Promise<void> {
       'target-error-m': { type: 'string', default: '1.5' },
       'target-percentile': { type: 'string', default: '0.8' },
       'drain-ms': { type: 'string', default: '2000' },
+      // Phase H item 70: same non-local guard as mock-telemetry.
+      'allow-non-local': { type: 'boolean', default: false },
     },
     allowPositionals: true,
   });
@@ -213,6 +236,10 @@ async function run(args: string[]): Promise<void> {
   const patientId = values['patient-id'];
   if (!serviceKey) fail('run: --service-key (or SB_SERVICE_KEY env) required');
   if (!patientId) fail('run: --patient-id required');
+
+  const allowNonLocal = values['allow-non-local'] === true || process.env.ALLOW_NON_LOCAL === '1';
+  assertLocalOrAllowed('Supabase URL', url, allowNonLocal);
+  assertLocalOrAllowed('bridge URL', bridgeUrl, allowNonLocal);
   const targetErrorM = Number(values['target-error-m']);
   const targetPct = Number(values['target-percentile']);
   const drainMs = Number(values['drain-ms']);

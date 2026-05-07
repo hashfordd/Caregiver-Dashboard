@@ -1,0 +1,30 @@
+name: Dependency Review
+
+# Phase H item 73: blocks PRs that introduce vulnerable dependencies
+# at PR time, before they land. Cheaper than chasing a vuln after
+# merge. Only runs on pull_request — push events have nothing to
+# compare against.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    name: Review new dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          # Block on moderate or higher severity. Tune up to 'high' if
+          # the prototype phase produces too many false-positives.
+          fail-on-severity: moderate
+          comment-summary-in-pr: on-failure

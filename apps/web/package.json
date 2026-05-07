@@ -13,7 +13,9 @@
   },
   "dependencies": {
     "@alzcare/shared": "*",
+    "@fontsource-variable/fraunces": "^5.2.5",
     "@fontsource-variable/geist": "5.2.8",
+    "@fontsource-variable/inter": "^5.2.5",
     "@hookform/resolvers": "3.9.0",
     "@mapbox/mapbox-gl-draw": "1.5.1",
     "@radix-ui/react-dialog": "1.1.2",
@@ -33,7 +35,7 @@
     "react-error-boundary": "^4.1.2",
     "react-hook-form": "7.53.1",
     "react-map-gl": "8.1.1",
-    "react-router-dom": "6.27.0",
+    "react-router-dom": "6.30.3",
     "recharts": "2.15.4",
     "shadcn": "4.6.0",
     "sonner": "^1.7.0",
@@ -52,6 +54,6 @@
     "@vitejs/plugin-react": "4.3.3",
     "jsdom": "25.0.1",
     "vite": "5.4.10",
-    "vitest": "2.1.4"
+    "vitest": "2.1.9"
   }
 }

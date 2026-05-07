@@ -30,6 +30,13 @@ jobs:
         with:
           deno-version: v2.x
 
+      - name: Set up Supabase CLI
+        # Phase H item 77: gives the runner the `supabase` binary so
+        # the local stack can boot for the RLS / edge integration tests.
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
       - name: Install dependencies
         run: npm ci
 
@@ -62,6 +69,28 @@ jobs:
       - name: Typecheck (all workspaces)
         run: npm run typecheck
 
+      # Phase H item 77: spin up the local Supabase stack so the RLS
+      # tests + edge integration tests run against a real DB. Without
+      # this, CROSS_CUTTING §13's "RLS denial test required-or-CI-fails"
+      # was theatrical — the suite was env-gated to skip on every CI
+      # run because no Supabase URL was reachable. The stack is torn
+      # down in the always-run cleanup step below.
+      - name: Start Supabase
+        run: supabase start
+
+      - name: Export Supabase env into the runner
+        run: |
+          # `supabase status -o env` emits KEY=VALUE pairs (DB_URL,
+          # API_URL, SERVICE_ROLE_KEY, ANON_KEY, ...). Feed the relevant
+          # ones into GITHUB_ENV under the names the tests + seed expect.
+          eval "$(supabase status -o env)"
+          {
+            echo "SB_URL=$API_URL"
+            echo "SB_ANON_KEY=$ANON_KEY"
+            echo "SB_SERVICE_KEY=$SERVICE_ROLE_KEY"
+            echo "RUN_RLS_TESTS=1"
+          } >> "$GITHUB_ENV"
+
       - name: Test (all workspaces)
         run: npm run test
 
@@ -70,3 +99,7 @@ jobs:
         env:
           VITE_SUPABASE_URL: http://localhost:54321
           VITE_SUPABASE_ANON_KEY: stub-for-build
+
+      - name: Stop Supabase
+        if: always()
+        run: supabase stop || true

@@ -55,6 +55,28 @@ if (!SERVICE_KEY) {
   process.exit(2);
 }
 
+// Phase H item 70: refuse to target a non-local URL by default. The
+// rich seed inserts ~22k rows (24 h × 5 patients of sensor + position
+// history, plus alert rules + sample alerts) — pointing it at prod by
+// accident is destructive. Set ALLOW_NON_LOCAL=1 to override for the
+// hosted dev project.
+function isLocalUrl(raw: string): boolean {
+  try {
+    // `URL` is shadowed in this file by the SB_URL constant; resolve
+    // the global constructor explicitly.
+    const u = new globalThis.URL(raw);
+    return u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '::1';
+  } catch {
+    return false;
+  }
+}
+if (!isLocalUrl(URL) && process.env.ALLOW_NON_LOCAL !== '1') {
+  console.error(
+    `seed: refusing to seed non-local URL (${URL}). Set ALLOW_NON_LOCAL=1 to override.`,
+  );
+  process.exit(2);
+}
+
 const admin: SupabaseClient = createClient(URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });

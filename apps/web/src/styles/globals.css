@@ -1,4 +1,6 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:ital,wght@1,400;1,600&display=swap');
+/* Phase H item 75: fonts are self-hosted via @fontsource-variable/*
+ * — the imports live in apps/web/src/main.tsx so Vite can statically
+ * analyse them and emit the woff2 files into the bundle. */
 @import 'tailwindcss';
 @import 'tw-animate-css';
 

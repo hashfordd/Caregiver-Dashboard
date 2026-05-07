@@ -47,6 +47,9 @@ const { values } = parseArgs({
     'mqtt-password': { type: 'string' },
     'no-ensure-device': { type: 'boolean', default: false },
     kind: { type: 'string', default: 'telemetry' },
+    // Phase H item 70: refuse to run against a non-local URL by default.
+    // Holding a service-role key, this CLI can write into prod by accident.
+    'allow-non-local': { type: 'boolean', default: false },
   },
 });
 
@@ -74,9 +77,38 @@ function fail(message: string): never {
   process.exit(2);
 }
 
+/** Phase H item 70: non-local-target guard. The mock-telemetry CLI
+ *  carries a service-role key and writes directly into sensor_readings
+ *  / posts to the bridge — pointing it at a non-local URL by accident
+ *  would inject fake telemetry into a real environment. Refuse unless
+ *  --allow-non-local is passed or ALLOW_NON_LOCAL=1 is set. */
+const ALLOW_NON_LOCAL = values['allow-non-local'] === true || process.env.ALLOW_NON_LOCAL === '1';
+
+function isLocalUrl(raw: string): boolean {
+  try {
+    // `URL` is shadowed by the local SB URL constant; resolve the
+    // global constructor explicitly.
+    const u = new globalThis.URL(raw);
+    return u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '::1';
+  } catch {
+    return false;
+  }
+}
+
+function assertLocalOrAllowed(label: string, raw: string): void {
+  if (isLocalUrl(raw) || ALLOW_NON_LOCAL) return;
+  fail(
+    `refusing to target non-local ${label} (${raw}). Pass --allow-non-local or set ALLOW_NON_LOCAL=1 to override.`,
+  );
+}
+
 if (!PATIENT_ID) fail('--patient-id is required');
 if (!DEVICE_ID) fail('--device-id is required');
 if (!SERVICE_KEY) fail('SB_SERVICE_KEY env var or --service-key flag required');
+
+assertLocalOrAllowed('Supabase URL', URL);
+assertLocalOrAllowed('bridge URL', BRIDGE_URL);
+if (MODE === 'mqtt') assertLocalOrAllowed('MQTT broker URL', MQTT_BROKER_URL);
 if (KIND === 'signals' && MODE === 'direct') {
   // Signals are deliberately not persisted in V1. Direct-mode bypass
   // doesn't fit. Use --mode bridge to exercise the broadcast path.
