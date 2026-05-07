@@ -378,6 +378,8 @@ For 24 h × 1 Hz = 86,400 rows. That's 6–8 MB of JSON over the wire. Consider:
 - Backup video of the working demo (filmed off-screen, in case live fails).
 - Q&A pre-prep per workstream.
 
+Demo prep docs: [script](./demo/script.md) (DOC-10) · [dry-run checklist](./demo/dry-run-checklist.md) (DOC-11) · [backup video plan](./demo/backup-video-plan.md) (DOC-12) · [60-min continuous run](./test-plans/TST-10-continuous-run.md) (TST-10).
+
 **Exit criteria** (the project ships)
 
 - F13 acceptance: replay 1 h at 10× speed; CSV export of last 24 h vitals downloads cleanly.

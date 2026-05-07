@@ -42,6 +42,7 @@ vi.mock('@/features/floor-plan/FloorPlanCanvas', () => {
       setCalibrationPoints: () => {},
       armCalibrationCapture: () => {},
       setPatientMarker: () => {},
+      setReplayDots: () => {},
       countObjects: () => ({ walls: 0, rooms: 0, furniture: 1 }),
       undo: () => {},
       redo: () => {},

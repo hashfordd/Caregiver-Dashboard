@@ -25,6 +25,7 @@ import type {
   FloorPlanCanvasHandle,
   FurnitureKind,
   PatientMarkerSprite,
+  ReplayDotSprite,
   SelectionDescriptor,
   ToolMode,
 } from './types';
@@ -55,6 +56,10 @@ interface FloorPlanCanvasProps {
   width?: number;
   height?: number;
   className?: string;
+  /** Accessible name announced by screen readers (UI-28). The canvas
+   *  itself is not natively keyboard-navigable; full canvas a11y
+   *  narration is V2. */
+  ariaLabel?: string;
 }
 
 const STROKE = '#3e5c76';
@@ -137,6 +142,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       width,
       height,
       className,
+      ariaLabel,
     },
     ref,
   ) {
@@ -162,6 +168,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     const beaconsLayerRef = useRef<HTMLDivElement>(null);
     const calibrationLayerRef = useRef<HTMLDivElement>(null);
     const markerLayerRef = useRef<HTMLDivElement>(null);
+    const replayDotsLayerRef = useRef<HTMLDivElement>(null);
     const shadingLayerRef = useRef<SVGSVGElement>(null);
     const snapIndicatorRef = useRef<HTMLDivElement>(null);
     const fabricRef = useRef<fabric.Canvas | null>(null);
@@ -928,6 +935,50 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         }`;
       }
 
+      // ─── F13 replay dots ────────────────────────────────────────────────
+      // Keyed map so diff-removal is O(1). Entries are DOM divs positioned
+      // in the same coordinate space as the other overlays.
+      const replayDotEls = new Map<string, HTMLDivElement>();
+
+      function makeReplayDotEl(sprite: ReplayDotSprite): HTMLDivElement {
+        const screen = screenFromWorld({ x: sprite.x, y: sprite.y });
+        const el = document.createElement('div');
+        el.className =
+          'pointer-events-none absolute z-30 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-blue-400 shadow-sm';
+        el.style.left = `${screen.x}px`;
+        el.style.top = `${screen.y}px`;
+        el.style.opacity = String(Math.max(0.15, Math.min(1, sprite.alpha)));
+        return el;
+      }
+
+      function applyReplayDots(sprites: ReplayDotSprite[]) {
+        const layer = replayDotsLayerRef.current;
+        if (!layer) return;
+        const nextKeys = new Set(sprites.map((s) => s.key));
+        // Remove dots that are no longer in the trail.
+        for (const [key, el] of replayDotEls) {
+          if (!nextKeys.has(key)) {
+            el.remove();
+            replayDotEls.delete(key);
+          }
+        }
+        // Add new dots.
+        for (const sprite of sprites) {
+          if (!replayDotEls.has(sprite.key)) {
+            const el = makeReplayDotEl(sprite);
+            layer.appendChild(el);
+            replayDotEls.set(sprite.key, el);
+          } else {
+            // Reposition in case viewport changed (pan/zoom).
+            const el = replayDotEls.get(sprite.key)!;
+            const screen = screenFromWorld({ x: sprite.x, y: sprite.y });
+            el.style.left = `${screen.x}px`;
+            el.style.top = `${screen.y}px`;
+            el.style.opacity = String(Math.max(0.15, Math.min(1, sprite.alpha)));
+          }
+        }
+      }
+
       // ─── Pointer handlers ───────────────────────────────────────────────
       const handlePointerDown = (opt: fabric.TPointerEventInfo<fabric.TPointerEvent>) => {
         // Beacon placement is the one mode where clicks matter even when
@@ -1199,6 +1250,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         __fpSetPatientMarker: (sprite: PatientMarkerSprite | null) => {
           markerSprite = sprite;
           renderMarker();
+        },
+        __fpSetReplayDots: (sprites: ReplayDotSprite[]) => {
+          applyReplayDots(sprites);
         },
       });
 
@@ -1837,6 +1891,12 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           } | null;
           c?.__fpSetPatientMarker?.(sprite);
         },
+        setReplayDots: (sprites) => {
+          const c = fabricRef.current as unknown as {
+            __fpSetReplayDots?: (sprites: ReplayDotSprite[]) => void;
+          } | null;
+          c?.__fpSetReplayDots?.(sprites);
+        },
       }),
       [],
     );
@@ -1844,8 +1904,10 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     return (
       <div
         ref={wrapperRef}
+        role="img"
+        aria-label={ariaLabel ?? 'Floor plan canvas'}
         className={cn(
-          'relative overflow-hidden rounded-lg border border-border bg-card',
+          'relative overflow-hidden rounded-lg border border-border bg-card touch-pan-x touch-pan-y',
           !explicitDims && 'h-full w-full',
           className,
         )}
@@ -1887,6 +1949,11 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         {/* z-30 sibling: live patient marker. Single child div with a
             CSS transition so 1 Hz updates feel smooth. */}
         <div ref={markerLayerRef} className="pointer-events-none absolute inset-0 z-30" />
+        {/* z-31: replay trail dots. Each dot is a small DOM div so the
+            scrubber can remove them individually without touching the
+            Fabric object list. Sits above the marker so the current
+            playback head is always visible. */}
+        <div ref={replayDotsLayerRef} className="pointer-events-none absolute inset-0 z-31" />
         <div
           ref={snapIndicatorRef}
           className="pointer-events-none absolute z-25 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-emerald-400 bg-emerald-400/30"

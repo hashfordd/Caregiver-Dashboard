@@ -104,6 +104,12 @@ export interface FloorPlanCanvasHandle {
    *  The canvas owns a single marker DOM node that's repositioned in
    *  place — no create/destroy churn at 1 Hz. */
   setPatientMarker: (sprite: PatientMarkerSprite | null) => void;
+  /** F13: replace the replay trail with the given dot sprites. The
+   *  canvas diffs against the currently-rendered set: dots in the
+   *  previous render that are absent from `sprites` are explicitly
+   *  removed; new dots are added. Pass an empty array to clear the
+   *  trail entirely (end of replay or scrub-to-start). */
+  setReplayDots: (sprites: ReplayDotSprite[]) => void;
 }
 
 /** A beacon as the canvas needs to render it — id, label for tooltip,
@@ -140,4 +146,16 @@ export interface PatientMarkerSprite {
   /** ISO 8601, surfaced in the marker tooltip so the caregiver can see
    *  how stale the latest estimate is. */
   recorded_at: string;
+}
+
+/** F13 replay trail dot. Each rendered row in the position history
+ *  becomes one dot; the scrubber removes dots that fall outside the
+ *  60 s trail window via canvas.remove to prevent object accumulation. */
+export interface ReplayDotSprite {
+  /** Unique key so the canvas can find and remove a specific dot. */
+  key: string;
+  x: number;
+  y: number;
+  /** 0..1 — dots earlier in the trail render at lower opacity. */
+  alpha: number;
 }

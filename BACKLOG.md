@@ -8,6 +8,8 @@ Format: `- **<area>** — what + why deferred + reference (feature ID / task ID)
 
 - **Vulnerability remediation** — `npm audit` reports 13 transitive vulnerabilities (4 low / 5 moderate / 3 high / 1 critical) at scaffold time. Deferred because `npm audit fix --force` would likely downgrade pinned versions; review individually and patch before any production-shaped deploy.
 
+- **Canvas a11y narration (UI-28 V2)** — F13's ReplayCanvas and the F5 FloorPlanCanvas now expose `role="img"` + `aria-label` for screen-reader identification, but the canvas content itself is not narrated. Full canvas a11y (announcing wall lengths on focus, beacon names on selection, replay-dot positions during playback) is V2. The scrubber is already a labelled `<input type="range">` so playback position is announced; only the canvas geometry remains opaque to screen readers.
+
 - **Edge function shared-schema bundling** — `apps/edge/deno.json` resolves `@alzcare/shared/mqtt` via relative path to the workspace source. Works for `deno check` and `supabase functions serve` locally; verify the import graph survives `supabase functions deploy` bundling, or publish `@alzcare/shared` to npm and switch to `npm:` specifiers. (BE-06)
 
 - **`mqtt_bridge` runtime model** — Supabase Edge Functions are request-scoped; a real MQTT subscriber needs a long-running process. The current stub provides the validation shape via HTTP, but the production bridge will likely run as a Deno container on Fly.io or EC2. (BE-06 / MQ-01)
@@ -26,7 +28,7 @@ Format: `- **<area>** — what + why deferred + reference (feature ID / task ID)
 
 - **Mosquitto monitoring + retention** — broker has a healthcheck in docker-compose; no log retention or device-count dashboard yet. (MQ-08)
 
-- **Front-end libs not yet installed** — Recharts (F4 sparklines / F13 history charts) is listed in the spec's Library Reference but not in `apps/web/package.json` since no feature uses it yet. Install at the time the relevant feature is built; pin exact versions. (Mapbox GL JS landed with F9.)
+- **Front-end libs not yet installed** — _none_. (Recharts landed with F13 at `2.15.4`. Mapbox GL JS landed with F9. Fabric landed with F5.)
 
 - **Realtime broadcast channel auth** — F6's `patient:<id>:signals` channel relies on namespacing as the auth boundary. Any authenticated caregiver can subscribe to any patient's signals channel; we don't currently enforce that they're allocated to that patient. V2: adopt Supabase Realtime Authorization when it's GA so a caregiver can only join a channel for a patient they're allocated to. Until then, it's a deliberate gap noted in `docs/features/F6.md` Risks. (F6 / SEC-01)
 
@@ -77,11 +79,9 @@ Format: `- **<area>** — what + why deferred + reference (feature ID / task ID)
   `caregivers`, surface in profile, and switch the formatter in
   `SensorCard`. (F4 / UI-05)
 
-- **Recharts deferral note** — Recharts is intentionally not installed
-  yet. F4's sparkline is hand-rolled SVG; F13 is the first feature that
-  actually needs Recharts (axes, tooltips, range selection). Pin the
-  version at F13 install time, then remove the related "Front-end libs
-  not yet installed" entry above.
+- **Recharts** — landed with F13 at `2.15.4` (exact pin). F4 sparkline
+  remains hand-rolled SVG by design — too small to justify the bundle
+  cost there.
 
 - **Production latency instrumentation** — F4 includes a console-log of
   publish-to-render delta only in dev. Replacing it with a structured
