@@ -50,10 +50,24 @@ async function createUser(
   return { id: data.user.id, email, password, client };
 }
 
+// Phase B: a fresh caregiver has no provider until they create one or
+// accept an invite. Tests that exercise per-patient RLS need each user
+// to own a provider so create_patient_with_allocation can succeed and
+// the provider tenancy boundary is exercised.
+async function bootstrapProvider(user: TestUser, providerName: string): Promise<string> {
+  const { data, error } = await user.client.rpc('create_care_provider', {
+    p_name: providerName,
+  });
+  if (error || !data) throw error ?? new Error('create_care_provider returned no data');
+  return (data as { id: string }).id;
+}
+
 describe.skipIf(!enabled)('RLS denial — F1 caregiver write surface', () => {
   let admin: SupabaseClient;
   let alice: TestUser;
   let bob: TestUser;
+  let aliceProviderId: string;
+  let bobProviderId: string;
   let alicePatientId: string;
 
   beforeAll(async () => {
@@ -64,7 +78,12 @@ describe.skipIf(!enabled)('RLS denial — F1 caregiver write surface', () => {
     alice = await createUser(admin, 'alice', 'Alice RLS');
     bob = await createUser(admin, 'bob', 'Bob RLS');
 
-    // Alice creates a patient (auto-allocated via the RPC).
+    // Each test user owns a separate provider — the cross-provider
+    // tenancy boundary is the load-bearing predicate Phase B introduced.
+    aliceProviderId = await bootstrapProvider(alice, 'Alice Care Co');
+    bobProviderId = await bootstrapProvider(bob, 'Bob Care Co');
+
+    // Alice creates a patient inside her provider (auto-allocated).
     const { data, error } = await alice.client.rpc('create_patient_with_allocation', {
       p_full_name: 'Alice Patient',
       p_dob: null,
@@ -76,8 +95,19 @@ describe.skipIf(!enabled)('RLS denial — F1 caregiver write surface', () => {
 
   afterAll(async () => {
     if (!enabled || !admin) return;
-    if (alice?.id) await admin.auth.admin.deleteUser(alice.id);
-    if (bob?.id) await admin.auth.admin.deleteUser(bob.id);
+    // care_providers FK is on delete restrict, so unbind the caregiver
+    // first then delete the provider rows. Use the service-role admin
+    // client to bypass RLS for cleanup.
+    if (alice?.id) {
+      await admin.from('caregivers').update({ care_provider_id: null }).eq('id', alice.id);
+      await admin.auth.admin.deleteUser(alice.id);
+    }
+    if (bob?.id) {
+      await admin.from('caregivers').update({ care_provider_id: null }).eq('id', bob.id);
+      await admin.auth.admin.deleteUser(bob.id);
+    }
+    if (aliceProviderId) await admin.from('care_providers').delete().eq('id', aliceProviderId);
+    if (bobProviderId) await admin.from('care_providers').delete().eq('id', bobProviderId);
   }, 30_000);
 
   it('Alice can read her own patient', async () => {
@@ -274,5 +304,100 @@ describe.skipIf(!enabled)('RLS denial — F1 caregiver write surface', () => {
       .eq('id', alice.id)
       .single();
     expect(afterRow?.full_name).toBe(before);
+  });
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Phase B — care provider tenancy
+  // ────────────────────────────────────────────────────────────────────────
+
+  it('Phase-B: Alice is admin of her own provider after bootstrap', async () => {
+    const { data } = await alice.client
+      .from('caregivers')
+      .select('care_provider_id, provider_role')
+      .eq('id', alice.id)
+      .single();
+    expect((data as { care_provider_id: string }).care_provider_id).toBe(aliceProviderId);
+    expect((data as { provider_role: string }).provider_role).toBe('admin');
+  });
+
+  it('Phase-B: cross-provider patient read is denied', async () => {
+    // Bob is admin of his own provider, NOT a member of Alice's. The
+    // patients_tenant_read predicate combines is_caregiver_for(id) with
+    // is_provider_admin(care_provider_id) of *the row's* provider — Bob
+    // satisfies neither for Alice's patient.
+    const { data } = await bob.client
+      .from('patients')
+      .select('id, full_name')
+      .eq('id', alicePatientId);
+    expect(data).toEqual([]);
+  });
+
+  it('Phase-B: cannot create a patient before joining a provider', async () => {
+    const solo = await createUser(admin, 'solo', 'Solo Test');
+    // Solo has no provider — the RPC must refuse.
+    const { error } = await solo.client.rpc('create_patient_with_allocation', {
+      p_full_name: 'Should fail',
+      p_dob: null,
+      p_description: null,
+    });
+    expect(error).not.toBeNull();
+    expect((error?.message ?? '').toLowerCase()).toMatch(/no provider|create one|invite/);
+    await admin.auth.admin.deleteUser(solo.id);
+  });
+
+  it('Phase-B: invite_caregiver from a non-admin raises', async () => {
+    // Alice's provider has Alice as admin. Add a member by invite +
+    // accept manually so the member can attempt an invite (which must fail).
+    // Direct SQL setup via service-role admin to avoid email plumbing in tests.
+    const memberUser = await createUser(admin, 'member', 'Member Test');
+    // Service-role admin promotes them into Alice's provider directly:
+    await admin
+      .from('caregivers')
+      .update({ care_provider_id: aliceProviderId, provider_role: 'member' })
+      .eq('id', memberUser.id);
+
+    const { error } = await memberUser.client.rpc('invite_caregiver', {
+      p_email: 'spam@example.com',
+      p_role: 'member',
+    });
+    expect(error).not.toBeNull();
+    expect((error?.message ?? '').toLowerCase()).toMatch(/admin only/);
+
+    // Cleanup
+    await admin.from('caregivers').update({ care_provider_id: null }).eq('id', memberUser.id);
+    await admin.auth.admin.deleteUser(memberUser.id);
+  });
+
+  it('Phase-B: allocate_patient across providers is forbidden', async () => {
+    // Alice (admin of provider A) tries to allocate Bob (in provider B)
+    // to her patient. The RPC must refuse "target caregiver is not in
+    // caller provider".
+    const { error } = await alice.client.rpc('allocate_patient', {
+      p_patient_id: alicePatientId,
+      p_caregiver_id: bob.id,
+    });
+    expect(error).not.toBeNull();
+    expect((error?.message ?? '').toLowerCase()).toMatch(/not in caller provider/);
+  });
+
+  it('Phase-B: accept_invite with bogus token raises', async () => {
+    const fresh = await createUser(admin, 'fresh', 'Fresh Test');
+    const { error } = await fresh.client.rpc('accept_invite', {
+      p_token: 'this-is-not-a-real-token',
+    });
+    expect(error).not.toBeNull();
+    expect((error?.message ?? '').toLowerCase()).toMatch(/not found/);
+    await admin.auth.admin.deleteUser(fresh.id);
+  });
+
+  it('Phase-B: caregiver_patient cross-provider invariant blocks direct insert', async () => {
+    // Even with service-role bypassing RLS, the BEFORE INSERT trigger
+    // enforces the same-provider invariant. (Service role doesn't
+    // bypass triggers.)
+    const { error } = await admin
+      .from('caregiver_patient')
+      .insert({ caregiver_id: bob.id, patient_id: alicePatientId });
+    expect(error).not.toBeNull();
+    expect((error?.message ?? '').toLowerCase()).toMatch(/cross-provider/);
   });
 });
