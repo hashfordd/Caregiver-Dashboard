@@ -1,13 +1,20 @@
+import { Suspense, lazy } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AlertsTab } from '@/features/alerts/AlertsTab';
 import { RuleSettingsTab } from '@/features/alerts/RuleSettingsTab';
+import { Skeleton } from '@/components/ui/skeleton';
+import { CaregiversTab } from './CaregiversTab';
 import { PatientNotesSection } from './PatientNotesSection';
 import { LiveTab } from './tabs/LiveTab';
 import { PlaceTab } from './tabs/PlaceTab';
-import { PlaceholderTab } from './tabs/PlaceholderTab';
 
-const TAB_KEYS = ['live', 'place', 'history', 'alerts', 'notes', 'settings'] as const;
+// F13: lazy-load HistoryTab so Recharts (~80 KB gzipped) and the
+// Fabric replay glue aren't requested until the caregiver opens the
+// History tab. See docs/features/F13.md → Risks → Recharts bundle weight.
+const HistoryTab = lazy(() => import('@/features/history/HistoryTab'));
+
+const TAB_KEYS = ['live', 'place', 'history', 'alerts', 'notes', 'caregivers', 'settings'] as const;
 type TabKey = (typeof TAB_KEYS)[number];
 
 function isTabKey(value: string): value is TabKey {
@@ -36,14 +43,20 @@ export function PatientTabs({ patientId }: Props) {
 
   return (
     <Tabs value={value} onValueChange={setValue}>
-      <TabsList>
+      {/* UI-29: at narrow widths the six triggers overflow the inline
+          flex list. The wrapper makes the strip horizontally scrollable
+          on touch — see /touch-pan-x — without affecting desktop layout. */}
+      <div className="-mx-2 overflow-x-auto px-2 sm:mx-0 sm:px-0">
+        <TabsList className="min-w-max">
         <TabsTrigger value="live">Live</TabsTrigger>
         <TabsTrigger value="place">Place</TabsTrigger>
         <TabsTrigger value="history">History</TabsTrigger>
         <TabsTrigger value="alerts">Alerts</TabsTrigger>
         <TabsTrigger value="notes">Notes</TabsTrigger>
+        <TabsTrigger value="caregivers">Caregivers</TabsTrigger>
         <TabsTrigger value="settings">Settings</TabsTrigger>
-      </TabsList>
+        </TabsList>
+      </div>
       <TabsContent value="live">
         <LiveTab />
       </TabsContent>
@@ -51,13 +64,18 @@ export function PatientTabs({ patientId }: Props) {
         <PlaceTab />
       </TabsContent>
       <TabsContent value="history">
-        <PlaceholderTab phase={5} feature="Movement replay, vitals charts, CSV export." />
+        <Suspense fallback={<Skeleton className="h-96 w-full" />}>
+          <HistoryTab patientId={patientId} />
+        </Suspense>
       </TabsContent>
       <TabsContent value="alerts">
         <AlertsTab patientId={patientId} />
       </TabsContent>
       <TabsContent value="notes">
         <PatientNotesSection patientId={patientId} />
+      </TabsContent>
+      <TabsContent value="caregivers">
+        <CaregiversTab patientId={patientId} />
       </TabsContent>
       <TabsContent value="settings">
         <RuleSettingsTab patientId={patientId} />
