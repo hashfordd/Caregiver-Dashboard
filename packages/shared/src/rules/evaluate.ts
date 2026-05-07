@@ -7,13 +7,20 @@
 // Pure: no Date.now(), no DB calls, no realtime side-effects. The
 // caller passes `now` either via the dataPoint timestamp or via a
 // `tick` data point. This is what makes the parity test possible.
+//
+// Phase C: zone dispatch on `params.space` (indoor canvas vs outdoor
+// geofence); withinTimeWindow now resolves wall-clock against
+// APP_TIMEZONE (Australia/Sydney) instead of the caller's local zone.
 
+import { APP_TIMEZONE } from '../index.ts';
 import type {
   AlertRule,
   DataPoint,
   EvaluatorResult,
   HistoryWindow,
   InactivityRule,
+  IndoorZoneParams,
+  OutdoorZoneParams,
   VitalsRule,
   ZoneRule,
 } from './types.ts';
@@ -90,13 +97,20 @@ function evaluateFall(rule: AlertRule, dp: DataPoint): EvaluatorResult {
 
 // ─── zone ─────────────────────────────────────────────────────────────
 
+/** Zone rules are discriminated by `params.space`. Indoor zones use
+ *  canvas (x_canvas, y_canvas) coordinates and require the position
+ *  estimate's mode to be 'indoor'. Outdoor zones use [lng, lat] GeoJSON
+ *  pairs and require mode 'outdoor'. The dwell-time check is shared. */
 function evaluateZone(rule: ZoneRule, dp: DataPoint, history: HistoryWindow): EvaluatorResult {
   if (dp.kind !== 'position_estimate') return { fire: false };
   const row = dp.row;
-  if (row.mode !== 'indoor' || row.x_canvas == null || row.y_canvas == null) {
-    return { fire: false };
-  }
-  const inside = pointInPolygon([row.x_canvas, row.y_canvas], rule.params.polygon);
+  const space = rule.params.space;
+
+  const point = pointForSpace(row, space);
+  if (point == null) return { fire: false };
+
+  const polygon = polygonForSpace(rule.params);
+  const inside = pointInPolygon(point, polygon);
   const condition = rule.params.direction === 'enter' ? inside : !inside;
   if (!condition) return { fire: false };
 
@@ -113,10 +127,9 @@ function evaluateZone(rule: ZoneRule, dp: DataPoint, history: HistoryWindow): Ev
       if (prior.id === row.id) continue;
       const priorMs = Date.parse(prior.recorded_at);
       if (priorMs < cutoffMs) break; // walked past the window
-      if (prior.mode !== 'indoor' || prior.x_canvas == null || prior.y_canvas == null) {
-        return { fire: false };
-      }
-      const priorInside = pointInPolygon([prior.x_canvas, prior.y_canvas], rule.params.polygon);
+      const priorPoint = pointForSpace(prior, space);
+      if (priorPoint == null) return { fire: false };
+      const priorInside = pointInPolygon(priorPoint, polygon);
       const priorCondition = rule.params.direction === 'enter' ? priorInside : !priorInside;
       if (!priorCondition) return { fire: false };
     }
@@ -133,14 +146,39 @@ function evaluateZone(rule: ZoneRule, dp: DataPoint, history: HistoryWindow): Ev
     severity: rule.severity,
     context: {
       kind: 'zone',
+      space,
       direction: rule.params.direction,
       dwell_seconds: rule.params.dwell_seconds,
       position_estimate_id: row.id,
-      x_canvas: row.x_canvas,
-      y_canvas: row.y_canvas,
+      ...(space === 'indoor'
+        ? { x_canvas: row.x_canvas, y_canvas: row.y_canvas }
+        : { lat: row.lat, lng: row.lng }),
       recorded_at: row.recorded_at,
     },
   };
+}
+
+function pointForSpace(
+  row: PositionEstimateRow,
+  space: 'indoor' | 'outdoor',
+): [number, number] | null {
+  if (space === 'indoor') {
+    if (row.mode !== 'indoor' || row.x_canvas == null || row.y_canvas == null) return null;
+    return [row.x_canvas, row.y_canvas];
+  }
+  if (row.mode !== 'outdoor' || row.lat == null || row.lng == null) return null;
+  // Outdoor polygons use GeoJSON [lng, lat] convention.
+  return [row.lng, row.lat];
+}
+
+function polygonForSpace(params: IndoorZoneParams | OutdoorZoneParams): [number, number][] {
+  if (params.space === 'indoor') return params.polygon;
+  // Strip the GeoJSON closing duplicate vertex; pointInPolygon treats
+  // the polygon as implicitly closed.
+  const c = params.geofence.coordinates;
+  return c.length >= 2 && c[0]?.[0] === c[c.length - 1]?.[0] && c[0]?.[1] === c[c.length - 1]?.[1]
+    ? (c.slice(0, -1) as [number, number][])
+    : (c as [number, number][]);
 }
 
 function oldestInsideWindow(
@@ -166,8 +204,9 @@ function evaluateInactivity(
   history: HistoryWindow,
 ): EvaluatorResult {
   if (dp.kind !== 'tick') return { fire: false };
-  // Optional time-of-day gate (caregiver-local HH:mm). When provided,
-  // the rule only fires while the wall clock falls inside the window.
+  // Optional time-of-day gate evaluated in APP_TIMEZONE (Australia/Sydney).
+  // When provided, the rule only fires while the AEST/AEDT wall clock
+  // falls inside the window.
   if (rule.params.only_between != null) {
     if (!withinTimeWindow(dp.at, rule.params.only_between)) {
       return { fire: false };
@@ -220,15 +259,42 @@ function evaluateInactivity(
   };
 }
 
-function withinTimeWindow(iso: string, window: { from: string; to: string }): boolean {
-  const d = new Date(iso);
-  const minutes = d.getHours() * 60 + d.getMinutes();
+/** Resolves an ISO timestamp into an HH:mm in APP_TIMEZONE and tests
+ *  whether it falls inside the supplied window. Handles wraparound
+ *  (e.g. 22:00–06:00 spans midnight). */
+export function withinTimeWindow(iso: string, window: { from: string; to: string }): boolean {
+  const minutes = minutesInAppTz(iso);
+  if (minutes == null) return true;
   const fromM = parseHHMM(window.from);
   const toM = parseHHMM(window.to);
   if (fromM == null || toM == null) return true;
   if (fromM <= toM) return minutes >= fromM && minutes <= toM;
-  // Overnight window (e.g. 22:00-06:00) wraps midnight.
+  // Overnight window (e.g. 22:00–06:00) wraps midnight.
   return minutes >= fromM || minutes <= toM;
+}
+
+function minutesInAppTz(iso: string): number | null {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  // Intl is the only standards-compliant way to extract wall-clock
+  // hours/minutes in a non-runtime timezone. en-AU + 24-hour avoids the
+  // AM/PM split. Format gives parts like { hour: '14', minute: '07' }.
+  const parts = new Intl.DateTimeFormat('en-AU', {
+    timeZone: APP_TIMEZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+  let h = -1;
+  let m = -1;
+  for (const p of parts) {
+    if (p.type === 'hour') h = Number(p.value);
+    else if (p.type === 'minute') m = Number(p.value);
+  }
+  // Some en-AU implementations emit '24' for midnight; normalise.
+  if (h === 24) h = 0;
+  if (h < 0 || h > 23 || m < 0 || m > 59) return null;
+  return h * 60 + m;
 }
 
 function parseHHMM(s: string): number | null {
@@ -244,9 +310,9 @@ function parseHHMM(s: string): number | null {
 
 /** Standard ray-casting point-in-polygon. The polygon is defined by an
  *  ordered list of [x, y] vertices and is treated as implicitly closed
- *  (no need to repeat the first vertex). Edge cases: a point exactly on
- *  an edge can be reported either way; the prototype's polygons are
- *  hand-drawn so this rarely matters. */
+ *  (no need to repeat the first vertex). For lat/lng polygons the
+ *  caller passes [lng, lat] pairs (GeoJSON ordering) — same algorithm,
+ *  same correctness because the test is purely topological. */
 export function pointInPolygon(point: [number, number], polygon: [number, number][]): boolean {
   const [px, py] = point;
   let inside = false;

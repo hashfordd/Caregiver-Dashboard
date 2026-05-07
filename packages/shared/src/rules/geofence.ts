@@ -1,13 +1,13 @@
-// F9 → F11 contract. Locks the shape of `alert_rules.params` for
-// `type = 'zone'` rules with an outdoor (lat/lng) geofence.
+// F9 → F11 contract. GeoJSON outdoor polygon shape used by the
+// outdoor-zone branch of `ZoneParams` (see ./types.ts). The
+// surrounding indoor/outdoor unification was completed in Phase C; this
+// module now owns just the geometry shape + structural validators —
+// the rule-shape contract lives in `./types.ts` next to the indoor
+// counterpart.
 //
-// **Coordinate convention**: GeoJSON [lng, lat] — opposite of how humans
-// say it. Mapbox expects this order; F11's evaluator must read it the
-// same way. Don't drift.
-//
-// Indoor zones (canvas-coordinate polygons for "forbidden room", "bed
-// area" etc.) are deliberately not modelled here — they belong in F11's
-// rule taxonomy as a separate discriminated branch.
+// **Coordinate convention**: GeoJSON [lng, lat] — opposite of how
+// humans say it. Mapbox expects this order; the evaluator must read
+// it the same way. Don't drift.
 
 import { z } from 'zod';
 
@@ -20,28 +20,6 @@ export const GeofencePolygon = z.object({
   }),
 });
 export type GeofencePolygon = z.infer<typeof GeofencePolygon>;
-
-export const GeofenceMode = z.enum(['enter', 'exit']);
-export type GeofenceMode = z.infer<typeof GeofenceMode>;
-
-export const GeofenceParams = z.object({
-  geofence: GeofencePolygon,
-  /** 'enter' fires when the patient crosses INTO the polygon;
-   *  'exit' fires when they cross OUT. */
-  mode: GeofenceMode,
-  /** Per-rule cooldown override; falls back to severity default. */
-  cooldown_seconds: z.number().int().positive().optional(),
-});
-export type GeofenceParams = z.infer<typeof GeofenceParams>;
-
-export interface ZoneAlertRule {
-  id: string;
-  patient_id: string;
-  type: 'zone';
-  params: GeofenceParams;
-  severity: 'info' | 'warn' | 'critical';
-  enabled: boolean;
-}
 
 /** True if `polygon` has at least 3 distinct vertices and is properly
  *  closed (first === last). Cheap structural check used at write time;

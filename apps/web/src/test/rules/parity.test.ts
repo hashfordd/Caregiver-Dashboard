@@ -85,7 +85,7 @@ const ZONE_RULE: ZoneRule = {
   severity: 'critical',
   enabled: true,
   type: 'zone',
-  params: { polygon: SQUARE, direction: 'enter', dwell_seconds: 0 },
+  params: { space: 'indoor', polygon: SQUARE, direction: 'enter', dwell_seconds: 0 },
   created_at: '2026-05-06T00:00:00Z',
   updated_at: '2026-05-06T00:00:00Z',
 };

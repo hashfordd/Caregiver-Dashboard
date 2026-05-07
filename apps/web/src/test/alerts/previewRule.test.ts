@@ -73,6 +73,7 @@ const ZONE_RULE: ZoneRule = {
   enabled: true,
   type: 'zone',
   params: {
+    space: 'indoor',
     polygon: [
       [0, 0],
       [200, 0],

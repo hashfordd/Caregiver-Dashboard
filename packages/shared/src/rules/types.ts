@@ -4,26 +4,52 @@
 // drift between the engine and the preview is the failure mode the
 // CROSS_CUTTING §10 parity test guards against.
 //
-// V1 ships four types: zone, vitals, fall, inactivity. The
+// V1 ships four rule types: zone, vitals, fall, inactivity. The
 // repetitive_movement enum value exists in the migration but no card or
 // evaluator branch ships in V1; the BACKLOG records the deferral.
+//
+// Phase C: zone rules now discriminate on `space` to distinguish indoor
+// canvas polygons (floor-plan x_canvas/y_canvas) from outdoor geofences
+// (lat/lng GeoJSON). The two UIs (alerts/ZoneRuleCard and map/Outdoor
+// geofence editor) write to the same `alert_rules` row with `type='zone'`
+// but supply different `params` shapes; the evaluator dispatches on
+// `params.space`.
 
 import { z } from 'zod';
 import type { AlertSeverity } from '../db/alerts.ts';
 import type { EventRow, PositionEstimateRow, SensorReadingRow } from '../db/index.ts';
+import { GeofencePolygon } from './geofence.ts';
 
 // ─── per-rule param shapes (Zod for runtime validation in the UI) ────
 
-const ZoneParams = z.object({
-  /** Polygon in floor-plan canvas coordinates: [[x_canvas, y_canvas], ...].
+// Indoor zone: floor-plan canvas-pixel polygon. Patient must have
+// `position_estimate.mode === 'indoor'` and a non-null x_canvas/y_canvas.
+export const IndoorZoneParams = z.object({
+  space: z.literal('indoor'),
+  /** Polygon in canvas coords: [[x_canvas, y_canvas], ...].
    *  Closed implicitly (no need to repeat the first vertex at the end). */
   polygon: z.array(z.tuple([z.number(), z.number()])).min(3),
-  /** 'enter' fires on entering the polygon; 'exit' fires on leaving. */
+  /** 'enter' fires on entering; 'exit' fires on leaving. */
   direction: z.enum(['enter', 'exit']),
   /** Seconds the condition must hold continuously before firing. 0 = immediate. */
   dwell_seconds: z.number().int().nonnegative(),
   cooldown_seconds: z.number().int().positive().optional(),
 });
+export type IndoorZoneParams = z.infer<typeof IndoorZoneParams>;
+
+// Outdoor zone: GeoJSON-ordered (lng, lat) polygon. Patient must have
+// `position_estimate.mode === 'outdoor'` and non-null lat/lng.
+export const OutdoorZoneParams = z.object({
+  space: z.literal('outdoor'),
+  geofence: GeofencePolygon,
+  direction: z.enum(['enter', 'exit']),
+  /** Seconds the condition must hold continuously before firing. 0 = immediate. */
+  dwell_seconds: z.number().int().nonnegative().default(0),
+  cooldown_seconds: z.number().int().positive().optional(),
+});
+export type OutdoorZoneParams = z.infer<typeof OutdoorZoneParams>;
+
+export const ZoneParams = z.discriminatedUnion('space', [IndoorZoneParams, OutdoorZoneParams]);
 export type ZoneParams = z.infer<typeof ZoneParams>;
 
 const VitalsParams = z.object({
@@ -42,8 +68,8 @@ export type FallParams = z.infer<typeof FallParams>;
 
 const InactivityParams = z.object({
   inactive_minutes: z.number().int().positive(),
-  /** Optional time-of-day window (caregiver-local) in HH:mm-HH:mm form;
-   *  fires only when 'now' falls inside the window. */
+  /** Optional time-of-day window evaluated in AEST (Australia/Sydney);
+   *  fires only when 'now' falls inside the window. HH:mm-HH:mm form. */
   only_between: z.object({ from: z.string(), to: z.string() }).optional(),
   /** Canvas-pixel distance below which a position change does not count
    *  as motion. Defaults to MOTION_FLOOR_PX in evaluate.ts. */

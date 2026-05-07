@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  GeofenceParams,
   GeofencePolygon,
   isClosedPolygon,
   isSimplePolygon,
+  OutdoorZoneParams,
 } from '@alzcare/shared/rules';
 
 const SQUARE: GeofencePolygon = {
@@ -62,25 +62,29 @@ describe('GeofencePolygon contract', () => {
   });
 });
 
-describe('GeofenceParams Zod schema', () => {
-  it('parses a valid params payload', () => {
-    const parsed = GeofenceParams.safeParse({
+describe('OutdoorZoneParams Zod schema', () => {
+  it('parses a valid outdoor params payload', () => {
+    const parsed = OutdoorZoneParams.safeParse({
+      space: 'outdoor',
       geofence: SQUARE,
-      mode: 'exit',
+      direction: 'exit',
+      dwell_seconds: 0,
     });
     expect(parsed.success).toBe(true);
   });
 
-  it('rejects unknown mode values', () => {
-    const parsed = GeofenceParams.safeParse({
+  it('rejects unknown direction values', () => {
+    const parsed = OutdoorZoneParams.safeParse({
+      space: 'outdoor',
       geofence: SQUARE,
-      mode: 'sideways',
+      direction: 'sideways',
     });
     expect(parsed.success).toBe(false);
   });
 
   it('rejects polygons with too few vertices', () => {
-    const parsed = GeofenceParams.safeParse({
+    const parsed = OutdoorZoneParams.safeParse({
+      space: 'outdoor',
       geofence: {
         type: 'polygon',
         coordinates: [
@@ -88,14 +92,26 @@ describe('GeofenceParams Zod schema', () => {
           [1, 1],
         ],
       },
-      mode: 'enter',
+      direction: 'enter',
     });
     expect(parsed.success).toBe(false);
   });
 
   it('round-trips coordinates without loss', () => {
-    const params = { geofence: SQUARE, mode: 'enter' as const };
-    const parsed = GeofenceParams.parse(params);
+    const parsed = OutdoorZoneParams.parse({
+      space: 'outdoor',
+      geofence: SQUARE,
+      direction: 'enter',
+    });
     expect(parsed.geofence.coordinates).toEqual(SQUARE.coordinates);
+  });
+
+  it('defaults dwell_seconds to 0 when omitted', () => {
+    const parsed = OutdoorZoneParams.parse({
+      space: 'outdoor',
+      geofence: SQUARE,
+      direction: 'enter',
+    });
+    expect(parsed.dwell_seconds).toBe(0);
   });
 });

@@ -92,7 +92,7 @@ function zoneRule(overrides: Partial<ZoneRule> = {}): ZoneRule {
     severity: 'warn',
     enabled: true,
     type: 'zone',
-    params: { polygon: SQUARE, direction: 'enter', dwell_seconds: 0 },
+    params: { space: 'indoor', polygon: SQUARE, direction: 'enter', dwell_seconds: 0 },
     created_at: '2026-05-06T00:00:00Z',
     updated_at: '2026-05-06T00:00:00Z',
     ...overrides,
@@ -231,7 +231,9 @@ describe('evaluateRule (zone)', () => {
 
   it('fires on exit when direction=exit and the patient just left', () => {
     const result = evaluateRule(
-      zoneRule({ params: { polygon: SQUARE, direction: 'exit', dwell_seconds: 0 } }),
+      zoneRule({
+        params: { space: 'indoor', polygon: SQUARE, direction: 'exit', dwell_seconds: 0 },
+      }),
       { kind: 'position_estimate', row: positionEstimate({ x_canvas: 300, y_canvas: 300 }) },
       EMPTY_HISTORY,
     );
@@ -253,7 +255,7 @@ describe('evaluateRule (zone)', () => {
   it('with dwell_seconds > 0, fires only when the prior history confirms the condition for the full window', () => {
     const dwellSeconds = 5;
     const dwellRule = zoneRule({
-      params: { polygon: SQUARE, direction: 'enter', dwell_seconds: dwellSeconds },
+      params: { space: 'indoor', polygon: SQUARE, direction: 'enter', dwell_seconds: dwellSeconds },
     });
     // Newest first; 5 + 1 rows covers the window with a comfortable margin.
     const positions: PositionEstimateRow[] = [
@@ -307,7 +309,7 @@ describe('evaluateRule (zone)', () => {
 
   it('with dwell_seconds > 0, suppresses if the patient was outside during the window', () => {
     const dwellRule = zoneRule({
-      params: { polygon: SQUARE, direction: 'enter', dwell_seconds: 5 },
+      params: { space: 'indoor', polygon: SQUARE, direction: 'enter', dwell_seconds: 5 },
     });
     const positions: PositionEstimateRow[] = [
       positionEstimate({

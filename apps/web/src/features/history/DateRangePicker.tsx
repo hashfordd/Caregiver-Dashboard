@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { APP_TIMEZONE } from '@alzcare/shared';
 import { cn } from '@/lib/utils';
 import { computeRange, type DateRange, type RangePreset } from './types';
 
@@ -21,14 +22,14 @@ const LABELS: Record<RangePreset, string> = {
 };
 
 export function DateRangePicker({ value, onChange, presets = ALL_PRESETS }: Props) {
-  const [customFrom, setCustomFrom] = useState(() => toLocalInput(value.from));
-  const [customTo, setCustomTo] = useState(() => toLocalInput(value.to));
+  const [customFrom, setCustomFrom] = useState(() => toAppTzInput(value.from));
+  const [customTo, setCustomTo] = useState(() => toAppTzInput(value.to));
 
   // Keep the inputs in sync when an outside change shifts the range
   // (e.g. switching presets pushes recomputed bounds back here).
   useEffect(() => {
-    setCustomFrom(toLocalInput(value.from));
-    setCustomTo(toLocalInput(value.to));
+    setCustomFrom(toAppTzInput(value.from));
+    setCustomTo(toAppTzInput(value.to));
   }, [value.from, value.to]);
 
   const selectPreset = (preset: RangePreset) => {
@@ -41,8 +42,8 @@ export function DateRangePicker({ value, onChange, presets = ALL_PRESETS }: Prop
   };
 
   const applyCustom = () => {
-    const fromIso = fromLocalInput(customFrom);
-    const toIso = fromLocalInput(customTo);
+    const fromIso = fromAppTzInput(customFrom);
+    const toIso = fromAppTzInput(customTo);
     if (!fromIso || !toIso) return;
     onChange({ preset: 'custom', from: fromIso, to: toIso });
   };
@@ -99,23 +100,81 @@ export function DateRangePicker({ value, onChange, presets = ALL_PRESETS }: Prop
           </button>
         </div>
       )}
+      <span
+        className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground"
+        aria-label="Times shown in Australian Eastern time"
+      >
+        AEST
+      </span>
     </div>
   );
 }
 
 // `<input type="datetime-local">` works in the browser's local timezone
-// with no offset suffix; the date-range stores ISO 8601 UTC, so we
-// translate at the boundary.
-function toLocalInput(iso: string): string {
+// with no offset suffix. The application's canonical timezone is AEST
+// (APP_TIMEZONE = Australia/Sydney), so we translate at the boundary:
+// ISO 8601 UTC ↔ AEST wall-clock string accepted by datetime-local.
+
+function toAppTzInput(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  const tzOffsetMs = d.getTimezoneOffset() * 60_000;
-  return new Date(d.getTime() - tzOffsetMs).toISOString().slice(0, 16);
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: APP_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+  const lookup: Record<string, string> = {};
+  for (const p of parts) lookup[p.type] = p.value;
+  // en-CA emits dates as YYYY-MM-DD which is exactly what datetime-local
+  // needs. Hour can be '24' for midnight in some impls — normalise.
+  const hour = lookup.hour === '24' ? '00' : (lookup.hour ?? '00');
+  return `${lookup.year}-${lookup.month}-${lookup.day}T${hour}:${lookup.minute}`;
 }
 
-function fromLocalInput(value: string): string | null {
+function fromAppTzInput(value: string): string | null {
   if (!value) return null;
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toISOString();
+  // Walk-clock string in AEST → UTC ISO. The datetime-local string has
+  // no timezone marker; we reconstruct the UTC instant by looking up
+  // AEST's offset at that wall-clock time (offset varies with DST).
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+  if (!m) return null;
+  const [_, y, mo, d, h, mi] = m;
+  // Construct a UTC instant guess and ask Intl for AEST's offset at
+  // that instant; correct the guess by that offset.
+  const utcGuessMs = Date.UTC(+y!, +mo! - 1, +d!, +h!, +mi!);
+  const offsetMs = appTzOffsetMs(utcGuessMs);
+  const trueMs = utcGuessMs - offsetMs;
+  const result = new Date(trueMs);
+  if (Number.isNaN(result.getTime())) return null;
+  return result.toISOString();
+}
+
+function appTzOffsetMs(epochMs: number): number {
+  const d = new Date(epochMs);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: APP_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+  const lookup: Record<string, string> = {};
+  for (const p of parts) lookup[p.type] = p.value;
+  const hour = lookup.hour === '24' ? '00' : (lookup.hour ?? '00');
+  const tzMs = Date.UTC(
+    Number(lookup.year),
+    Number(lookup.month) - 1,
+    Number(lookup.day),
+    Number(hour),
+    Number(lookup.minute),
+    Number(lookup.second ?? '0'),
+  );
+  return tzMs - epochMs;
 }

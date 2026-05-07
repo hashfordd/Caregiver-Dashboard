@@ -9,7 +9,9 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { hasMapboxToken, mapboxToken } from '@/lib/env';
 import { ModeIndicator } from '@/features/floor-plan/ModeIndicator';
 import type { PositionEstimateRow } from '@/lib/usePatientStream';
-import type { GeofenceMode, GeofencePolygon } from '@alzcare/shared/rules';
+import type { GeofencePolygon } from '@alzcare/shared/rules';
+
+type GeofenceDirection = 'enter' | 'exit';
 import { Breadcrumb } from './Breadcrumb';
 import { GeofenceLayer } from './GeofenceLayer';
 import { PatientPin } from './PatientPin';
@@ -45,14 +47,14 @@ function OutdoorMapViewBody({ patientId, estimate }: OutdoorMapViewProps) {
   const nowMs = useNow(5_000);
   const [editing, setEditing] = useState(false);
   const [draftPolygon, setDraftPolygon] = useState<GeofencePolygon | null>(null);
-  const [draftMode, setDraftMode] = useState<GeofenceMode>('exit');
+  const [draftDirection, setDraftDirection] = useState<GeofenceDirection>('exit');
   const [mapRef, setMapRef] = useState<MapRef | null>(null);
 
   // Sync the draft polygon with the persisted one when the server-side
   // rule changes (initial load, or another tab updating it).
   useEffect(() => {
     setDraftPolygon(geofenceQuery.data?.params.geofence ?? null);
-    setDraftMode(geofenceQuery.data?.params.mode ?? 'exit');
+    setDraftDirection(geofenceQuery.data?.params.direction ?? 'exit');
   }, [geofenceQuery.data]);
 
   // Fly to the latest fix when one arrives. Only re-fly when the
@@ -95,8 +97,8 @@ function OutdoorMapViewBody({ patientId, estimate }: OutdoorMapViewProps) {
           {editing ? (
             <>
               <select
-                value={draftMode}
-                onChange={(e) => setDraftMode(e.target.value as GeofenceMode)}
+                value={draftDirection}
+                onChange={(e) => setDraftDirection(e.target.value as GeofenceDirection)}
                 className="h-9 rounded-md border border-border bg-background px-2 text-sm"
               >
                 <option value="exit">Alert on exit</option>
@@ -112,7 +114,7 @@ function OutdoorMapViewBody({ patientId, estimate }: OutdoorMapViewProps) {
                       patientId,
                       ruleId: geofenceQuery.data?.id,
                       polygon: draftPolygon,
-                      mode: draftMode,
+                      direction: draftDirection,
                     },
                     { onSuccess: () => setEditing(false) },
                   );

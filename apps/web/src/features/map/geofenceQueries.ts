@@ -1,56 +1,58 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  GeofenceParams,
   isClosedPolygon,
   isSimplePolygon,
+  OutdoorZoneParams,
   type GeofencePolygon,
+  type OutdoorZoneParams as OutdoorZoneParamsT,
 } from '@alzcare/shared/rules';
 import { supabase } from '@/lib/supabase';
 
-/** F9 surface: read/write the patient's single outdoor zone rule. The
- *  schema allows multiple zone rules per patient (F11 will use that for
- *  multiple geofences) but F9's UI is scoped to one — the most recent
- *  enabled outdoor polygon. */
+/** F9 surface: read/write the patient's single outdoor geofence rule.
+ *
+ *  Phase C: zone rules now discriminate on `params.space`. The outdoor
+ *  branch carries `{ space: 'outdoor', geofence, direction, dwell_seconds }`
+ *  and is interchangeable with the indoor canvas branch at the row
+ *  level — both write `type='zone'` rows. The fetch here filters by
+ *  shape (validates `OutdoorZoneParams`) so the F9 UI only sees outdoor
+ *  geofences. */
 
-export interface ZoneRuleRow {
+export interface OutdoorZoneRuleRow {
   id: string;
   patient_id: string;
   type: 'zone';
-  params: GeofenceParams;
+  params: OutdoorZoneParamsT;
   severity: 'info' | 'warn' | 'critical';
   enabled: boolean;
 }
 
 export function useGeofenceRule(patientId: string) {
   return useQuery({
-    queryKey: ['alert_rules', 'zone', patientId],
+    queryKey: ['alert_rules', 'zone', 'outdoor', patientId],
     queryFn: () => fetchOutdoorZoneRule(patientId),
   });
 }
 
-async function fetchOutdoorZoneRule(patientId: string): Promise<ZoneRuleRow | null> {
+async function fetchOutdoorZoneRule(patientId: string): Promise<OutdoorZoneRuleRow | null> {
   const { data, error } = await supabase
     .from('alert_rules')
     .select('id, patient_id, type, params, severity, enabled')
     .eq('patient_id', patientId)
     .eq('type', 'zone')
-    .order('updated_at', { ascending: false })
-    .limit(1);
+    .order('updated_at', { ascending: false });
   if (error) throw error;
-  const row = (data ?? [])[0] as
-    | {
-        id: string;
-        patient_id: string;
-        type: 'zone';
-        params: unknown;
-        severity: ZoneRuleRow['severity'];
-        enabled: boolean;
-      }
-    | undefined;
-  if (!row) return null;
-  const parsed = GeofenceParams.safeParse(row.params);
-  if (!parsed.success) return null; // Row exists but isn't an outdoor geofence shape — ignore.
-  return { ...row, params: parsed.data };
+  for (const row of (data ?? []) as Array<{
+    id: string;
+    patient_id: string;
+    type: 'zone';
+    params: unknown;
+    severity: OutdoorZoneRuleRow['severity'];
+    enabled: boolean;
+  }>) {
+    const parsed = OutdoorZoneParams.safeParse(row.params);
+    if (parsed.success) return { ...row, params: parsed.data };
+  }
+  return null;
 }
 
 export interface UpsertGeofenceInput {
@@ -58,20 +60,33 @@ export interface UpsertGeofenceInput {
   /** Existing rule id when editing; omit when creating. */
   ruleId?: string;
   polygon: GeofencePolygon;
-  mode: GeofenceParams['mode'];
+  direction: 'enter' | 'exit';
+  /** Defaults to 0 (immediate). */
+  dwell_seconds?: number;
 }
 
 export function useUpsertGeofence() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ patientId, ruleId, polygon, mode }: UpsertGeofenceInput) => {
+    mutationFn: async ({
+      patientId,
+      ruleId,
+      polygon,
+      direction,
+      dwell_seconds,
+    }: UpsertGeofenceInput) => {
       if (!isClosedPolygon(polygon)) {
         throw new Error('Polygon must have ≥ 3 vertices and be closed.');
       }
       if (!isSimplePolygon(polygon)) {
         throw new Error('Polygon must not self-intersect.');
       }
-      const params: GeofenceParams = { geofence: polygon, mode };
+      const params: OutdoorZoneParamsT = {
+        space: 'outdoor',
+        geofence: polygon,
+        direction,
+        dwell_seconds: dwell_seconds ?? 0,
+      };
       if (ruleId) {
         const { data, error } = await supabase
           .from('alert_rules')
@@ -97,7 +112,8 @@ export function useUpsertGeofence() {
       return data;
     },
     onSuccess: (_data, vars) => {
-      qc.invalidateQueries({ queryKey: ['alert_rules', 'zone', vars.patientId] });
+      qc.invalidateQueries({ queryKey: ['alert_rules', 'zone', 'outdoor', vars.patientId] });
+      qc.invalidateQueries({ queryKey: ['alert_rules', 'patient', vars.patientId] });
     },
   });
 }
@@ -111,7 +127,8 @@ export function useDeleteGeofence() {
       return { patientId };
     },
     onSuccess: (data) => {
-      qc.invalidateQueries({ queryKey: ['alert_rules', 'zone', data.patientId] });
+      qc.invalidateQueries({ queryKey: ['alert_rules', 'zone', 'outdoor', data.patientId] });
+      qc.invalidateQueries({ queryKey: ['alert_rules', 'patient', data.patientId] });
     },
   });
 }
