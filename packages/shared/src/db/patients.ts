@@ -5,7 +5,7 @@ export const Patient = z.object({
   full_name: z.string().min(1),
   dob: z.string().date().nullable(),
   description: z.string().nullable(),
-  primary_caregiver_id: z.string().uuid().nullable(),
+  care_provider_id: z.string().uuid(),
   created_at: z.string().datetime(),
 });
 export type Patient = z.infer<typeof Patient>;

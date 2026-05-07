@@ -14,7 +14,7 @@ import { CreatePatientDialog } from '@/features/patients/CreatePatientDialog';
 async function fetchRoster(): Promise<Patient[]> {
   const { data, error } = await supabase
     .from('patients')
-    .select('id, full_name, dob, description, primary_caregiver_id, created_at')
+    .select('id, full_name, dob, description, care_provider_id, created_at')
     .order('full_name', { ascending: true });
   if (error) throw error;
   return (data ?? []) as Patient[];

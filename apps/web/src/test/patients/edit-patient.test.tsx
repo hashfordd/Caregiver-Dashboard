@@ -23,7 +23,7 @@ const PATIENT: Patient = {
   full_name: 'Alice Patient',
   dob: '1950-04-12',
   description: 'Likes morning walks',
-  primary_caregiver_id: null,
+  care_provider_id: '99999999-9999-9999-9999-999999999999',
   created_at: '2026-01-01T00:00:00Z',
 };
 

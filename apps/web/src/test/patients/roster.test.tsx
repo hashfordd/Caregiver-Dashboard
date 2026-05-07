@@ -61,7 +61,7 @@ describe('RosterPage', () => {
           full_name: 'Alice Patient',
           dob: null,
           description: null,
-          primary_caregiver_id: null,
+          care_provider_id: '99999999-9999-9999-9999-999999999999',
           created_at: '2026-01-01T00:00:00Z',
         },
         {
@@ -69,7 +69,7 @@ describe('RosterPage', () => {
           full_name: 'Bob Patient',
           dob: '1950-01-01',
           description: 'A note',
-          primary_caregiver_id: null,
+          care_provider_id: '99999999-9999-9999-9999-999999999999',
           created_at: '2026-01-01T00:00:00Z',
         },
       ],

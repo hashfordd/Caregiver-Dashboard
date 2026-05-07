@@ -59,7 +59,7 @@ export function EditPatientDialog({ open, onOpenChange, patient }: Props) {
           description: values.description || null,
         })
         .eq('id', patient.id)
-        .select('id, full_name, dob, description, primary_caregiver_id, created_at')
+        .select('id, full_name, dob, description, care_provider_id, created_at')
         .single();
       if (error) throw error;
       return data as Patient;
