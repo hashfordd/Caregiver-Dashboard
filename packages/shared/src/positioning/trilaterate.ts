@@ -14,14 +14,21 @@
 // stage uses the residual to weight trilateration vs. fingerprinting.
 //
 // Pure function. No globals, no logging.
+//
+// Phase G item 59: the colinearity threshold is now expressed in
+// real-world m² and converted to pixels² at solve time, so a
+// 100 px/m floor plan and a 25 px/m floor plan reject the same
+// geometric arrangements. Previously the fixed 1 px² constant
+// over-rejected on dense canvases and under-rejected on sparse ones.
 
 import type { BeaconDistance, TrilaterationResult } from './types.ts';
 
-/** Minimum triangle area (canvas-pixels²) before the three beacons are
- *  considered colinear and the solve is rejected. Empirical: at our
- *  typical 50 px/m scale, 1 px² ≈ 4 cm² of real-world arrangement;
- *  beacons that close to a line give pathological solutions. */
-const COLINEARITY_EPSILON_PX2 = 1.0;
+/** Minimum triangle area (real-world m²) before the three beacons are
+ *  considered colinear and the solve is rejected. 4 cm² (0.04 m × 0.1 m
+ *  triangle base × height) gives a hard floor on geometric quality
+ *  regardless of canvas scale. The check converts this to canvas-px²
+ *  using `scaleMetersPerPixel` at solve time. */
+const COLINEARITY_EPSILON_M2 = 4e-4;
 
 /** Reject solutions whose RMS residual exceeds this many metres. A
  *  residual that high means the three measured distances can't be
@@ -52,13 +59,17 @@ export function trilaterate(
   const top3 = [...beaconDistances].sort((a, b) => b.rssi - a.rssi).slice(0, 3);
   const [b1, b2, b3] = top3 as [BeaconDistance, BeaconDistance, BeaconDistance];
 
-  // Reject colinear arrangements via signed triangle area.
+  // Reject colinear arrangements via signed triangle area. The
+  // threshold is fixed in real-world m² and converted to px² so
+  // canvases with different scales reject the same physical
+  // arrangements (item 59).
+  const epsilonPx2 = COLINEARITY_EPSILON_M2 / (scaleMetersPerPixel * scaleMetersPerPixel);
   const area2 = Math.abs(
     b1.x_canvas * (b2.y_canvas - b3.y_canvas) +
       b2.x_canvas * (b3.y_canvas - b1.y_canvas) +
       b3.x_canvas * (b1.y_canvas - b2.y_canvas),
   );
-  if (area2 / 2 < COLINEARITY_EPSILON_PX2) return null;
+  if (area2 / 2 < epsilonPx2) return null;
 
   // Convert distances to canvas pixels for the solve.
   const r1 = b1.distance_m / scaleMetersPerPixel;

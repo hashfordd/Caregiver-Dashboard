@@ -27,6 +27,15 @@
 // all-null rows degrades to the V1 single-tick decision. As new rows
 // land, hysteresis kicks in naturally.
 //
+// Phase G item 55: cold-start exception. When `recentEstimates.length
+// === 0` (no priors yet — first tick after install / reinstall /
+// position_estimates wipe), hysteresis can't gather evidence, and the
+// previous default ("hold at indoor") meant a patient walking out the
+// door for the first time would have their first ~5 s of outdoor
+// estimates persisted as bogus indoor canvas coords. With no history
+// to defend, accept the current candidate immediately if it's
+// non-neutral.
+//
 // Pure function.
 
 import type { GpsFix } from '../mqtt/signals.ts';
@@ -70,12 +79,21 @@ export function decideMode(input: DecideModeInput): ModeDecision {
   const gpsStrong = isGpsStrong(input.gpsFix);
   const indoorConfidence = input.indoorConfidence;
 
-  // Most-recent applied mode is whatever the last persisted row says;
-  // if there is no history, default to indoor (the steady state at app
-  // launch — F9 only matters once GPS engages).
-  const previousAppliedMode = input.recentEstimates[0]?.mode ?? 'indoor';
-
   const currentCandidate = classify(gpsStrong, indoorConfidence);
+
+  // Phase G item 55: cold-start exception. With zero priors, the
+  // hysteresis window can't accumulate evidence, so accept whatever
+  // the current tick says. A non-neutral candidate flips immediately;
+  // a neutral candidate falls through to the legacy default ('indoor').
+  if (input.recentEstimates.length === 0) {
+    if (currentCandidate !== 'neutral') {
+      return { mode: currentCandidate, indoorConfidence, gpsStrong };
+    }
+    return { mode: 'indoor', indoorConfidence, gpsStrong };
+  }
+
+  // Most-recent applied mode is whatever the last persisted row says.
+  const previousAppliedMode = input.recentEstimates[0]!.mode;
 
   // Either the current candidate doesn't pull, or it agrees with the
   // already-applied mode → no flip possible. Just hold.

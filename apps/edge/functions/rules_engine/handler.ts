@@ -21,6 +21,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   AlertRuleParams,
+  EventRow as EventRowSchema,
+  PositionEstimateRow as PositionEstimateRowSchema,
+  SensorReadingRow as SensorReadingRowSchema,
   evaluateRule,
   withinCooldown,
   type AlertRule,
@@ -32,6 +35,15 @@ import {
   type SensorReadingRow,
   type ZoneRule,
 } from './_shared/index.ts';
+
+/** Phase G item 62: constant-time string compare so a timing oracle on
+ *  the service-role key isn't possible. */
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return mismatch === 0;
+}
 
 interface HandlerEnv {
   serviceRoleKey: string;
@@ -73,7 +85,8 @@ export async function handleRulesEngineRequest(
   if (req.method !== 'POST') return json({ ok: false, error: 'method_not_allowed' }, 405);
 
   const auth = req.headers.get('authorization') ?? req.headers.get('Authorization');
-  if (auth !== `Bearer ${env.serviceRoleKey}`) {
+  const expected = `Bearer ${env.serviceRoleKey}`;
+  if (auth == null || !timingSafeEqual(auth, expected)) {
     return json({ ok: false, error: 'unauthorized' }, 401);
   }
 
@@ -98,10 +111,25 @@ export async function handleRulesEngineRequest(
     return json({ ok: false, error: 'missing_patient_id' }, 400);
   }
 
-  // Build the data point from the webhook row. The webhook delivers the
-  // raw column values; we trust the shape since the webhook only fires
-  // on rows we wrote ourselves.
-  const dataPoint = buildDataPoint(table, payload.record);
+  // Phase G item 64: zod-validate the webhook record against the
+  // shared row schema before treating it as a typed input. The bridge
+  // and any future source could in principle deliver a malformed
+  // payload (the webhook trigger function does no shape check); a bad
+  // record now produces a 200 skipped response with a warn rather than
+  // a runtime crash mid-evaluator.
+  const validated = validateRecord(table, payload.record);
+  if (!validated.ok) {
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        msg: 'rules_engine: webhook record failed schema validation',
+        table,
+        issues: validated.issues,
+      }),
+    );
+    return json({ ok: true, skipped: true, reason: 'invalid_record', table }, 200);
+  }
+  const dataPoint = buildDataPoint(table, validated.row);
 
   // Fetch enabled rules for the patient that match the candidate type
   // set (one round-trip per webhook).
@@ -111,7 +139,7 @@ export async function handleRulesEngineRequest(
     .eq('patient_id', patientId)
     .eq('enabled', true)
     .in('type', candidateTypes);
-  if (rulesRes.error) return dbError('alert_rules', rulesRes.error.message);
+  if (rulesRes.error) return dbError('alert_rules', rulesRes.error);
 
   const rawRules = (rulesRes.data ?? []) as Array<{
     id: string;
@@ -156,7 +184,7 @@ export async function handleRulesEngineRequest(
       .order('fired_at', { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (lastFiredRes.error) return dbError('alerts (cooldown)', lastFiredRes.error.message);
+    if (lastFiredRes.error) return dbError('alerts', lastFiredRes.error);
     const lastFiredAt = (lastFiredRes.data as { fired_at: string } | null)?.fired_at ?? null;
     const nowIso = dataPointAt(dataPoint);
     if (withinCooldown(rule, lastFiredAt, nowIso)) {
@@ -179,8 +207,16 @@ export async function handleRulesEngineRequest(
       outcomes.push({
         rule_id: rule.id,
         decision: 'insert_failed',
-        details: insertRes.error?.message ?? 'no row returned',
+        details: 'insert_failed',
       });
+      console.error(
+        JSON.stringify({
+          level: 'error',
+          msg: 'rules_engine: alert insert failed',
+          rule_id: rule.id,
+          err: insertRes.error?.message ?? 'no row returned',
+        }),
+      );
       continue;
     }
     outcomes.push({
@@ -203,6 +239,33 @@ function buildDataPoint(table: WebhookTable, record: Record<string, unknown>): D
       return { kind: 'position_estimate', row: record as unknown as PositionEstimateRow };
     case 'events':
       return { kind: 'event', row: record as unknown as EventRow };
+  }
+}
+
+/** Phase G item 64: webhook-record validation. The trigger function in
+ *  the migration emits raw `to_jsonb(new)` payloads with no shape
+ *  guarantees beyond the column types. This gate makes sure the row
+ *  matches the Zod schema we'll feed the evaluator before pretending
+ *  it's typed. */
+type ValidateOutcome = { ok: true; row: Record<string, unknown> } | { ok: false; issues: unknown };
+
+function validateRecord(table: WebhookTable, record: Record<string, unknown>): ValidateOutcome {
+  switch (table) {
+    case 'sensor_readings': {
+      const r = SensorReadingRowSchema.safeParse(record);
+      if (!r.success) return { ok: false, issues: r.error.issues };
+      return { ok: true, row: r.data as unknown as Record<string, unknown> };
+    }
+    case 'position_estimates': {
+      const r = PositionEstimateRowSchema.safeParse(record);
+      if (!r.success) return { ok: false, issues: r.error.issues };
+      return { ok: true, row: r.data as unknown as Record<string, unknown> };
+    }
+    case 'events': {
+      const r = EventRowSchema.safeParse(record);
+      if (!r.success) return { ok: false, issues: r.error.issues };
+      return { ok: true, row: r.data as unknown as Record<string, unknown> };
+    }
   }
 }
 
@@ -305,6 +368,28 @@ function json(body: unknown, status: number): Response {
   });
 }
 
-function dbError(table: string, details: string, status: number = 500): Response {
-  return json({ ok: false, error: 'db_error', table, details }, status);
+/** Phase G item 63: server-side log gets the full diagnostic; the wire
+ *  response only carries a stable error code so Postgres internals
+ *  don't leak. */
+function dbError(
+  table: string,
+  err: { message?: string; code?: string; details?: string; hint?: string } | Error,
+  status: number = 500,
+): Response {
+  const msg = (err as Error).message ?? '';
+  const code = (err as { code?: string }).code;
+  const details = (err as { details?: string }).details;
+  const hint = (err as { hint?: string }).hint;
+  console.error(
+    JSON.stringify({
+      level: 'error',
+      msg: 'rules_engine: db error',
+      table,
+      code,
+      details,
+      hint,
+      err: msg,
+    }),
+  );
+  return json({ ok: false, error: 'db_error', table }, status);
 }

@@ -10,6 +10,17 @@
 // Side effect: one position_estimates row insert via the service-role
 // client. Tests inject a mocked Supabase that records insert payloads
 // without touching a real DB.
+//
+// Phase G updates:
+//   - item 62: bearer check uses a constant-time string compare so a
+//     timing oracle on the service-role key isn't possible.
+//   - item 63: error responses no longer leak Postgres details to the
+//     wire. Stable error codes go in the body; full diagnostics go to
+//     server-side console.error only.
+//   - item 66: the row INSERT goes through the
+//     `insert_position_estimate_locked` SECURITY DEFINER RPC which
+//     gates on a per-patient advisory lock. Concurrent estimator calls
+//     for the same patient skip cleanly with `skipped: 'concurrent'`.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { SignalsMessage } from './_shared/mqtt/index.ts';
@@ -23,9 +34,20 @@ import {
 const RECENT_ESTIMATES_LIMIT = 6; // smoothing uses 5; POS-08 hysteresis needs ≥ 4 priors
 
 interface HandlerEnv {
-  /** Service-role bearer the bridge must send. Compared by exact
+  /** Service-role bearer the bridge must send. Compared by timing-safe
    *  string match in addition to verify_jwt = true on the function. */
   serviceRoleKey: string;
+}
+
+/** Constant-time string compare. JS's `===` short-circuits on the
+ *  first byte mismatch, leaking length-of-equal-prefix to a remote
+ *  attacker via response timing. Walking every byte regardless of
+ *  result removes the oracle. */
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return mismatch === 0;
 }
 
 export async function handlePositionEstimateRequest(
@@ -36,7 +58,8 @@ export async function handlePositionEstimateRequest(
   if (req.method !== 'POST') return json({ ok: false, error: 'method_not_allowed' }, 405);
 
   const auth = req.headers.get('authorization') ?? req.headers.get('Authorization');
-  if (auth !== `Bearer ${env.serviceRoleKey}`) {
+  const expected = `Bearer ${env.serviceRoleKey}`;
+  if (auth == null || !timingSafeEqual(auth, expected)) {
     return json({ ok: false, error: 'unauthorized' }, 401);
   }
 
@@ -53,14 +76,11 @@ export async function handlePositionEstimateRequest(
   }
   const m = validation.data;
 
-  // Beacons for this patient. We let the orchestrator filter null
-  // x_canvas / y_canvas client-side so the pipeline's pure-function
-  // contract isn't leaked into the SQL.
   const beaconsRes = await supabase
     .from('beacons')
     .select('id, patient_id, floor_plan_id, mac_address, x_canvas, y_canvas, tx_power, rssi_at_1m')
     .eq('patient_id', m.patient_id);
-  if (beaconsRes.error) return dbError('beacons', beaconsRes.error.message);
+  if (beaconsRes.error) return dbError('beacons', beaconsRes.error);
 
   const allBeacons = (beaconsRes.data ?? []) as BeaconRow[];
   const placedBeacons = allBeacons.filter((b) => b.x_canvas != null && b.y_canvas != null);
@@ -68,10 +88,6 @@ export async function handlePositionEstimateRequest(
     return json({ ok: true, skipped: true, reason: 'no_beacons' }, 200);
   }
 
-  // Determine the active floor plan. Prefer the floor_plan_id any
-  // placed beacon already references (they're always all on the same
-  // plan in V1 — a multi-plan patient would invalidate that). Fall
-  // back to the patient's most recent floor_plans row.
   const beaconPlanId = placedBeacons.find((b) => b.floor_plan_id != null)?.floor_plan_id ?? null;
   let floorPlanId = beaconPlanId;
   if (floorPlanId == null) {
@@ -79,24 +95,21 @@ export async function handlePositionEstimateRequest(
       .from('floor_plans')
       .select('id')
       .eq('patient_id', m.patient_id)
-      .order('created_at', { ascending: false })
-      .limit(1)
+      .eq('is_active', true)
       .maybeSingle();
-    if (planRes.error) return dbError('floor_plans', planRes.error.message);
+    if (planRes.error) return dbError('floor_plans', planRes.error);
     floorPlanId = (planRes.data as { id: string } | null)?.id ?? null;
   }
   if (floorPlanId == null) {
     return json({ ok: true, skipped: true, reason: 'no_floor_plan' }, 200);
   }
 
-  // Scale is required for trilateration's metres↔pixels conversion.
-  // Without it, the pipeline can't produce a meaningful canvas position.
   const scaleRes = await supabase
     .from('floor_plans')
     .select('scale_meters_per_pixel')
     .eq('id', floorPlanId)
     .single();
-  if (scaleRes.error) return dbError('floor_plans', scaleRes.error.message);
+  if (scaleRes.error) return dbError('floor_plans', scaleRes.error);
   const scaleMetersPerPixel = (scaleRes.data as { scale_meters_per_pixel: number | null })
     .scale_meters_per_pixel;
   if (
@@ -111,7 +124,7 @@ export async function handlePositionEstimateRequest(
     .from('calibration_points')
     .select('id, floor_plan_id, x_canvas, y_canvas, ble_signature, wifi_signature, captured_at')
     .eq('floor_plan_id', floorPlanId);
-  if (calRes.error) return dbError('calibration_points', calRes.error.message);
+  if (calRes.error) return dbError('calibration_points', calRes.error);
   const calibrationPoints = (calRes.data ?? []) as CalibrationPoint[];
 
   const recentRes = await supabase
@@ -120,7 +133,7 @@ export async function handlePositionEstimateRequest(
     .eq('patient_id', m.patient_id)
     .order('recorded_at', { ascending: false })
     .limit(RECENT_ESTIMATES_LIMIT);
-  if (recentRes.error) return dbError('position_estimates', recentRes.error.message);
+  if (recentRes.error) return dbError('position_estimates', recentRes.error);
   const recentEstimates = (recentRes.data ?? []) as RecentEstimate[];
 
   const result = runPositionPipeline({
@@ -135,29 +148,40 @@ export async function handlePositionEstimateRequest(
     return json({ ok: true, skipped: true, reason: 'no_signal' }, 200);
   }
 
-  const insertRes = await supabase
-    .from('position_estimates')
-    .insert({
-      patient_id: m.patient_id,
-      recorded_at: result.recorded_at,
-      mode: result.mode,
-      x_canvas: result.x_canvas,
-      y_canvas: result.y_canvas,
-      lat: result.lat,
-      lng: result.lng,
-      confidence: result.confidence,
-      indoor_confidence: result.indoor_confidence,
-      gps_strong: result.gps_strong,
-    })
-    .select('id')
-    .single();
-  if (insertRes.error || !insertRes.data) {
-    return dbError('position_estimates', insertRes.error?.message ?? 'no row returned', 500);
+  // Phase G item 66: serialised insert via SECURITY DEFINER RPC. The
+  // function holds a per-patient advisory lock for its own transaction
+  // so two parallel estimator calls for the same patient produce
+  // ordered inserts (preserving POS-08 anti-flap), not interleaved
+  // ones. SQLSTATE 55P03 ('lock_not_available' shape) signals
+  // contention; we map that to a 200 skipped response so the bridge
+  // doesn't retry.
+  const lockedInsert = await supabase.rpc('insert_position_estimate_locked', {
+    p_patient_id: m.patient_id,
+    p_recorded_at: result.recorded_at,
+    p_mode: result.mode,
+    p_x_canvas: result.x_canvas,
+    p_y_canvas: result.y_canvas,
+    p_lat: result.lat,
+    p_lng: result.lng,
+    p_confidence: result.confidence,
+    p_indoor_confidence: result.indoor_confidence,
+    p_gps_strong: result.gps_strong,
+  });
+  if (lockedInsert.error) {
+    if (lockedInsert.error.code === '55P03') {
+      return json({ ok: true, skipped: true, reason: 'concurrent' }, 200);
+    }
+    return dbError('position_estimates', lockedInsert.error);
   }
+  const newId = lockedInsert.data as string | null;
+  if (!newId) {
+    return dbError('position_estimates', new Error('rpc returned no id'));
+  }
+
   return json(
     {
       ok: true,
-      position_estimate_id: (insertRes.data as { id: string }).id,
+      position_estimate_id: newId,
       mode: result.mode,
       confidence: result.confidence,
     },
@@ -172,6 +196,29 @@ function json(body: unknown, status: number): Response {
   });
 }
 
-function dbError(table: string, details: string, status: number = 500): Response {
-  return json({ ok: false, error: 'db_error', table, details }, status);
+/** Phase G item 63: server-side log gets the full diagnostic payload;
+ *  the wire response only carries a stable error code. Postgres
+ *  details (constraint names, table internals) never leave the
+ *  function's logs. */
+function dbError(
+  table: string,
+  err: { message?: string; code?: string; details?: string; hint?: string } | Error,
+  status: number = 500,
+): Response {
+  const msg = (err as Error).message ?? '';
+  const code = (err as { code?: string }).code;
+  const details = (err as { details?: string }).details;
+  const hint = (err as { hint?: string }).hint;
+  console.error(
+    JSON.stringify({
+      level: 'error',
+      msg: 'position_estimator: db error',
+      table,
+      code,
+      details,
+      hint,
+      err: msg,
+    }),
+  );
+  return json({ ok: false, error: 'db_error', table }, status);
 }

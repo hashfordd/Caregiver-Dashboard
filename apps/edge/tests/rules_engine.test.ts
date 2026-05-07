@@ -182,7 +182,7 @@ describe('rules_engine handler — auth + payload shape', () => {
 describe('rules_engine handler — vitals dispatch', () => {
   it('inserts an alert when a vitals rule fires', async () => {
     const sensorRow = {
-      id: 'sr-1',
+      id: '11111111-aaaa-bbbb-cccc-111111111111',
       patient_id: PATIENT_ID,
       device_id: DEVICE_ID,
       recorded_at: '2026-05-06T10:00:00Z',
@@ -214,7 +214,7 @@ describe('rules_engine handler — vitals dispatch', () => {
 
   it('does not fire when the value is inside the range', async () => {
     const sensorRow = {
-      id: 'sr-2',
+      id: '22222222-aaaa-bbbb-cccc-222222222222',
       patient_id: PATIENT_ID,
       device_id: DEVICE_ID,
       recorded_at: '2026-05-06T10:00:00Z',
@@ -239,7 +239,7 @@ describe('rules_engine handler — vitals dispatch', () => {
 
   it('suppresses when within cooldown of an unacked prior firing', async () => {
     const sensorRow = {
-      id: 'sr-3',
+      id: '33333333-aaaa-bbbb-cccc-333333333333',
       patient_id: PATIENT_ID,
       device_id: DEVICE_ID,
       recorded_at: '2026-05-06T10:01:00Z',
@@ -268,7 +268,7 @@ describe('rules_engine handler — vitals dispatch', () => {
 describe('rules_engine handler — fall dispatch', () => {
   it('inserts an alert when an events row of type=fall arrives', async () => {
     const eventRow = {
-      id: 'ev-1',
+      id: '44444444-aaaa-bbbb-cccc-444444444444',
       patient_id: PATIENT_ID,
       device_id: DEVICE_ID,
       occurred_at: '2026-05-06T10:00:00Z',
@@ -293,7 +293,7 @@ describe('rules_engine handler — fall dispatch', () => {
 
   it('does not fire for non-fall events', async () => {
     const eventRow = {
-      id: 'ev-2',
+      id: '55555555-aaaa-bbbb-cccc-555555555555',
       patient_id: PATIENT_ID,
       device_id: DEVICE_ID,
       occurred_at: '2026-05-06T10:00:00Z',

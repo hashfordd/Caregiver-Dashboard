@@ -8,7 +8,7 @@ const DEVICE_ID = '22222222-2222-2222-2222-222222222222';
 interface SupabaseMock extends SupabaseClient {
   __sensorInsertMock: ReturnType<typeof vi.fn>;
   __sensorSingleMock: ReturnType<typeof vi.fn>;
-  __eventsInsertMock: ReturnType<typeof vi.fn>;
+  __eventsUpsertMock: ReturnType<typeof vi.fn>;
   __eventsSingleMock: ReturnType<typeof vi.fn>;
   __devicesUpdateMock: ReturnType<typeof vi.fn>;
   __devicesEqMock: ReturnType<typeof vi.fn>;
@@ -23,17 +23,18 @@ function buildSupabase(): SupabaseMock {
   const sensorInsertMock = vi.fn(() => ({
     select: vi.fn(() => ({ single: sensorSingleMock })),
   }));
-  // F11: events branch persists. Default to success; individual tests
-  // override __eventsSingleMock to drive the error path.
+  // Phase G item 65: events branch now uses upsert with onConflict for
+  // idempotency. Default to success; individual tests override
+  // __eventsSingleMock to drive the error path.
   const eventsSingleMock = vi.fn().mockResolvedValue({ data: { id: 'ev-1' }, error: null });
-  const eventsInsertMock = vi.fn(() => ({
+  const eventsUpsertMock = vi.fn(() => ({
     select: vi.fn(() => ({ single: eventsSingleMock })),
   }));
   const devicesEqMock = vi.fn().mockResolvedValue({ error: null });
   const devicesUpdateMock = vi.fn(() => ({ eq: devicesEqMock }));
   const fromMock = vi.fn((table: string) => {
     if (table === 'sensor_readings') return { insert: sensorInsertMock };
-    if (table === 'events') return { insert: eventsInsertMock };
+    if (table === 'events') return { upsert: eventsUpsertMock };
     if (table === 'devices') return { update: devicesUpdateMock };
     return {};
   });
@@ -48,7 +49,7 @@ function buildSupabase(): SupabaseMock {
     channel: channelMock,
     __sensorInsertMock: sensorInsertMock,
     __sensorSingleMock: sensorSingleMock,
-    __eventsInsertMock: eventsInsertMock,
+    __eventsUpsertMock: eventsUpsertMock,
     __eventsSingleMock: eventsSingleMock,
     __devicesUpdateMock: devicesUpdateMock,
     __devicesEqMock: devicesEqMock,
@@ -333,8 +334,10 @@ describe('processMessage', () => {
 
     expect(outcome).toEqual({ kind: 'events', persisted: true, rowId: 'ev-1' });
     expect(supabase.__fromMock).toHaveBeenCalledWith('events');
-    expect(supabase.__eventsInsertMock).toHaveBeenCalledTimes(1);
-    expect(supabase.__eventsInsertMock).toHaveBeenCalledWith(
+    expect(supabase.__eventsUpsertMock).toHaveBeenCalledTimes(1);
+    // Phase G item 65: idempotent upsert with onConflict on the
+    // partial unique index covering (device_id, occurred_at, type).
+    expect(supabase.__eventsUpsertMock).toHaveBeenCalledWith(
       expect.objectContaining({
         patient_id: PATIENT_ID,
         device_id: DEVICE_ID,
@@ -342,6 +345,7 @@ describe('processMessage', () => {
         type: 'fall',
         payload: { reason: 'impact' },
       }),
+      expect.objectContaining({ onConflict: 'device_id,occurred_at,type' }),
     );
     expect(supabase.__sensorInsertMock).not.toHaveBeenCalled();
   });

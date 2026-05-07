@@ -193,15 +193,26 @@ export async function processMessage(
       };
     }
     const m = validation.data;
+    // Phase G item 65: idempotent insert. The bridge can re-receive
+    // an event (MQTT retry / replay-signals second pass / webhook
+    // redelivery) and a naive INSERT would create a duplicate fall
+    // alert. The partial unique index on (device_id, occurred_at,
+    // type) — added by 20260507500000_edge_correctness.sql — gives us
+    // a clean ON CONFLICT path. ignoreDuplicates: false means the
+    // duplicate row gets re-set with the same values (no-op) and the
+    // returning select hands back the existing id.
     const { data, error } = await supabase
       .from('events')
-      .insert({
-        patient_id: m.patient_id,
-        device_id: m.device_id,
-        occurred_at: m.occurred_at,
-        type: m.type,
-        payload: m.payload ?? {},
-      })
+      .upsert(
+        {
+          patient_id: m.patient_id,
+          device_id: m.device_id,
+          occurred_at: m.occurred_at,
+          type: m.type,
+          payload: m.payload ?? {},
+        },
+        { onConflict: 'device_id,occurred_at,type' },
+      )
       .select('id')
       .single();
     if (error || !data) {

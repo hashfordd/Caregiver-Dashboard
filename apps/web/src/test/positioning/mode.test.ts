@@ -38,14 +38,27 @@ describe('decideMode (POS-08 hysteresis: candidate-driven)', () => {
     expect(out.indoorConfidence).toBe(0.1);
   });
 
-  it('with no history, holds at indoor on a single strong-GPS + weak-indoor tick (hysteresis blocks the flip)', () => {
+  it('Phase G item 55: with no history, flips immediately on a cold-start outdoor candidate', () => {
+    // Pre-fix behaviour: held at indoor for the first ~5 s of an
+    // outdoor cold-start, persisting bogus indoor canvas coords.
+    // With the cold-start exception, hysteresis defers to the current
+    // tick when there are no priors to gather evidence from.
     const out = decideMode({
       recentEstimates: NO_RECENT,
       gpsFix: STRONG_GPS,
       indoorConfidence: 0.1,
     });
-    expect(out.mode).toBe('indoor');
+    expect(out.mode).toBe('outdoor');
     expect(out.gpsStrong).toBe(true);
+  });
+
+  it('Phase G item 55: with no history and a neutral candidate, defaults to indoor', () => {
+    const out = decideMode({
+      recentEstimates: NO_RECENT,
+      gpsFix: STRONG_GPS,
+      indoorConfidence: 0.9, // strong indoor + strong GPS = neutral
+    });
+    expect(out.mode).toBe('indoor');
   });
 
   it('flips to outdoor on the 5th consecutive outdoor candidate', () => {

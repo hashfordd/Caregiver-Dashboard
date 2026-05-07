@@ -38,7 +38,11 @@ describe('fuse', () => {
     expect(result!.y_canvas).toBeLessThan(140);
   });
 
-  it('blends 50/50 when both confidences are equal', () => {
+  it('blends 50/50 in coords when both confidences are equal; fused_confidence is the probabilistic OR', () => {
+    // Phase G item 58: fused_confidence is now `1 - (1-wT)*(1-wF)` so
+    // two 0.5-confidence signals yield 1 - 0.5 * 0.5 = 0.75 (each
+    // signal independently contributes evidence). Coordinate weights
+    // are still arithmetic.
     const result = fuse(
       { x_canvas: 0, y_canvas: 0, residual_m: 1 }, // conf 0.5
       { x_canvas: 100, y_canvas: 100, k_distance: 20 }, // conf 0.5
@@ -46,7 +50,17 @@ describe('fuse', () => {
     expect(result).not.toBeNull();
     expect(result!.x_canvas).toBeCloseTo(50, 5);
     expect(result!.y_canvas).toBeCloseTo(50, 5);
-    expect(result!.fused_confidence).toBe(0.5);
+    expect(result!.fused_confidence).toBeCloseTo(0.75, 5);
+  });
+
+  it('Phase G item 58: two strong signals reinforce — confidence > each input', () => {
+    // 0.9 wT, 0.9 wF → 1 - 0.1*0.1 = 0.99
+    const result = fuse(
+      { x_canvas: 0, y_canvas: 0, residual_m: 1 / 9 }, // conf ≈ 0.9
+      { x_canvas: 0, y_canvas: 0, k_distance: 20 / 9 }, // conf ≈ 0.9
+    );
+    expect(result).not.toBeNull();
+    expect(result!.fused_confidence).toBeGreaterThan(0.9);
   });
 
   it('clamps fused_confidence to [0, 1]', () => {

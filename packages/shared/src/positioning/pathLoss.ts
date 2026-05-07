@@ -6,10 +6,17 @@
 // which F6 was meant to capture during pairing but doesn't yet (the UI
 // flow is BACKLOGed). In its absence, the model substitutes
 // DEFAULT_RSSI_AT_1M (-59 dBm — the iBeacon datasheet midpoint) and
-// emits a one-time warning per call so the orchestrator can surface
+// emits a one-time warning per beacon so the orchestrator can surface
 // "calibration debt" in the F8 accuracy report.
 //
 // Pure functions only; no DB, no env reads.
+//
+// Phase G item 57: dedup is now process-lifetime, not per-call. The
+// previous per-call Set re-warned every tick at 1 Hz × N beacons,
+// flooding edge logs until F6 calibration UI lands. The dedup key is
+// the beacon id — once you've seen the warning for a given beacon,
+// you've seen it for the run. Tests that depend on the warning firing
+// can call __resetPathLossWarnings() in beforeEach.
 
 import type { BleSample } from '../mqtt/signals.ts';
 import type { BeaconDistance, BeaconRow } from './types.ts';
@@ -25,6 +32,16 @@ export const DEFAULT_PATH_LOSS_EXPONENT = 2.0;
  *  systematic error in the trilateration path until F6's beacon
  *  calibration UI lands — see BACKLOG. */
 export const DEFAULT_RSSI_AT_1M = -59;
+
+/** Module-level dedup so we warn at most once per beacon per process
+ *  lifetime. Reset via __resetPathLossWarnings() between tests. */
+const warnedBeaconIds = new Set<string>();
+
+/** Test-only: clear the cross-call warning dedup so a fresh run can
+ *  assert the warning fires. Production code never calls this. */
+export function __resetPathLossWarnings(): void {
+  warnedBeaconIds.clear();
+}
 
 /** Solve the log-distance model for a single beacon-sample pair.
  *
@@ -53,8 +70,8 @@ export function pathLossDistance(
  *  - Beacons with null `x_canvas` / `y_canvas` are dropped (placement
  *    not done; they have no canvas position to anchor to).
  *  - Beacons with null `rssi_at_1m` get DEFAULT_RSSI_AT_1M substituted
- *    and a console.warn is emitted once per call (deduplicated by
- *    beacon id) so log volume scales with distinct beacons, not ticks.
+ *    and a console.warn is emitted at most once per beacon for the
+ *    process lifetime (Phase G item 57).
  */
 export function rssiVectorToDistances(
   observation: BleSample[],
@@ -66,7 +83,6 @@ export function rssiVectorToDistances(
     if (Number.isFinite(sample.rssi)) rssiByMac.set(sample.mac, sample.rssi);
   }
   const out: BeaconDistance[] = [];
-  const warnedDefaults = new Set<string>();
   for (const beacon of beacons) {
     if (beacon.x_canvas == null || beacon.y_canvas == null) continue;
     const rssi = rssiByMac.get(beacon.mac_address);
@@ -74,8 +90,8 @@ export function rssiVectorToDistances(
     let rssi1m = beacon.rssi_at_1m;
     if (rssi1m == null) {
       rssi1m = DEFAULT_RSSI_AT_1M;
-      if (!warnedDefaults.has(beacon.id)) {
-        warnedDefaults.add(beacon.id);
+      if (!warnedBeaconIds.has(beacon.id)) {
+        warnedBeaconIds.add(beacon.id);
         console.warn(
           JSON.stringify({
             level: 'warn',

@@ -20,28 +20,31 @@ const VALID_SIGNALS = {
   wifi: [],
 };
 
-interface MockTable {
-  select: ReturnType<typeof vi.fn>;
-}
-
 /** Builds a Supabase mock that the handler can drive through. Each
  *  table's queries are programmable per-test via the `tables` map.
  *  Mirrors the chained-mock pattern in processMessage.test.ts but
  *  returns realistic shapes (data + error) at the leaves where the
- *  handler awaits. */
+ *  handler awaits.
+ *
+ *  Phase G item 66: the row INSERT moved from
+ *  `from('position_estimates').insert(...).select().single()` to
+ *  `rpc('insert_position_estimate_locked', { ... })` so the mock now
+ *  also surfaces an `rpc` method + a `rpcCalls` log.
+ */
 function buildSupabase(programming: {
-  beacons?: { data?: unknown; error?: { message: string } };
-  floorPlanFallback?: { data?: unknown; error?: { message: string } };
-  scale?: { data?: unknown; error?: { message: string } };
-  calibrations?: { data?: unknown; error?: { message: string } };
-  recentEstimates?: { data?: unknown; error?: { message: string } };
-  insertPosition?: { data?: unknown; error?: { message: string } };
+  beacons?: { data?: unknown; error?: { message: string; code?: string } };
+  floorPlanFallback?: { data?: unknown; error?: { message: string; code?: string } };
+  scale?: { data?: unknown; error?: { message: string; code?: string } };
+  calibrations?: { data?: unknown; error?: { message: string; code?: string } };
+  recentEstimates?: { data?: unknown; error?: { message: string; code?: string } };
+  insertPosition?: { data?: unknown; error?: { message: string; code?: string } };
 }): {
   client: SupabaseClient;
   calls: { table: string; method: string; args?: unknown[] }[];
-  insertPayloads: unknown[];
+  rpcCalls: { name: string; args: unknown }[];
 } {
   const calls: { table: string; method: string; args?: unknown[] }[] = [];
+  const rpcCalls: { name: string; args: unknown }[] = [];
 
   const beaconsResult = programming.beacons ?? { data: [], error: null };
   const fallbackResult = programming.floorPlanFallback ?? { data: null, error: null };
@@ -52,16 +55,10 @@ function buildSupabase(programming: {
   const calResult = programming.calibrations ?? { data: [], error: null };
   const recentResult = programming.recentEstimates ?? { data: [], error: null };
   const insertResult = programming.insertPosition ?? {
-    data: { id: 'pos-1' },
+    data: 'pos-1',
     error: null,
   };
-  const insertPayloads: unknown[] = [];
 
-  // Each call to .from(table) returns a fresh chainable builder. We
-  // record method invocations + arguments for assertions. The
-  // position_estimates branch is bimodal — it serves both the
-  // recent-estimates SELECT (chain ending in .order().limit()) and
-  // the result INSERT (chain starting with .insert().select().single()).
   const fromMock = vi.fn((table: string) => {
     calls.push({ table, method: 'from' });
     if (table === 'beacons') {
@@ -76,25 +73,21 @@ function buildSupabase(programming: {
       return makeChain(calls, table, async () => calResult);
     }
     if (table === 'position_estimates') {
-      const chain = makeChain(calls, table, async () => recentResult) as Record<
-        string,
-        (...args: unknown[]) => unknown
-      >;
-      chain.insert = (payload: unknown) => {
-        calls.push({ table, method: 'insert', args: [payload] });
-        insertPayloads.push(payload);
-        // .insert().select('id').single() — terminal returns insertResult.
-        return makeChain(calls, table, async () => insertResult);
-      };
-      return chain;
+      return makeChain(calls, table, async () => recentResult);
     }
     return makeChain(calls, table, async () => ({ data: [], error: null }));
   });
 
+  const rpcMock = vi.fn(async (name: string, args: unknown) => {
+    rpcCalls.push({ name, args });
+    if (name === 'insert_position_estimate_locked') return insertResult;
+    return { data: null, error: { message: `unmocked rpc: ${name}` } };
+  });
+
   return {
-    client: { from: fromMock } as unknown as SupabaseClient,
+    client: { from: fromMock, rpc: rpcMock } as unknown as SupabaseClient,
     calls,
-    insertPayloads,
+    rpcCalls,
   };
 }
 
@@ -194,8 +187,10 @@ function authedRequest(body: unknown): Request {
 
 describe('position_estimator handler', () => {
   let warnSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   it('returns 405 on non-POST', async () => {
@@ -291,8 +286,8 @@ describe('position_estimator handler', () => {
     expect(await res.json()).toMatchObject({ ok: true, skipped: true, reason: 'no_scale' });
   });
 
-  it('runs the pipeline + inserts the position_estimates row on a happy-path payload', async () => {
-    const { client, calls, insertPayloads } = buildSupabase({
+  it('runs the pipeline + calls insert_position_estimate_locked RPC on a happy-path payload', async () => {
+    const { client, calls, rpcCalls } = buildSupabase({
       beacons: {
         data: [
           placedBeacon('b-1', 'AA:01', 0, 0),
@@ -312,7 +307,7 @@ describe('position_estimator handler', () => {
         error: null,
       },
       recentEstimates: { data: [], error: null },
-      insertPosition: { data: { id: 'pos-from-mock' }, error: null },
+      insertPosition: { data: 'pos-from-mock', error: null },
     });
 
     const res = await handlePositionEstimateRequest(authedRequest(VALID_SIGNALS), client, {
@@ -342,18 +337,19 @@ describe('position_estimator handler', () => {
     const limitCalls = calls.filter((c) => c.method === 'limit');
     expect(limitCalls.some((c) => (c.args as unknown[])[0] === 6)).toBe(true);
 
-    // The insert payload carries the canonical row shape.
-    expect(insertPayloads).toHaveLength(1);
-    const inserted = insertPayloads[0] as Record<string, unknown>;
-    expect(inserted.patient_id).toBe(PATIENT_ID);
-    expect(inserted.recorded_at).toBe(VALID_SIGNALS.recorded_at);
-    expect(inserted.mode).toBe('indoor');
-    expect(inserted.x_canvas).toEqual(expect.any(Number));
-    expect(inserted.y_canvas).toEqual(expect.any(Number));
-    expect(inserted.confidence).toEqual(expect.any(Number));
+    // Phase G item 66: insert goes through the locked RPC, not direct .insert().
+    expect(rpcCalls).toHaveLength(1);
+    expect(rpcCalls[0]!.name).toBe('insert_position_estimate_locked');
+    const args = rpcCalls[0]!.args as Record<string, unknown>;
+    expect(args.p_patient_id).toBe(PATIENT_ID);
+    expect(args.p_recorded_at).toBe(VALID_SIGNALS.recorded_at);
+    expect(args.p_mode).toBe('indoor');
+    expect(args.p_x_canvas).toEqual(expect.any(Number));
+    expect(args.p_y_canvas).toEqual(expect.any(Number));
+    expect(args.p_confidence).toEqual(expect.any(Number));
   });
 
-  it('returns 500 db_error when the position_estimates insert fails', async () => {
+  it('returns 500 db_error (sanitised — no details on the wire) when the locked insert fails', async () => {
     const { client } = buildSupabase({
       beacons: {
         data: [
@@ -363,16 +359,44 @@ describe('position_estimator handler', () => {
         ],
         error: null,
       },
-      insertPosition: { data: null, error: { message: 'unique constraint' } },
+      insertPosition: { data: null, error: { message: 'unique constraint', code: '23505' } },
     });
     const res = await handlePositionEstimateRequest(authedRequest(VALID_SIGNALS), client, {
       serviceRoleKey: SERVICE_ROLE_KEY,
     });
     expect(res.status).toBe(500);
-    const body = (await res.json()) as { error: string; table: string; details: string };
+    const body = (await res.json()) as { error: string; table: string; details?: string };
+    // Phase G item 63: only stable error code on the wire; full
+    // diagnostics (including 'unique constraint') go to console.error.
     expect(body.error).toBe('db_error');
     expect(body.table).toBe('position_estimates');
-    expect(body.details).toBe('unique constraint');
+    expect(body.details).toBeUndefined();
+    expect(errorSpy).toHaveBeenCalled();
+    void warnSpy;
+  });
+
+  it('returns skipped=concurrent when a parallel estimator holds the per-patient lock', async () => {
+    const { client } = buildSupabase({
+      beacons: {
+        data: [
+          placedBeacon('b-1', 'AA:01', 0, 0),
+          placedBeacon('b-2', 'AA:02', 250, 0),
+          placedBeacon('b-3', 'AA:03', 125, 220),
+        ],
+        error: null,
+      },
+      // SQLSTATE 55P03 is the contract from insert_position_estimate_locked
+      // when its pg_try_advisory_xact_lock returns false.
+      insertPosition: {
+        data: null,
+        error: { message: 'concurrent_estimator', code: '55P03' },
+      },
+    });
+    const res = await handlePositionEstimateRequest(authedRequest(VALID_SIGNALS), client, {
+      serviceRoleKey: SERVICE_ROLE_KEY,
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, skipped: true, reason: 'concurrent' });
   });
 
   it('runs trilateration-only when no calibration points exist (no skip)', async () => {
@@ -418,7 +442,7 @@ describe('position_estimator handler', () => {
     expect(await res.json()).toMatchObject({ ok: true, skipped: true, reason: 'no_signal' });
   });
 
-  it('surfaces a db_error response when the beacons query fails', async () => {
+  it('surfaces a sanitised db_error response when the beacons query fails', async () => {
     const { client } = buildSupabase({
       beacons: { data: null, error: { message: 'connection lost' } },
     });
@@ -426,7 +450,13 @@ describe('position_estimator handler', () => {
       serviceRoleKey: SERVICE_ROLE_KEY,
     });
     expect(res.status).toBe(500);
-    const body = await res.json();
+    const body = (await res.json()) as {
+      ok: boolean;
+      error: string;
+      table: string;
+      details?: string;
+    };
     expect(body).toMatchObject({ ok: false, error: 'db_error', table: 'beacons' });
+    expect(body.details).toBeUndefined();
   });
 });

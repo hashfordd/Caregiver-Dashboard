@@ -4,9 +4,19 @@
 //   fingerprint_confidence = 1 / (1 + k_distance / 20)
 //   fused.x = (w_t*tx + w_f*fx) / (w_t + w_f)
 //   fused.y = (w_t*ty + w_f*fy) / (w_t + w_f)
-//   fused_confidence = (w_t + w_f) / 2  (clamped 0..1)
+//   fused_confidence = 1 - (1 - w_t) * (1 - w_f)   (probabilistic OR)
 //
 // Pure function.
+//
+// Phase G item 58: fused_confidence now uses the probabilistic-OR
+// shape (independence assumption: the two signals are independent
+// estimators, so the chance that *either* is right is 1 minus the
+// chance that *both* are wrong). The previous arithmetic mean
+// `(w_t + w_f) / 2` capped strong+strong at the average — two perfect
+// signals produced 1.0 only when each was perfect, but a single perfect
+// signal + a fairly strong one produced ~0.75 instead of ~0.95. The
+// audit flagged this as "doesn't actually reward agreement"; the
+// probabilistic OR does.
 
 import type { FingerprintResult, FusedResult, TrilaterationResult } from './types.ts';
 
@@ -35,19 +45,18 @@ export function fuse(
       fused_confidence: clamp01(conf),
     };
   }
-  // Both present — weighted average, then average the two confidences
-  // for the fused score (so two strong signals carry more weight than
-  // either alone, but a single strong + one weak doesn't get penalised
-  // by the weak one's contribution).
+  // Both present — weighted average over coordinates, probabilistic-OR
+  // over confidences. Two strong signals reinforce each other on the
+  // confidence side; two weak ones still produce a low confidence.
   const t = trilat!;
   const f = fingerprint!;
-  const wT = 1 / (1 + t.residual_m);
-  const wF = 1 / (1 + f.k_distance / FINGERPRINT_DISTANCE_SCALE);
+  const wT = clamp01(1 / (1 + t.residual_m));
+  const wF = clamp01(1 / (1 + f.k_distance / FINGERPRINT_DISTANCE_SCALE));
   const total = wT + wF;
   return {
     x_canvas: (wT * t.x_canvas + wF * f.x_canvas) / total,
     y_canvas: (wT * t.y_canvas + wF * f.y_canvas) / total,
-    fused_confidence: clamp01((wT + wF) / 2),
+    fused_confidence: clamp01(1 - (1 - wT) * (1 - wF)),
   };
 }
 

@@ -9,6 +9,16 @@
 //
 // Auth: same service-role bearer match as rules_engine.
 // Side effect: zero or more `alerts` row inserts.
+//
+// Phase G updates:
+//   - item 62: timing-safe bearer compare.
+//   - item 63: sanitised error responses (stable code on the wire,
+//     full diagnostics in console.error).
+//   - item 68: nowIso is captured once at the top and used for every
+//     downstream calculation. The previous code re-read Date.now()
+//     mid-loop, so a slow scan saw the lookback window slide
+//     underneath itself — late iterations missed the most-recent
+//     ticks.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
@@ -35,6 +45,13 @@ const POSITION_LOOKBACK_LIMIT = 200;
  *  `inactive_minutes` plus a small safety margin. Capped at 24 h. */
 const MAX_LOOKBACK_MINUTES = 24 * 60;
 
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return mismatch === 0;
+}
+
 export async function handleInactivityScan(
   req: Request,
   supabase: SupabaseClient,
@@ -43,18 +60,25 @@ export async function handleInactivityScan(
   if (req.method !== 'POST') return json({ ok: false, error: 'method_not_allowed' }, 405);
 
   const auth = req.headers.get('authorization') ?? req.headers.get('Authorization');
-  if (auth !== `Bearer ${env.serviceRoleKey}`) {
+  const expected = `Bearer ${env.serviceRoleKey}`;
+  if (auth == null || !timingSafeEqual(auth, expected)) {
     return json({ ok: false, error: 'unauthorized' }, 401);
   }
 
+  // Phase G item 68: capture wall-clock once. nowMs is the canonical
+  // reference for every per-rule lookback / cooldown / fired_at write
+  // in this scan — re-reading Date.now() inside the loop produces a
+  // sliding window where late iterations effectively miss the most-
+  // recent ticks.
   const nowIso = new Date().toISOString();
+  const nowMs = new Date(nowIso).getTime();
 
   const rulesRes = await supabase
     .from('alert_rules')
     .select('id, patient_id, type, params, severity, enabled, created_at, updated_at')
     .eq('type', 'inactivity')
     .eq('enabled', true);
-  if (rulesRes.error) return dbError('alert_rules', rulesRes.error.message);
+  if (rulesRes.error) return dbError('alert_rules', rulesRes.error);
 
   const rawRules = (rulesRes.data ?? []) as Array<{
     id: string;
@@ -89,7 +113,7 @@ export async function handleInactivityScan(
   const outcomes: ScanOutcome[] = [];
   for (const rule of rules) {
     const lookbackMinutes = Math.min(MAX_LOOKBACK_MINUTES, rule.params.inactive_minutes + 5);
-    const sinceIso = new Date(Date.now() - lookbackMinutes * 60_000).toISOString();
+    const sinceIso = new Date(nowMs - lookbackMinutes * 60_000).toISOString();
     const positionsRes = await supabase
       .from('position_estimates')
       .select(
@@ -103,8 +127,16 @@ export async function handleInactivityScan(
       outcomes.push({
         rule_id: rule.id,
         decision: 'no_match',
-        details: `position fetch failed: ${positionsRes.error.message}`,
+        details: 'position_fetch_failed',
       });
+      console.error(
+        JSON.stringify({
+          level: 'error',
+          msg: 'inactivity_scan: positions fetch failed',
+          rule_id: rule.id,
+          err: positionsRes.error.message,
+        }),
+      );
       continue;
     }
     const positions = (positionsRes.data ?? []) as PositionEstimateRow[];
@@ -137,8 +169,16 @@ export async function handleInactivityScan(
       outcomes.push({
         rule_id: rule.id,
         decision: 'no_match',
-        details: `cooldown query failed: ${lastFiredRes.error.message}`,
+        details: 'cooldown_query_failed',
       });
+      console.error(
+        JSON.stringify({
+          level: 'error',
+          msg: 'inactivity_scan: cooldown query failed',
+          rule_id: rule.id,
+          err: lastFiredRes.error.message,
+        }),
+      );
       continue;
     }
     const lastFiredAt = (lastFiredRes.data as { fired_at: string } | null)?.fired_at ?? null;
@@ -162,8 +202,16 @@ export async function handleInactivityScan(
       outcomes.push({
         rule_id: rule.id,
         decision: 'insert_failed',
-        details: insertRes.error?.message ?? 'no row returned',
+        details: 'insert_failed',
       });
+      console.error(
+        JSON.stringify({
+          level: 'error',
+          msg: 'inactivity_scan: alert insert failed',
+          rule_id: rule.id,
+          err: insertRes.error?.message ?? 'no row returned',
+        }),
+      );
       continue;
     }
     outcomes.push({
@@ -183,6 +231,25 @@ function json(body: unknown, status: number): Response {
   });
 }
 
-function dbError(table: string, details: string, status: number = 500): Response {
-  return json({ ok: false, error: 'db_error', table, details }, status);
+function dbError(
+  table: string,
+  err: { message?: string; code?: string; details?: string; hint?: string } | Error,
+  status: number = 500,
+): Response {
+  const msg = (err as Error).message ?? '';
+  const code = (err as { code?: string }).code;
+  const details = (err as { details?: string }).details;
+  const hint = (err as { hint?: string }).hint;
+  console.error(
+    JSON.stringify({
+      level: 'error',
+      msg: 'inactivity_scan: db error',
+      table,
+      code,
+      details,
+      hint,
+      err: msg,
+    }),
+  );
+  return json({ ok: false, error: 'db_error', table }, status);
 }

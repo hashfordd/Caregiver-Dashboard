@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   DEFAULT_PATH_LOSS_EXPONENT,
   DEFAULT_RSSI_AT_1M,
+  __resetPathLossWarnings,
   pathLossDistance,
   rssiVectorToDistances,
 } from '@alzcare/shared/positioning';
@@ -64,6 +65,9 @@ describe('rssiVectorToDistances', () => {
 
   beforeEach(() => {
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // Phase G item 57: dedup is now process-lifetime; reset between
+    // tests so each starts from a clean slate.
+    __resetPathLossWarnings();
   });
 
   afterEach(() => {
@@ -131,14 +135,15 @@ describe('rssiVectorToDistances', () => {
     expect(warnSpy).toHaveBeenCalledTimes(2);
   });
 
-  it('does not warn for the same beacon if invoked twice within the same call (it cannot be) — but DOES warn once per call across calls', () => {
-    // Two separate calls each emit their own warning — the dedup is
-    // per-call, not global. This documents the contract.
+  it('Phase G item 57: dedup is process-lifetime — invoking twice for the same beacon warns once', () => {
+    // The previous per-call dedup re-warned every tick at 1 Hz × N
+    // beacons until F6 calibration UI lands. Now the warning fires at
+    // most once per beacon for the run.
     const beacons = [beacon({ id: 'b-1', mac_address: 'AA:01', rssi_at_1m: null })];
     const obs: BleSample[] = [{ mac: 'AA:01', rssi: -59 }];
     rssiVectorToDistances(obs, beacons);
     rssiVectorToDistances(obs, beacons);
-    expect(warnSpy).toHaveBeenCalledTimes(2);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
   });
 
   it('drops samples with non-finite RSSI', () => {
