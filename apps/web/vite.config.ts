@@ -1,10 +1,16 @@
-/// <reference types="vitest" />
-import { defineConfig } from 'vite';
+import { defineConfig, type UserConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import path from 'node:path';
+import type { UserConfig as VitestUserConfig } from 'vitest/config';
 
-export default defineConfig({
+// Vitest 2.1.9 ships its own bundled copy of vite under .deno/, so importing
+// `defineConfig` from 'vitest/config' re-exports a typed config that
+// references a *different* Vite copy than the one our plugins resolve to.
+// Result: a Plugin<any> type-mismatch on `plugins:`. Cast the merged config
+// against vite's UserConfig + vitest's UserConfig['test'] to keep both sides
+// type-checked without dragging in the duplicate vite type tree.
+const config: UserConfig & { test: VitestUserConfig['test'] } = {
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
@@ -28,4 +34,6 @@ export default defineConfig({
     globals: true,
     include: ['src/**/*.test.{ts,tsx}'],
   },
-});
+};
+
+export default defineConfig(config);
