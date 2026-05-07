@@ -5,6 +5,7 @@ import {
   EyeOff,
   Lock,
   Maximize2,
+  MoreHorizontal,
   MousePointer2,
   Pencil,
   Pentagon,
@@ -157,65 +158,112 @@ export function Toolbar({
         </DropdownMenuContent>
       </DropdownMenu>
       <div className="mx-1 h-6 w-px bg-border" />
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={onUndo}
-        disabled={toolsDisabled}
-        aria-label="Undo (Cmd+Z)"
-        title="Undo (Cmd/Ctrl + Z)"
-      >
-        <Undo2 className="h-4 w-4" />
-      </Button>
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={onRedo}
-        disabled={toolsDisabled}
-        aria-label="Redo (Cmd+Shift+Z)"
-        title="Redo (Cmd/Ctrl + Shift + Z)"
-      >
-        <Redo2 className="h-4 w-4" />
-      </Button>
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={onDelete}
-        disabled={toolsDisabled}
-        aria-label="Delete selected"
-        title="Delete selected (Backspace)"
-      >
-        <Trash2 className="h-4 w-4" />
-      </Button>
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={onReset}
-        disabled={toolsDisabled || !canReset}
-        aria-label="Clear canvas"
-        title="Clear every wall, room, and furniture (undoable)"
-      >
-        <Eraser className="h-4 w-4" />
-      </Button>
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={onFitToContent}
-        aria-label="Fit to content"
-        title="Fit drawing to view"
-      >
-        <Maximize2 className="h-4 w-4" />
-      </Button>
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={onToggleDimensions}
-        aria-pressed={!showDimensions}
-        aria-label={showDimensions ? 'Hide dimensions' : 'Show dimensions'}
-        title={showDimensions ? 'Hide dimension labels' : 'Show dimension labels'}
-      >
-        {showDimensions ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-      </Button>
+      {/* Secondary actions — visible inline on md+, collapsed into a
+          "…" overflow dropdown under md so the toolbar fits on tablets. */}
+      <div className="hidden items-center gap-2 md:flex">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onUndo}
+          disabled={toolsDisabled}
+          aria-label="Undo (Cmd+Z)"
+          title="Undo (Cmd/Ctrl + Z)"
+        >
+          <Undo2 className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onRedo}
+          disabled={toolsDisabled}
+          aria-label="Redo (Cmd+Shift+Z)"
+          title="Redo (Cmd/Ctrl + Shift + Z)"
+        >
+          <Redo2 className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onDelete}
+          disabled={toolsDisabled}
+          aria-label="Delete selected"
+          title="Delete selected (Backspace)"
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onReset}
+          disabled={toolsDisabled || !canReset}
+          aria-label="Clear canvas"
+          title="Clear every wall, room, and furniture (undoable)"
+        >
+          <Eraser className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onFitToContent}
+          aria-label="Fit to content"
+          title="Fit drawing to view"
+        >
+          <Maximize2 className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onToggleDimensions}
+          aria-pressed={!showDimensions}
+          aria-label={showDimensions ? 'Hide dimensions' : 'Show dimensions'}
+          title={showDimensions ? 'Hide dimension labels' : 'Show dimension labels'}
+        >
+          {showDimensions ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+        </Button>
+      </div>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="md:hidden"
+            aria-label="More actions"
+            title="More actions"
+          >
+            <MoreHorizontal className="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
+          <DropdownMenuItem onSelect={onUndo} disabled={toolsDisabled}>
+            <Undo2 className="mr-2 h-4 w-4" />
+            Undo
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={onRedo} disabled={toolsDisabled}>
+            <Redo2 className="mr-2 h-4 w-4" />
+            Redo
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={onDelete} disabled={toolsDisabled}>
+            <Trash2 className="mr-2 h-4 w-4" />
+            Delete selected
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={onReset} disabled={toolsDisabled || !canReset}>
+            <Eraser className="mr-2 h-4 w-4" />
+            Clear canvas
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={onFitToContent}>
+            <Maximize2 className="mr-2 h-4 w-4" />
+            Fit to content
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={onToggleDimensions}>
+            {showDimensions ? (
+              <Eye className="mr-2 h-4 w-4" />
+            ) : (
+              <EyeOff className="mr-2 h-4 w-4" />
+            )}
+            {showDimensions ? 'Hide dimensions' : 'Show dimensions'}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
       <div className="mx-1 h-6 w-px bg-border" />
       <Button
         variant="outline"

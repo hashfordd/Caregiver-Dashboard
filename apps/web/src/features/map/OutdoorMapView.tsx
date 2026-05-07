@@ -168,7 +168,7 @@ function OutdoorMapViewBody({ patientId, estimate }: OutdoorMapViewProps) {
             </Button>
           )}
         </div>
-        <div className="h-[min(60vh,720px)] min-h-[480px] w-full overflow-hidden rounded-lg border border-border">
+        <div className="aspect-[4/3] max-h-[720px] min-h-[280px] sm:min-h-[420px] w-full overflow-hidden rounded-lg border border-border">
           <Map
             ref={(r) => setMapRef(r)}
             mapboxAccessToken={mapboxToken}

@@ -72,7 +72,7 @@ export function LivePositionView({ patientId }: LivePositionViewProps) {
     return (
       <div className="space-y-3">
         <Skeleton className="h-8 w-32" />
-        <Skeleton className="h-[min(60vh,720px)] min-h-[480px] w-full" />
+        <Skeleton className="aspect-[4/3] max-h-[720px] min-h-[280px] sm:min-h-[420px] w-full" />
       </div>
     );
   }
@@ -95,7 +95,7 @@ export function LivePositionView({ patientId }: LivePositionViewProps) {
           <h3 className="text-sm font-semibold text-foreground">Live position</h3>
           <ModeIndicator estimate={estimate} />
         </div>
-        <div className="h-[min(60vh,720px)] min-h-[480px] w-full overflow-hidden rounded-lg border border-border bg-card">
+        <div className="aspect-[4/3] max-h-[720px] min-h-[280px] sm:min-h-[420px] w-full overflow-hidden rounded-lg border border-border bg-card">
           {/* `initialMode="calibration"` is the F6/F7 read-only mode that
               renders placed beacons as visual context but keeps everything
               non-interactive (no drag, no click-to-add, just panning + zoom).
