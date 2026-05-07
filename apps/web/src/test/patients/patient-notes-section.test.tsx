@@ -11,20 +11,36 @@ const {
   orderMock,
   insertMock,
   selectInsertMock,
-  singleMock,
+  insertSingleMock,
+  updateMock,
+  eqUpdateMock,
+  selectUpdateMock,
+  updateSingleMock,
+  deleteMock,
+  eqDeleteMock,
   fromMock,
 } = vi.hoisted(() => {
   const orderMock = vi.fn();
   const eqListMock = vi.fn(() => ({ order: orderMock }));
   const selectListMock = vi.fn(() => ({ eq: eqListMock }));
 
-  const singleMock = vi.fn();
-  const selectInsertMock = vi.fn(() => ({ single: singleMock }));
+  const insertSingleMock = vi.fn();
+  const selectInsertMock = vi.fn(() => ({ single: insertSingleMock }));
   const insertMock = vi.fn(() => ({ select: selectInsertMock }));
 
-  const fromMock = vi.fn((_table: string) => ({
+  const updateSingleMock = vi.fn();
+  const selectUpdateMock = vi.fn(() => ({ single: updateSingleMock }));
+  const eqUpdateMock = vi.fn(() => ({ select: selectUpdateMock }));
+  const updateMock = vi.fn(() => ({ eq: eqUpdateMock }));
+
+  const eqDeleteMock = vi.fn();
+  const deleteMock = vi.fn(() => ({ eq: eqDeleteMock }));
+
+  const fromMock = vi.fn(() => ({
     select: selectListMock,
     insert: insertMock,
+    update: updateMock,
+    delete: deleteMock,
   }));
   return {
     selectListMock,
@@ -32,7 +48,13 @@ const {
     orderMock,
     insertMock,
     selectInsertMock,
-    singleMock,
+    insertSingleMock,
+    updateMock,
+    eqUpdateMock,
+    selectUpdateMock,
+    updateSingleMock,
+    deleteMock,
+    eqDeleteMock,
     fromMock,
   };
 });
@@ -67,13 +89,22 @@ function renderSection() {
   };
 }
 
-const NOTE: PatientNote = {
+const PEER_NOTE: PatientNote = {
   id: 'note-1',
   patient_id: PATIENT_ID,
   author_caregiver_id: 'caregiver-9',
-  author_name: 'Jane Doe',
   body: 'Patient slept well overnight.',
   created_at: '2026-05-01T10:30:00.000Z',
+  author: { full_name: 'Jane Doe' },
+};
+
+const OWN_NOTE: PatientNote = {
+  id: 'note-own',
+  patient_id: PATIENT_ID,
+  author_caregiver_id: 'caregiver-1',
+  body: 'My own note.',
+  created_at: '2026-05-02T08:00:00.000Z',
+  author: { full_name: 'Test Caregiver' },
 };
 
 beforeEach(() => {
@@ -83,15 +114,21 @@ beforeEach(() => {
   orderMock.mockReset();
   insertMock.mockClear();
   selectInsertMock.mockClear();
-  singleMock.mockReset();
+  insertSingleMock.mockReset();
+  updateMock.mockClear();
+  eqUpdateMock.mockClear();
+  selectUpdateMock.mockClear();
+  updateSingleMock.mockReset();
+  deleteMock.mockClear();
+  eqDeleteMock.mockReset();
 });
 
 describe('PatientNotesSection', () => {
-  it('renders the existing notes scoped to the patient', async () => {
-    orderMock.mockResolvedValue({ data: [NOTE], error: null });
+  it('renders the existing notes scoped to the patient (author resolved via embed)', async () => {
+    orderMock.mockResolvedValue({ data: [PEER_NOTE], error: null });
     renderSection();
 
-    expect(await screen.findByText(NOTE.body)).toBeInTheDocument();
+    expect(await screen.findByText(PEER_NOTE.body)).toBeInTheDocument();
     expect(screen.getByText(/jane doe/i)).toBeInTheDocument();
     expect(fromMock).toHaveBeenCalledWith('patient_notes');
     expect(eqListMock).toHaveBeenCalledWith('patient_id', PATIENT_ID);
@@ -113,17 +150,17 @@ describe('PatientNotesSection', () => {
     expect(insertMock).not.toHaveBeenCalled();
   });
 
-  it('inserts a new note with author metadata and refetches on success', async () => {
+  it('inserts a new note WITHOUT author_name (resolved server-side via embed) and refetches on success', async () => {
     orderMock.mockResolvedValue({ data: [], error: null });
-    singleMock.mockResolvedValue({
-      data: { ...NOTE, body: 'A fresh note', author_name: 'Test Caregiver' },
+    insertSingleMock.mockResolvedValue({
+      data: { ...OWN_NOTE, body: 'A fresh note' },
       error: null,
     });
     const { qc } = renderSection();
     const invalidateSpy = vi.spyOn(qc, 'invalidateQueries');
     await screen.findByText(/no notes yet/i);
 
-    fireEvent.change(screen.getByLabelText(/note body/i), {
+    fireEvent.change(screen.getByLabelText(/^note body$/i), {
       target: { value: '  A fresh note  ' },
     });
     fireEvent.click(screen.getByRole('button', { name: /add note/i }));
@@ -133,22 +170,67 @@ describe('PatientNotesSection', () => {
       patient_id: PATIENT_ID,
       body: 'A fresh note',
       author_caregiver_id: 'caregiver-1',
-      author_name: 'Test Caregiver',
     });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['patient-notes', PATIENT_ID] });
   });
 
   it('renders an inline error when the insert fails', async () => {
     orderMock.mockResolvedValue({ data: [], error: null });
-    singleMock.mockResolvedValue({ data: null, error: { message: 'rls denied insert' } });
+    insertSingleMock.mockResolvedValue({ data: null, error: { message: 'rls denied insert' } });
     renderSection();
     await screen.findByText(/no notes yet/i);
 
-    fireEvent.change(screen.getByLabelText(/note body/i), {
+    fireEvent.change(screen.getByLabelText(/^note body$/i), {
       target: { value: 'Something happened' },
     });
     fireEvent.click(screen.getByRole('button', { name: /add note/i }));
 
     expect(await screen.findByText(/rls denied insert/i)).toBeInTheDocument();
+  });
+
+  it("shows edit and delete affordances on the user's own notes only", async () => {
+    orderMock.mockResolvedValue({ data: [PEER_NOTE, OWN_NOTE], error: null });
+    renderSection();
+    await screen.findByText(OWN_NOTE.body);
+
+    // Own note exposes edit + delete buttons; peer note does not.
+    expect(screen.getAllByRole('button', { name: /edit note/i })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /delete note/i })).toHaveLength(1);
+  });
+
+  it('updates an own note via the edit form and invalidates the cache', async () => {
+    orderMock.mockResolvedValue({ data: [OWN_NOTE], error: null });
+    updateSingleMock.mockResolvedValue({
+      data: { ...OWN_NOTE, body: 'Edited body' },
+      error: null,
+    });
+    const { qc } = renderSection();
+    const invalidateSpy = vi.spyOn(qc, 'invalidateQueries');
+    await screen.findByText(OWN_NOTE.body);
+
+    fireEvent.click(screen.getByRole('button', { name: /edit note/i }));
+    fireEvent.change(screen.getByLabelText(/edit note body/i), {
+      target: { value: 'Edited body' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(updateMock).toHaveBeenCalledTimes(1));
+    expect(updateMock).toHaveBeenCalledWith({ body: 'Edited body' });
+    expect(eqUpdateMock).toHaveBeenCalledWith('id', OWN_NOTE.id);
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['patient-notes', PATIENT_ID] });
+  });
+
+  it('deletes an own note after a confirm step (optimistic remove)', async () => {
+    orderMock.mockResolvedValue({ data: [OWN_NOTE], error: null });
+    eqDeleteMock.mockResolvedValue({ data: null, error: null });
+    renderSection();
+    await screen.findByText(OWN_NOTE.body);
+
+    fireEvent.click(screen.getByRole('button', { name: /delete note/i }));
+    // Now the row exposes a Confirm button instead.
+    fireEvent.click(screen.getByRole('button', { name: /confirm/i }));
+
+    await waitFor(() => expect(deleteMock).toHaveBeenCalledTimes(1));
+    expect(eqDeleteMock).toHaveBeenCalledWith('id', OWN_NOTE.id);
   });
 });

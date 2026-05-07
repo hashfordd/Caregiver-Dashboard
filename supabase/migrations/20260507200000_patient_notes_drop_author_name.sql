@@ -1,0 +1,22 @@
+-- Phase C item 35: drop the patient_notes.author_name denormalised
+-- column in favour of resolving the author's full_name via PostgREST
+-- embed (caregivers!author_caregiver_id (full_name)) on read.
+--
+-- Why: author_name was being written client-side from
+-- user.user_metadata.full_name, which is *user-controllable* via
+-- supabase.auth.signUp({ options: { data: { full_name: '...' } }}).
+-- A logged-in caregiver could call supabase.auth.updateUser to change
+-- their own user_metadata.full_name, then write a note with any
+-- author_name they liked — the denormalised column allowed forging
+-- authorship strings that didn't match their caregivers row.
+--
+-- Resolution: remove the column entirely. The UI joins through
+-- caregivers (peer-readable inside the same provider, per the Phase B
+-- caregivers_self_or_peer_read policy) so the name comes from a single
+-- source of truth — the row that auth controls via the
+-- caregivers_self_update policy.
+--
+-- Safe drop: the live patient_notes table is empty in the dev project
+-- (verified before the migration was authored). Tests update in lockstep.
+
+alter table public.patient_notes drop column author_name;
