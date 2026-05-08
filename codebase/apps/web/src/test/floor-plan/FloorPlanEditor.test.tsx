@@ -85,6 +85,8 @@ function plan(overrides: Partial<FloorPlanRow> = {}): FloorPlanRow {
     canvas_json: { objects: [] },
     scale_meters_per_pixel: null,
     created_at: '2026-05-04T00:00:00Z',
+    updated_at: '2026-05-04T00:00:00Z',
+    is_active: true,
     ...overrides,
   };
 }

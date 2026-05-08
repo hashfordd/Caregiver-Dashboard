@@ -95,6 +95,8 @@ const PLAN: FloorPlanRow = {
   canvas_json: { objects: [] },
   scale_meters_per_pixel: 0.014,
   created_at: '2026-05-05T00:00:00Z',
+  updated_at: '2026-05-05T00:00:00Z',
+  is_active: true,
 };
 
 function beacon(overrides: Partial<BeaconRow> = {}): BeaconRow {

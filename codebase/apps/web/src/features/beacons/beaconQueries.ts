@@ -64,7 +64,13 @@ export function useUpdateBeaconPosition(patientId: string) {
 export interface UpdateBeaconCalibrationInput {
   id: string;
   rssi_at_1m: number;
-  tx_power: number;
+  // Item 126: tx_power optional. The dialog no longer writes it (the
+  // path-loss model only consumes rssi_at_1m, and the prior code
+  // collapsed two distinct concepts by writing the same captured value
+  // to both). Existing rows keep whatever was previously written; new
+  // captures only update rssi_at_1m. Future calibration flows that
+  // genuinely measure transmit power can supply this field.
+  tx_power?: number;
 }
 
 /** Writes the F8 path-loss calibration columns back to a beacon. Driven
@@ -73,9 +79,13 @@ export function useUpdateBeaconCalibration(patientId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: UpdateBeaconCalibrationInput): Promise<BeaconRow> => {
+      const payload: { rssi_at_1m: number; tx_power?: number } = {
+        rssi_at_1m: input.rssi_at_1m,
+      };
+      if (input.tx_power !== undefined) payload.tx_power = input.tx_power;
       const { data, error } = await supabase
         .from('beacons')
-        .update({ rssi_at_1m: input.rssi_at_1m, tx_power: input.tx_power })
+        .update(payload)
         .eq('id', input.id)
         .select(BEACON_COLUMNS)
         .single();
