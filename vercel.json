@@ -1,8 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "npm run build --workspace @alzcare/web",
-  "outputDirectory": "apps/web/dist",
-  "installCommand": "npm ci",
+  "installCommand": "cd codebase && npm ci",
+  "buildCommand": "cd codebase && npm run build --workspace @alzcare/web",
+  "outputDirectory": "codebase/apps/web/dist",
   "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }],
   "headers": [
     {
