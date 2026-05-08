@@ -1,5 +1,7 @@
 {
   "imports": {
+    "@alzcare/shared": "../../../packages/shared/src/index.ts",
+    "@alzcare/shared/mqtt": "../../../packages/shared/src/mqtt/index.ts",
     "zod": "npm:zod@3.23.8",
     "@supabase/supabase-js": "npm:@supabase/supabase-js@2.45.4"
   }

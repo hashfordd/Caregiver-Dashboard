@@ -26,6 +26,17 @@ import type { CalibrationPoint, FingerprintResult } from './types.ts';
  *  meaningfully poor matches. */
 export const MISSING_RSSI_FLOOR = -100;
 
+/** Module-level dedup so stub-empty calibration warnings fire at most
+ *  once per calibration id per process lifetime. Mirrors the pathLoss
+ *  pattern from Phase G item 57. */
+const _warnedStubIds = new Set<string>();
+
+/** Test-only: clear the cross-call warning dedup so a fresh run can
+ *  assert the warning fires. Production code never calls this. */
+export function __resetFingerprintWarnings(): void {
+  _warnedStubIds.clear();
+}
+
 /** Default k for kNN. F8.md spec value. */
 export const DEFAULT_K = 3;
 
@@ -50,12 +61,15 @@ export function fingerprintMatch(
 
   type Candidate = { x_canvas: number; y_canvas: number; rssi_distance: number };
   const candidates: Candidate[] = [];
-  const skippedStubs = new Set<string>();
+  const newStubIds: string[] = [];
   for (const cal of calibrationPoints) {
     const bleSamples = cal.ble_signature.samples;
     const wifiSamples = cal.wifi_signature.samples;
     if (bleSamples.length === 0 && wifiSamples.length === 0) {
-      skippedStubs.add(cal.id);
+      if (!_warnedStubIds.has(cal.id)) {
+        newStubIds.push(cal.id);
+        _warnedStubIds.add(cal.id);
+      }
       continue;
     }
     const calBle = new Map<string, number>();
@@ -85,13 +99,13 @@ export function fingerprintMatch(
     candidates.push({ x_canvas: cal.x_canvas, y_canvas: cal.y_canvas, rssi_distance });
   }
 
-  if (skippedStubs.size > 0) {
+  if (newStubIds.length > 0) {
     console.warn(
       JSON.stringify({
         level: 'warn',
         msg: 'positioning: skipped stub-empty calibration points',
-        count: skippedStubs.size,
-        ids: [...skippedStubs],
+        count: newStubIds.length,
+        ids: newStubIds,
       }),
     );
   }

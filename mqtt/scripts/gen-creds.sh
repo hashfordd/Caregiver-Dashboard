@@ -9,7 +9,16 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PASSWD="$DIR/passwd"
 ACL="$DIR/acl"
-PASSWORD="${MQTT_BRIDGE_PASSWORD:-bridgepass}"
+if [[ -n "${MQTT_BRIDGE_PASSWORD:-}" ]]; then
+  PASSWORD="$MQTT_BRIDGE_PASSWORD"
+  PASSWORD_SOURCE="from MQTT_BRIDGE_PASSWORD env var"
+else
+  # No env var supplied — generate a cryptographically random 24-character
+  # password. This is printed ONCE below; it is not stored anywhere beyond
+  # the passwd file that mosquitto_passwd writes. Save it now.
+  PASSWORD="$(openssl rand -base64 18)"
+  PASSWORD_SOURCE="auto-generated (save this — it will not be shown again)"
+fi
 
 if [[ -f "$PASSWD" && -f "$ACL" ]]; then
   echo "Mosquitto creds already exist at $DIR. Delete passwd / acl and re-run to regenerate."
@@ -26,7 +35,8 @@ cp "$DIR/acl.example" "$ACL"
 chmod 600 "$PASSWD"
 
 echo "Mosquitto credentials generated:"
-echo "  passwd: $PASSWD  (account: backend-bridge, password: $PASSWORD)"
-echo "  acl:    $ACL"
+echo "  passwd:   $PASSWD  (account: backend-bridge)"
+echo "  password: $PASSWORD  [$PASSWORD_SOURCE]"
+echo "  acl:      $ACL"
 echo
 echo "Restart the broker if it's already up: npm run broker:down && npm run broker:up"

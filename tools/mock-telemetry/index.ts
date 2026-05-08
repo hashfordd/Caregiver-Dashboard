@@ -70,7 +70,7 @@ const SERVICE_KEY = values['service-key'] ?? process.env.SB_SERVICE_KEY;
 const BRIDGE_URL = values['bridge-url'] ?? `${URL}/functions/v1/mqtt_bridge`;
 const MQTT_BROKER_URL = values['mqtt-broker-url'] ?? 'mqtt://127.0.0.1:1883';
 const MQTT_USERNAME = values['mqtt-username'] ?? 'backend-bridge';
-const MQTT_PASSWORD = values['mqtt-password'] ?? process.env.MQTT_BRIDGE_PASSWORD ?? 'bridgepass';
+const MQTT_PASSWORD = values['mqtt-password'] ?? process.env.MQTT_BRIDGE_PASSWORD ?? null;
 
 function fail(message: string): never {
   console.error(`mock-telemetry: ${message}`);
@@ -105,6 +105,8 @@ function assertLocalOrAllowed(label: string, raw: string): void {
 if (!PATIENT_ID) fail('--patient-id is required');
 if (!DEVICE_ID) fail('--device-id is required');
 if (!SERVICE_KEY) fail('SB_SERVICE_KEY env var or --service-key flag required');
+if (MODE === 'mqtt' && !MQTT_PASSWORD)
+  fail('MQTT_BRIDGE_PASSWORD env var or --mqtt-password flag is required for --mode mqtt');
 
 assertLocalOrAllowed('Supabase URL', URL);
 assertLocalOrAllowed('bridge URL', BRIDGE_URL);
@@ -207,7 +209,7 @@ function startMqtt(): Promise<mqtt.MqttClient> {
   return new Promise((resolve, reject) => {
     const client = mqtt.connect(MQTT_BROKER_URL, {
       username: MQTT_USERNAME,
-      password: MQTT_PASSWORD,
+      password: MQTT_PASSWORD ?? undefined,
       clientId: `mock-${(DEVICE_ID as string).slice(0, 8)}-${Date.now()}`,
       reconnectPeriod: 5000,
       keepalive: 30,

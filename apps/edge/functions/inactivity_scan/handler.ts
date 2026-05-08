@@ -26,8 +26,8 @@ import {
   evaluateRule,
   withinCooldown,
   type InactivityRule,
-  type PositionEstimateRow,
-} from './_shared/index.ts';
+} from '@alzcare/shared/rules';
+import type { PositionEstimateRow } from '@alzcare/shared/db';
 
 interface HandlerEnv {
   serviceRoleKey: string;

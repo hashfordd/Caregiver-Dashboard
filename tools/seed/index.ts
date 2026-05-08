@@ -44,7 +44,12 @@ const ANON_KEY = process.env.SB_ANON_KEY ?? 'sb_publishable_ACJWlzQHlZjBrEguHvfO
 const SERVICE_KEY = process.env.SB_SERVICE_KEY ?? '';
 
 const ADMIN_EMAIL = 'admin@bizzieapp.com';
-const ADMIN_PASSWORD = 'DemoPass123!';
+const _envPassword = process.env.SEED_ADMIN_PASSWORD;
+if (!_envPassword && !isLocalUrl(URL)) {
+  console.error('SEED_ADMIN_PASSWORD must be set when targeting a non-local Supabase URL');
+  process.exit(2);
+}
+const ADMIN_PASSWORD: string = _envPassword ?? 'DemoPass123!';
 const ADMIN_FULL_NAME = 'Harrison Ashford';
 const ADMIN_COMPANY = 'Riverside Care Network';
 

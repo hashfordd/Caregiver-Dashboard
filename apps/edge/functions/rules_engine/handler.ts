@@ -21,20 +21,22 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   AlertRuleParams,
-  EventRow as EventRowSchema,
-  PositionEstimateRow as PositionEstimateRowSchema,
-  SensorReadingRow as SensorReadingRowSchema,
   evaluateRule,
   withinCooldown,
   type AlertRule,
   type AlertRuleType,
   type DataPoint,
-  type EventRow,
   type HistoryWindow,
+  type ZoneRule,
+} from '@alzcare/shared/rules';
+import {
+  EventRow as EventRowSchema,
+  PositionEstimateRow as PositionEstimateRowSchema,
+  SensorReadingRow as SensorReadingRowSchema,
+  type EventRow,
   type PositionEstimateRow,
   type SensorReadingRow,
-  type ZoneRule,
-} from './_shared/index.ts';
+} from '@alzcare/shared/db';
 
 /** Phase G item 62: constant-time string compare so a timing oracle on
  *  the service-role key isn't possible. */
@@ -163,8 +165,20 @@ export async function handleRulesEngineRequest(
   // bounded window rather than per-rule queries.
   const history = await loadHistoryWindow(supabase, table, patientId, rules);
 
+  // Server time captured once per request — used as fired_at so all
+  // alerts in this dispatch share a coherent clock reference.
+  const serverNowIso = new Date().toISOString();
+
   const outcomes: DispatchOutcome[] = [];
   for (const rule of rules) {
+    // Item 90: skip data points that predate the rule's last edit. A
+    // 24 h replay of sensor data against a rule that was just edited
+    // would otherwise re-fire alerts that the edit was meant to reset.
+    if (new Date(dataPointAt(dataPoint)).getTime() < new Date(rule.updated_at).getTime()) {
+      outcomes.push({ rule_id: rule.id, decision: 'no_match' });
+      continue;
+    }
+
     const result = evaluateRule(rule, dataPoint, history);
     if (!result.fire) {
       outcomes.push({ rule_id: rule.id, decision: 'no_match' });
@@ -186,20 +200,21 @@ export async function handleRulesEngineRequest(
       .maybeSingle();
     if (lastFiredRes.error) return dbError('alerts', lastFiredRes.error);
     const lastFiredAt = (lastFiredRes.data as { fired_at: string } | null)?.fired_at ?? null;
-    const nowIso = dataPointAt(dataPoint);
-    if (withinCooldown(rule, lastFiredAt, nowIso)) {
+    if (withinCooldown(rule, lastFiredAt, serverNowIso)) {
       outcomes.push({ rule_id: rule.id, decision: 'cooldown_suppressed' });
       continue;
     }
 
+    // Item 90: fired_at is server time; the original data-point timestamp
+    // is preserved in context.data_point_at for downstream UIs.
     const insertRes = await supabase
       .from('alerts')
       .insert({
         patient_id: rule.patient_id,
         rule_id: rule.id,
         severity: result.severity,
-        fired_at: nowIso,
-        context: result.context,
+        fired_at: serverNowIso,
+        context: { ...result.context, data_point_at: dataPointAt(dataPoint) },
       })
       .select('id')
       .single();

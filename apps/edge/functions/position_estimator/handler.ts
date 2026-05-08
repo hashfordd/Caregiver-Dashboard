@@ -23,13 +23,13 @@
 //     for the same patient skip cleanly with `skipped: 'concurrent'`.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { SignalsMessage } from './_shared/mqtt/index.ts';
+import { SignalsMessage } from '@alzcare/shared/mqtt';
 import {
   runPositionPipeline,
   type BeaconRow,
   type CalibrationPoint,
   type RecentEstimate,
-} from './_shared/positioning/index.ts';
+} from '@alzcare/shared/positioning';
 
 const RECENT_ESTIMATES_LIMIT = 6; // smoothing uses 5; POS-08 hysteresis needs ≥ 4 priors
 

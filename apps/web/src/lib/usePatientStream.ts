@@ -3,6 +3,7 @@ import type { RealtimeChannel } from '@supabase/supabase-js';
 import type { SensorReadingRow } from '@alzcare/shared';
 import type { SignalsMessage } from '@alzcare/shared/mqtt';
 import { supabase } from '@/lib/supabase';
+import { subscribeWithRetry } from '@/lib/subscribeWithRetry';
 
 export type { SensorReadingRow, SignalsMessage };
 
@@ -24,6 +25,9 @@ export type { SensorReadingRow, SignalsMessage };
  * Without this, a transient WS drop during a long shift left the
  * dashboard silently disconnected — caregivers leave the tab open for
  * hours and a single hiccup would silence every alert.
+ *
+ * Item 91: reconnect logic extracted into subscribeWithRetry so
+ * useAllocatedAlerts and any future hooks get the same watchdog.
  */
 
 export interface PositionEstimateRow {
@@ -83,10 +87,6 @@ const INITIAL_LAST_SEEN: PatientStreamLastSeen = {
   signals: null,
 };
 
-const RECONNECT_BASE_MS = 5_000;
-const RECONNECT_MAX_MS = 30_000;
-const RECONNECT_MAX_ATTEMPTS = 6;
-
 export function usePatientStream(
   patientId: string | null,
   callbacks: PatientStreamCallbacks,
@@ -104,102 +104,51 @@ export function usePatientStream(
       return;
     }
 
-    let cancelled = false;
-    let activeChannel: RealtimeChannel | null = null;
     let signalsChannel: RealtimeChannel | null = null;
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-    let attempt = 0;
 
-    function clearReconnect(): void {
-      if (reconnectTimer != null) {
-        clearTimeout(reconnectTimer);
-        reconnectTimer = null;
-      }
-    }
-
-    function scheduleReconnect(reason: PatientStreamStatus): void {
-      if (cancelled) return;
-      if (attempt >= RECONNECT_MAX_ATTEMPTS) {
-        // Give up and stay in error state — caregivers should reload
-        // the page if they want to retry beyond the bounded window.
-        setStatus(reason);
-        return;
-      }
-      const delay = Math.min(RECONNECT_BASE_MS * 2 ** attempt, RECONNECT_MAX_MS);
-      attempt += 1;
-      clearReconnect();
-      reconnectTimer = setTimeout(() => {
-        if (cancelled) return;
-        // Tear down any stale channel first, then re-open.
-        if (activeChannel) {
-          void supabase.removeChannel(activeChannel);
-          activeChannel = null;
-        }
-        openPostgresChannel();
-      }, delay);
-    }
-
-    function openPostgresChannel(): void {
-      const channel: RealtimeChannel = supabase
-        .channel(`patient:${patientId}`)
-        .on(
-          'postgres_changes',
-          {
-            event: 'INSERT',
-            schema: 'public',
-            table: 'sensor_readings',
-            filter: `patient_id=eq.${patientId}`,
-          },
-          (payload) => {
+    const unsubscribePostgres = subscribeWithRetry({
+      channelName: `patient:${patientId}`,
+      postgresHandlers: [
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'sensor_readings',
+          filter: `patient_id=eq.${patientId}`,
+          onMessage: (row) => {
             setLastSeen((prev) => ({ ...prev, sensor: Date.now() }));
-            callbacksRef.current.onSensorReading?.(payload.new as SensorReadingRow);
+            callbacksRef.current.onSensorReading?.(row as SensorReadingRow);
           },
-        )
-        .on(
-          'postgres_changes',
-          {
-            event: 'INSERT',
-            schema: 'public',
-            table: 'position_estimates',
-            filter: `patient_id=eq.${patientId}`,
-          },
-          (payload) => {
+        },
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'position_estimates',
+          filter: `patient_id=eq.${patientId}`,
+          onMessage: (row) => {
             setLastSeen((prev) => ({ ...prev, position: Date.now() }));
-            callbacksRef.current.onPositionEstimate?.(payload.new as PositionEstimateRow);
+            callbacksRef.current.onPositionEstimate?.(row as PositionEstimateRow);
           },
-        )
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'alerts',
-            filter: `patient_id=eq.${patientId}`,
-          },
-          (payload) => {
+        },
+        {
+          event: '*',
+          schema: 'public',
+          table: 'alerts',
+          filter: `patient_id=eq.${patientId}`,
+          onMessage: (row) => {
             setLastSeen((prev) => ({ ...prev, alert: Date.now() }));
-            callbacksRef.current.onAlert?.(payload.new as AlertRow);
+            callbacksRef.current.onAlert?.(row as AlertRow);
           },
-        )
-        .subscribe((subStatus, err) => {
-          if (cancelled) return;
-          if (subStatus === 'SUBSCRIBED') {
-            attempt = 0; // reset backoff on a clean reconnect
-            clearReconnect();
-            setStatus('subscribed');
-          } else if (subStatus === 'CHANNEL_ERROR') {
-            setStatus('error');
-            if (err) callbacksRef.current.onError?.(err);
-            scheduleReconnect('error');
-          } else if (subStatus === 'CLOSED' || subStatus === 'TIMED_OUT') {
-            setStatus('disconnected');
-            scheduleReconnect('disconnected');
-          }
-        });
-      activeChannel = channel;
-    }
-
-    openPostgresChannel();
+        },
+      ],
+      onSubscribed: () => setStatus('subscribed'),
+      onError: (err) => {
+        setStatus('error');
+        callbacksRef.current.onError?.(err);
+      },
+      onStatusChange: (s) => {
+        if (s === 'CLOSED' || s === 'TIMED_OUT') setStatus('disconnected');
+      },
+    });
 
     // F6 signals broadcast lives on its own channel because Supabase
     // Realtime requires postgres_changes and broadcast events on
@@ -217,9 +166,7 @@ export function usePatientStream(
       .subscribe();
 
     return () => {
-      cancelled = true;
-      clearReconnect();
-      if (activeChannel) void supabase.removeChannel(activeChannel);
+      unsubscribePostgres();
       if (signalsChannel) void supabase.removeChannel(signalsChannel);
       setStatus('idle');
     };

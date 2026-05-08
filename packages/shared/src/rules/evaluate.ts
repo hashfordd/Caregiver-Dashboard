@@ -27,9 +27,11 @@ import type {
 import type { PositionEstimateRow } from '../db/position-estimates.ts';
 
 /** Default canvas-pixel motion floor used when an inactivity rule
- *  doesn't override it. Five pixels at the seed plan's
- *  scale (0.014 m/px) ≈ 7 cm — well under realistic body sway. */
-export const DEFAULT_MOTION_FLOOR_PX = 5;
+ *  doesn't override it. 25 px ≈ 0.5 m at a typical 50 px/m floor plan
+ *  scale — above the ~30 cm noise of 1 Hz BLE trilateration so a
+ *  stationary patient doesn't false-positive as moving, while still
+ *  being well below any real ambulatory displacement. */
+export const DEFAULT_MOTION_FLOOR_PX = 25;
 
 export function evaluateRule(
   rule: AlertRule,
@@ -237,10 +239,13 @@ function evaluateInactivity(
     }
   }
   if (lastMotionAt == null) {
-    // No motion observed at all in the supplied window. Treat the
-    // window's newest sample as the last motion timestamp — the rule
-    // can still fire if that sample is older than the threshold.
-    lastMotionAt = indoorPositions[0]!.recorded_at;
+    // No motion observed at all in the supplied window. Anchor to the
+    // OLDEST sample in the lookback — semantically "we have evidence of
+    // stationarity at least back to this point." This makes sinceMotionMs
+    // grow with the lookback window and become large enough to fire, so a
+    // streaming-but-stationary patient is correctly detected once the
+    // threshold is exceeded.
+    lastMotionAt = indoorPositions[indoorPositions.length - 1]!.recorded_at;
   }
 
   const sinceMotionMs = tickMs - Date.parse(lastMotionAt);

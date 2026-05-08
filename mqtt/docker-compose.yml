@@ -4,7 +4,7 @@ services:
     container_name: alzcare-mosquitto
     restart: unless-stopped
     ports:
-      - '1883:1883' # plain MQTT (local dev only — disabled via listener config below if not needed)
+      - '127.0.0.1:1883:1883' # plain MQTT (local dev only — loopback only; TLS on 8883 for external)
       - '8883:8883' # MQTT over TLS
       - '9001:9001' # MQTT over WebSockets (for browser-side observability tools)
     volumes:

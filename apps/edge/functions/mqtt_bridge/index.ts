@@ -7,6 +7,11 @@
 // CROSS_CUTTING §1: this entry holds the service-role key in env and never
 // exposes it to clients.
 // CROSS_CUTTING §11: shared SSOT between HTTP and long-running runtimes.
+//
+// Item 81: service-role bearer auth on the HTTP entry. The mock-telemetry
+// tool and any internal caller must include `Authorization: Bearer <KEY>`.
+// Uses constant-time compare to prevent timing-oracle attacks, mirroring
+// the pattern in position_estimator and rules_engine.
 
 import { createClient } from '@supabase/supabase-js';
 import { processMessage } from './processMessage.ts';
@@ -32,14 +37,29 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
+/** Constant-time string compare. Mirrors position_estimator + rules_engine. */
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return mismatch === 0;
+}
+
 Deno.serve(async (req: Request) => {
-  if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
+  if (req.method !== 'POST') return json({ ok: false, error: 'method_not_allowed' }, 405);
+
+  // Item 81: require service-role bearer on every request.
+  const auth = req.headers.get('authorization') ?? req.headers.get('Authorization');
+  const expected = `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`;
+  if (auth == null || !timingSafeEqual(auth, expected)) {
+    return json({ ok: false, error: 'unauthorized' }, 401);
+  }
 
   let body: BridgePayload;
   try {
     body = (await req.json()) as BridgePayload;
   } catch {
-    return json({ error: 'invalid JSON' }, 400);
+    return json({ ok: false, error: 'invalid_json' }, 400);
   }
 
   const outcome = await processMessage(body.topic, body.message, supabase, {

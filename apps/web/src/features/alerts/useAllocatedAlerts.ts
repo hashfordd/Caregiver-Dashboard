@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import type { RealtimeChannel } from '@supabase/supabase-js';
 import type { AlertRow } from '@alzcare/shared';
 import { supabase } from '@/lib/supabase';
+import { subscribeWithRetry } from '@/lib/subscribeWithRetry';
 import { useAuth } from '@/features/auth/AuthProvider';
 
 const COLUMNS =
@@ -27,6 +27,10 @@ const COLUMNS =
  *    - exposes `isSuccess` so cue + live-region hooks can arm on the
  *      query landing rather than on the first non-empty payload (the
  *      latter swallowed criticals that landed inside the initial fetch).
+ *
+ *  Item 91: both channels now use subscribeWithRetry so the bell, cue,
+ *  and /alerts feed re-subscribe after a network blip instead of going
+ *  silent for the rest of the session.
  */
 const ALLOCATED_KEY = (caregiverId: string | undefined) =>
   ['alerts', 'allocated', caregiverId ?? 'anon'] as const;
@@ -86,30 +90,29 @@ export function useAllocatedAlerts(): AllocatedAlertsResult {
   // a manual refresh. Phase B's tenancy refactor means allocation now
   // moves through the allocate_patient/unallocate_patient RPCs (admin)
   // and the same self-leave path.
+  // Item 91: uses subscribeWithRetry so a transient WS drop doesn't
+  // freeze the allocation set until page reload.
   useEffect(() => {
     if (!caregiverId) return;
-    const channel: RealtimeChannel = supabase
-      .channel(`caregiver_patient:caregiver:${caregiverId}`)
-      .on(
-        'postgres_changes',
+    const unsubscribe = subscribeWithRetry({
+      channelName: `caregiver_patient:caregiver:${caregiverId}`,
+      postgresHandlers: [
         {
           event: '*',
           schema: 'public',
           table: 'caregiver_patient',
           filter: `caregiver_id=eq.${caregiverId}`,
+          onMessage: () => {
+            void refreshAllocations();
+            // Keep the roster + lookup caches consistent so the patient
+            // detail / new "Caregivers" tab also picks up the change.
+            qc.invalidateQueries({ queryKey: ['patients', 'roster'] });
+            qc.invalidateQueries({ queryKey: ['patients', 'lookup'] });
+          },
         },
-        () => {
-          void refreshAllocations();
-          // Keep the roster + lookup caches consistent so the patient
-          // detail / new "Caregivers" tab also picks up the change.
-          qc.invalidateQueries({ queryKey: ['patients', 'roster'] });
-          qc.invalidateQueries({ queryKey: ['patients', 'lookup'] });
-        },
-      )
-      .subscribe();
-    return () => {
-      void supabase.removeChannel(channel);
-    };
+      ],
+    });
+    return unsubscribe;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [caregiverId]);
 
@@ -129,42 +132,48 @@ export function useAllocatedAlerts(): AllocatedAlertsResult {
   });
 
   // Single realtime channel filtered server-side via in() syntax.
+  // Item 91: uses subscribeWithRetry so the bell, cue, and /alerts feed
+  // re-subscribe after a network blip instead of going silent.
   useEffect(() => {
     if (!caregiverId || allocatedPatients.length === 0) return;
     const filter = `patient_id=in.(${allocatedPatients.join(',')})`;
-    const channel: RealtimeChannel = supabase
-      .channel(`alerts:caregiver:${caregiverId}`)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'alerts', filter },
-        (payload) => {
-          const row = payload.new as AlertRow;
-          qc.setQueryData<AlertRow[]>(ALLOCATED_KEY(caregiverId), (prev) => {
-            // Item 44: dedupe before prepending. The initial fetch may
-            // already include this id (race between subscribe and select),
-            // and bouncing a duplicate into the list breaks React keys
-            // + double-counts unacked.
-            if (prev?.some((r) => r.id === row.id)) return prev;
-            const next = [row, ...(prev ?? [])];
-            return next.slice(0, ROW_LIMIT);
-          });
+    const unsubscribe = subscribeWithRetry({
+      channelName: `alerts:caregiver:${caregiverId}`,
+      postgresHandlers: [
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'alerts',
+          filter,
+          onMessage: (row) => {
+            const alertRow = row as AlertRow;
+            qc.setQueryData<AlertRow[]>(ALLOCATED_KEY(caregiverId), (prev) => {
+              // Item 44: dedupe before prepending. The initial fetch may
+              // already include this id (race between subscribe and select),
+              // and bouncing a duplicate into the list breaks React keys
+              // + double-counts unacked.
+              if (prev?.some((r) => r.id === alertRow.id)) return prev;
+              const next = [alertRow, ...(prev ?? [])];
+              return next.slice(0, ROW_LIMIT);
+            });
+          },
         },
-      )
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'alerts', filter },
-        (payload) => {
-          const row = payload.new as AlertRow;
-          qc.setQueryData<AlertRow[]>(ALLOCATED_KEY(caregiverId), (prev) => {
-            if (!prev) return prev;
-            return prev.map((r) => (r.id === row.id ? row : r));
-          });
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'alerts',
+          filter,
+          onMessage: (row) => {
+            const alertRow = row as AlertRow;
+            qc.setQueryData<AlertRow[]>(ALLOCATED_KEY(caregiverId), (prev) => {
+              if (!prev) return prev;
+              return prev.map((r) => (r.id === alertRow.id ? alertRow : r));
+            });
+          },
         },
-      )
-      .subscribe();
-    return () => {
-      void supabase.removeChannel(channel);
-    };
+      ],
+    });
+    return unsubscribe;
   }, [caregiverId, allocatedPatients, qc]);
 
   const rows = query.data ?? [];

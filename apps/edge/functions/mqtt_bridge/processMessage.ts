@@ -9,7 +9,7 @@ import {
   parseTopic,
   SignalsMessage,
   TelemetryMessage,
-} from './_shared/mqtt/index.ts';
+} from '@alzcare/shared/mqtt';
 import type { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
 
 export type ProcessOutcome =
