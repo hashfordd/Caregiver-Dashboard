@@ -1,5 +1,11 @@
 import { z } from 'zod';
 
+export const DementiaStage = z.enum(['unknown', 'early', 'moderate', 'advanced']);
+export type DementiaStage = z.infer<typeof DementiaStage>;
+
+export const WanderingRisk = z.enum(['low', 'medium', 'high']);
+export type WanderingRisk = z.infer<typeof WanderingRisk>;
+
 export const Patient = z.object({
   id: z.string().uuid(),
   full_name: z.string().min(1),
@@ -7,8 +13,22 @@ export const Patient = z.object({
   description: z.string().nullable(),
   care_provider_id: z.string().uuid(),
   created_at: z.string().datetime(),
+  // Phase II.B care plan + risk profile.
+  dementia_stage: DementiaStage,
+  wandering_risk: WanderingRisk,
+  known_triggers: z.array(z.string()),
+  care_plan_summary: z.string().nullable(),
+  preferences: z.record(z.string(), z.unknown()),
 });
 export type Patient = z.infer<typeof Patient>;
+
+export const CarePlanInput = z.object({
+  dementia_stage: DementiaStage,
+  wandering_risk: WanderingRisk,
+  known_triggers: z.array(z.string().trim().min(1).max(80)).max(20),
+  care_plan_summary: z.string().max(4000).nullable().optional().or(z.literal('')),
+});
+export type CarePlanInput = z.infer<typeof CarePlanInput>;
 
 export const CreatePatientInput = z.object({
   full_name: z.string().min(1, 'Required').max(120),

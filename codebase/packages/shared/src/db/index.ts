@@ -6,3 +6,5 @@ export * from './position-estimates.ts';
 export * from './events.ts';
 export * from './alerts.ts';
 export * from './devices.ts';
+export * from './incidents.ts';
+export * from './medications.ts';

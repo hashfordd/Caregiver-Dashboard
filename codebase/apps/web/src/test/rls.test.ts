@@ -513,4 +513,86 @@ describe.skipIf(!enabled)('RLS denial — F1 caregiver write surface', () => {
     await admin.from('caregivers').update({ care_provider_id: null }).eq('id', peer.id);
     await admin.auth.admin.deleteUser(peer.id);
   });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Phase II.A — get_situation_overview RPC.
+  //
+  // Powers the situation-room dashboard. One row per accessible patient
+  // with the latest position_estimates row folded in via a lateral. The
+  // alert stream is composed in the React layer via useAllocatedAlerts,
+  // so this RPC stays focused on the per-patient "where are they now"
+  // shape.
+  // ──────────────────────────────────────────────────────────────────────
+
+  it("Phase II.A: get_situation_overview returns Alice's patient", async () => {
+    const { data, error } = await alice.client.rpc('get_situation_overview');
+    expect(error).toBeNull();
+    const rows = (data ?? []) as Array<{
+      patient_id: string;
+      full_name: string;
+      last_position_at: string | null;
+      wandering_risk: string;
+    }>;
+    const found = rows.find((r) => r.patient_id === alicePatientId);
+    expect(found).toBeDefined();
+    expect(found?.full_name).toBe('Alice Patient');
+    // No position rows yet → null. wandering_risk defaults to 'low'
+    // after Phase II.B replaced the PR-1 'unknown' placeholder.
+    expect(found?.last_position_at).toBeNull();
+    expect(found?.wandering_risk).toBe('low');
+  });
+
+  it("Phase II.A: Bob's get_situation_overview does not include Alice's patient", async () => {
+    const { data, error } = await bob.client.rpc('get_situation_overview');
+    expect(error).toBeNull();
+    const ids = ((data ?? []) as Array<{ patient_id: string }>).map((r) => r.patient_id);
+    expect(ids).not.toContain(alicePatientId);
+  });
+
+  it('Phase II.A: get_situation_overview folds in the most recent position_estimate', async () => {
+    const olderAt = new Date(Date.now() - 60_000).toISOString();
+    const newerAt = new Date().toISOString();
+    await admin.from('position_estimates').insert([
+      {
+        patient_id: alicePatientId,
+        recorded_at: olderAt,
+        mode: 'indoor',
+        x_canvas: 10,
+        y_canvas: 20,
+        confidence: 0.5,
+      },
+      {
+        patient_id: alicePatientId,
+        recorded_at: newerAt,
+        mode: 'outdoor',
+        lat: -33.8,
+        lng: 151.2,
+        confidence: 0.7,
+      },
+    ]);
+
+    const { data } = await alice.client.rpc('get_situation_overview');
+    const rows = (data ?? []) as Array<{
+      patient_id: string;
+      last_position_at: string | null;
+      last_position_mode: string | null;
+      last_position_lat: string | number | null;
+      last_position_lng: string | number | null;
+      last_position_x: string | number | null;
+      last_position_y: string | number | null;
+    }>;
+    const found = rows.find((r) => r.patient_id === alicePatientId);
+    expect(found).toBeDefined();
+    expect(found?.last_position_mode).toBe('outdoor');
+    expect(Number(found?.last_position_lat)).toBeCloseTo(-33.8, 1);
+    expect(Number(found?.last_position_lng)).toBeCloseTo(151.2, 1);
+    // Indoor coords from the older row must not leak through — the
+    // lateral returns one row (the newest), so x/y are NULL on it.
+    expect(found?.last_position_x).toBeNull();
+    expect(found?.last_position_y).toBeNull();
+
+    // Reset so a re-run of the suite (or any later it block) sees the
+    // patient with no position rows again.
+    await admin.from('position_estimates').delete().eq('patient_id', alicePatientId);
+  });
 });

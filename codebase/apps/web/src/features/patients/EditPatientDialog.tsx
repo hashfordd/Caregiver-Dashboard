@@ -59,13 +59,18 @@ export function EditPatientDialog({ open, onOpenChange, patient }: Props) {
           description: values.description || null,
         })
         .eq('id', patient.id)
-        .select('id, full_name, dob, description, care_provider_id, created_at')
+        .select(
+          'id, full_name, dob, description, care_provider_id, created_at, ' +
+            'dementia_stage, wandering_risk, known_triggers, care_plan_summary, preferences',
+        )
         .single();
       if (error) throw error;
-      return data as Patient;
+      return data as unknown as Patient;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['patients', 'roster'] });
+      // Phase II.A: dashboard situation-overview replaced the roster.
+      queryClient.invalidateQueries({ queryKey: ['dashboard', 'situation-overview'] });
+      queryClient.invalidateQueries({ queryKey: ['patients', 'lookup'] });
       queryClient.invalidateQueries({ queryKey: ['patients', 'detail', patient.id] });
       onOpenChange(false);
       mutation.reset();

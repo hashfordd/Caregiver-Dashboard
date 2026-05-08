@@ -7,7 +7,10 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { TabErrorBoundary } from '@/components/RootErrorBoundary';
 import { CaregiversTab } from './CaregiversTab';
 import { PatientNotesSection } from './PatientNotesSection';
+import { CarePlanTab } from './tabs/CarePlanTab';
+import { IncidentsTab } from './tabs/IncidentsTab';
 import { LiveTab } from './tabs/LiveTab';
+import { MedsTab } from './tabs/MedsTab';
 import { PlaceTab } from './tabs/PlaceTab';
 
 // F13: lazy-load HistoryTab so Recharts (~80 KB gzipped) and the
@@ -15,7 +18,18 @@ import { PlaceTab } from './tabs/PlaceTab';
 // History tab. See docs/features/F13.md → Risks → Recharts bundle weight.
 const HistoryTab = lazy(() => import('@/features/history/HistoryTab'));
 
-const TAB_KEYS = ['live', 'place', 'history', 'alerts', 'notes', 'caregivers', 'settings'] as const;
+const TAB_KEYS = [
+  'live',
+  'place',
+  'history',
+  'alerts',
+  'care-plan',
+  'incidents',
+  'meds',
+  'notes',
+  'caregivers',
+  'settings',
+] as const;
 type TabKey = (typeof TAB_KEYS)[number];
 
 function isTabKey(value: string): value is TabKey {
@@ -64,6 +78,15 @@ export function PatientTabs({ patientId }: Props) {
           <TabsTrigger value="alerts" className="[scroll-snap-align:start]">
             Alerts
           </TabsTrigger>
+          <TabsTrigger value="care-plan" className="[scroll-snap-align:start]">
+            Care plan
+          </TabsTrigger>
+          <TabsTrigger value="incidents" className="[scroll-snap-align:start]">
+            Incidents
+          </TabsTrigger>
+          <TabsTrigger value="meds" className="[scroll-snap-align:start]">
+            Meds
+          </TabsTrigger>
           <TabsTrigger value="notes" className="[scroll-snap-align:start]">
             Notes
           </TabsTrigger>
@@ -95,6 +118,21 @@ export function PatientTabs({ patientId }: Props) {
       <TabsContent value="alerts">
         <TabErrorBoundary label="Alerts">
           <AlertsTab patientId={patientId} />
+        </TabErrorBoundary>
+      </TabsContent>
+      <TabsContent value="care-plan">
+        <TabErrorBoundary label="Care plan">
+          <CarePlanTab patientId={patientId} />
+        </TabErrorBoundary>
+      </TabsContent>
+      <TabsContent value="incidents">
+        <TabErrorBoundary label="Incidents">
+          <IncidentsTab patientId={patientId} />
+        </TabErrorBoundary>
+      </TabsContent>
+      <TabsContent value="meds">
+        <TabErrorBoundary label="Meds">
+          <MedsTab patientId={patientId} />
         </TabErrorBoundary>
       </TabsContent>
       <TabsContent value="notes">

@@ -44,7 +44,12 @@ export function CreatePatientDialog({ open, onOpenChange }: Props) {
       return data as Patient;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['patients', 'roster'] });
+      // Phase II.A: dashboard situation-overview replaced the roster as
+      // the primary patient list. Lookup feeds the alert stream's name
+      // resolution; both must invalidate so a freshly created patient
+      // appears immediately in the live grid + alert stream labels.
+      queryClient.invalidateQueries({ queryKey: ['dashboard', 'situation-overview'] });
+      queryClient.invalidateQueries({ queryKey: ['patients', 'lookup'] });
       onOpenChange(false);
       form.reset();
       mutation.reset();

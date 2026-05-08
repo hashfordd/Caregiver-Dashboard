@@ -8,14 +8,21 @@ import { PatientHeader } from './PatientHeader';
 import { PatientStreamProvider } from './PatientStreamContext';
 import { PatientTabs } from './PatientTabs';
 
+// Phase II.B: care plan + risk-profile columns are part of the Patient
+// shape now, so every Patient-shaped fetch must include them or the
+// CarePlanTab + risk badge fall back to defaults.
+const PATIENT_COLUMNS =
+  'id, full_name, dob, description, care_provider_id, created_at, ' +
+  'dementia_stage, wandering_risk, known_triggers, care_plan_summary, preferences';
+
 async function fetchPatient(id: string): Promise<Patient | null> {
   const { data, error } = await supabase
     .from('patients')
-    .select('id, full_name, dob, description, care_provider_id, created_at')
+    .select(PATIENT_COLUMNS)
     .eq('id', id)
     .maybeSingle();
   if (error) throw error;
-  return (data as Patient) ?? null;
+  return (data as unknown as Patient) ?? null;
 }
 
 export function PatientDetailPage() {

@@ -25,6 +25,11 @@ const PATIENT: Patient = {
   description: 'Likes morning walks',
   care_provider_id: '99999999-9999-9999-9999-999999999999',
   created_at: '2026-01-01T00:00:00Z',
+  dementia_stage: 'unknown',
+  wandering_risk: 'low',
+  known_triggers: [],
+  care_plan_summary: null,
+  preferences: {},
 };
 
 function renderDialog(onOpenChange = vi.fn(), patient: Patient = PATIENT) {
@@ -82,7 +87,10 @@ describe('EditPatientDialog', () => {
     expect(eqMock).toHaveBeenCalledWith('id', PATIENT.id);
 
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
-    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['patients', 'roster'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ['dashboard', 'situation-overview'],
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['patients', 'lookup'] });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['patients', 'detail', PATIENT.id] });
   });
 

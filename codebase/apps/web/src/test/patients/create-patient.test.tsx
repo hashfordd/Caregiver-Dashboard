@@ -53,7 +53,10 @@ describe('CreatePatientDialog', () => {
     });
 
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
-    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['patients', 'roster'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ['dashboard', 'situation-overview'],
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['patients', 'lookup'] });
   });
 
   it('renders the rpc error inline and keeps the dialog open', async () => {

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ChevronLeft, Pencil } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import type { Patient } from '@alzcare/shared';
+import type { Patient, WanderingRisk } from '@alzcare/shared';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useNow } from '@/lib/useNow';
@@ -43,11 +43,11 @@ export function PatientHeader({ patient }: { patient: Patient }) {
   return (
     <header className="mb-6 border-b border-border/60 pb-6">
       <Link
-        to="/patients"
+        to="/dashboard"
         className="inline-flex items-center text-xs uppercase tracking-wider text-muted-foreground hover:text-foreground"
       >
         <ChevronLeft className="mr-1 h-3.5 w-3.5" />
-        Roster
+        Dashboard
       </Link>
       {/* Item 97: flex-wrap + reduced text size at narrow widths so the
           414 px (iPhone Pro) floor doesn't collide name + edit button +
@@ -65,8 +65,9 @@ export function PatientHeader({ patient }: { patient: Patient }) {
             <h1 className="font-serif italic text-2xl sm:text-4xl text-foreground">
               {patient.full_name}
             </h1>
-            <div className="mt-1 flex items-baseline gap-3 text-sm text-muted-foreground">
+            <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1.5 text-sm text-muted-foreground">
               {age && <span className="shrink-0">age {age}</span>}
+              <RiskPill risk={patient.wandering_risk} stage={patient.dementia_stage} />
               {patient.description && (
                 <>
                   <span aria-hidden className="shrink-0">
@@ -99,6 +100,22 @@ export function PatientHeader({ patient }: { patient: Patient }) {
       </div>
       <EditPatientDialog open={editOpen} onOpenChange={setEditOpen} patient={patient} />
     </header>
+  );
+}
+
+function RiskPill({ risk, stage }: { risk: WanderingRisk; stage: string }) {
+  const variant: 'destructive' | 'secondary' | 'outline' =
+    risk === 'high' ? 'destructive' : risk === 'medium' ? 'secondary' : 'outline';
+  const label =
+    risk === 'high'
+      ? 'High wandering risk'
+      : risk === 'medium'
+        ? 'Medium wandering risk'
+        : 'Low wandering risk';
+  return (
+    <Badge variant={variant} className="shrink-0" title={`Dementia stage: ${stage}`}>
+      {label}
+    </Badge>
   );
 }
 

@@ -32,7 +32,7 @@ function renderLogin(initialEntry = '/login') {
     <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
-        <Route path="/patients" element={<div>Patients page</div>} />
+        <Route path="/dashboard" element={<div>Dashboard page</div>} />
         <Route path="/patients/:id" element={<div>Patient detail</div>} />
       </Routes>
     </MemoryRouter>,

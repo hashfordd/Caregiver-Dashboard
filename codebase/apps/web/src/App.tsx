@@ -5,9 +5,9 @@ import { LoginPage } from '@/features/auth/LoginPage';
 import { SignupPage } from '@/features/auth/SignupPage';
 import { ProfilePage } from '@/features/auth/ProfilePage';
 import { ProtectedRoute } from '@/features/auth/ProtectedRoute';
-import { RosterPage } from '@/features/patients/RosterPage';
 import { PatientDetailPage } from '@/features/patients/PatientDetailPage';
 import { AlertsPage } from '@/features/alerts/AlertsPage';
+import { SituationRoomPage } from '@/features/dashboard/SituationRoomPage';
 import { OnboardingPage } from '@/features/provider/OnboardingPage';
 import { ProviderSettingsPage } from '@/features/provider/ProviderSettingsPage';
 import { AcceptInvitePage } from '@/features/provider/AcceptInvitePage';
@@ -27,8 +27,12 @@ export function App() {
             <Route path="/invite/:token" element={<AcceptInvitePage />} />
             <Route element={<RequireProviderBound />}>
               <Route element={<AppLayout />}>
-                <Route path="/" element={<Navigate to="/patients" replace />} />
-                <Route path="/patients" element={<RosterPage />} />
+                <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                <Route path="/dashboard" element={<SituationRoomPage />} />
+                {/* Phase II.A: roster collapsed into the dashboard;
+                    keep /patients as a back-compat redirect for any
+                    bookmarks. /patients/:id remains the patient detail. */}
+                <Route path="/patients" element={<Navigate to="/dashboard" replace />} />
                 <Route path="/patients/:id" element={<PatientDetailPage />} />
                 <Route path="/alerts" element={<AlertsPage />} />
                 <Route path="/profile" element={<ProfilePage />} />

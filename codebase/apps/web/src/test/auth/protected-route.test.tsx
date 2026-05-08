@@ -15,7 +15,7 @@ function renderAt(pathname: string) {
     <MemoryRouter initialEntries={[pathname]}>
       <Routes>
         <Route element={<ProtectedRoute />}>
-          <Route path="/patients" element={<div>Roster</div>} />
+          <Route path="/dashboard" element={<div>Dashboard</div>} />
           <Route path="/patients/:id" element={<div>Patient detail</div>} />
         </Route>
         <Route path="/login" element={<LoginSpy />} />
@@ -49,9 +49,9 @@ beforeEach(() => {
 describe('ProtectedRoute', () => {
   it('renders a loading sentinel while auth is in flight', () => {
     useAuthMock.mockReturnValue({ session: null, user: null, loading: true });
-    renderAt('/patients');
+    renderAt('/dashboard');
     expect(screen.getByText(/loading/i)).toBeInTheDocument();
-    expect(screen.queryByText(/roster/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/dashboard/i)).not.toBeInTheDocument();
   });
 
   it('renders nested route children when the caller has an active session', () => {
@@ -60,8 +60,8 @@ describe('ProtectedRoute', () => {
       user: { id: 'u1' },
       loading: false,
     });
-    renderAt('/patients');
-    expect(screen.getByText(/roster/i)).toBeInTheDocument();
+    renderAt('/dashboard');
+    expect(screen.getByText(/dashboard/i)).toBeInTheDocument();
   });
 
   it('redirects to /login when there is no session, preserving the original location as state.from', () => {

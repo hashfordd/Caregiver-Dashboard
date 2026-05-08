@@ -21,8 +21,13 @@ import {
 
 // Item 102: ReportsPage was a Phase 5 stub but F13 ships through the
 // per-patient History tab. Removed.
+//
+// Phase II.A: Dashboard is the landing surface and folds the roster's
+// "every patient under your care" view into a live grid. /patients
+// redirects to /dashboard for back-compat; the nav drops the standalone
+// roster link.
 const NAV_LINKS = [
-  { to: '/patients', label: 'Patients' },
+  { to: '/dashboard', label: 'Dashboard' },
   { to: '/alerts', label: 'Alerts' },
 ] as const;
 
@@ -64,7 +69,7 @@ export function AppNavbar() {
           >
             <MenuIcon className="h-5 w-5" />
           </button>
-          <Link to="/patients" aria-label="Home">
+          <Link to="/dashboard" aria-label="Home">
             <Brand size="sm" />
           </Link>
           <nav className="hidden items-center gap-1 md:flex" aria-label="Primary">

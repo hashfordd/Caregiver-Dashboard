@@ -104,9 +104,10 @@ export function useAllocatedAlerts(): AllocatedAlertsResult {
           filter: `caregiver_id=eq.${caregiverId}`,
           onMessage: () => {
             void refreshAllocations();
-            // Keep the roster + lookup caches consistent so the patient
-            // detail / new "Caregivers" tab also picks up the change.
-            qc.invalidateQueries({ queryKey: ['patients', 'roster'] });
+            // Keep dashboard + lookup caches consistent. Phase II.A
+            // replaced the roster query key with the situation-overview
+            // dashboard feed.
+            qc.invalidateQueries({ queryKey: ['dashboard', 'situation-overview'] });
             qc.invalidateQueries({ queryKey: ['patients', 'lookup'] });
           },
         },
