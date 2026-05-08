@@ -1,4 +1,3 @@
-import { Link } from 'react-router-dom';
 import { ChevronRight } from 'lucide-react';
 import type { AlertRow } from '@alzcare/shared';
 import { Badge } from '@/components/ui/badge';
@@ -15,18 +14,32 @@ interface LiveGridRowProps {
   /** Tick passed in from the parent so all rows share a clock and
    *  re-render together without each one running its own setInterval. */
   now: number;
+  /** Phase II.D: clicking a row selects the patient and opens the
+   *  side-rail detail. The full patient page is reachable from the
+   *  rail, so the row no longer navigates on its own. */
+  selected: boolean;
+  onSelect: (patientId: string) => void;
 }
 
-export function LiveGridRow({ patient, latestUnackedAlert, now }: LiveGridRowProps) {
+export function LiveGridRow({
+  patient,
+  latestUnackedAlert,
+  now,
+  selected,
+  onSelect,
+}: LiveGridRowProps) {
   const status = deriveConnectionStatus(patient.last_position_at, now);
   const lastSeen = formatRelativeAge(patient.last_position_at, now);
 
   return (
-    <Link
-      to={`/patients/${patient.patient_id}`}
+    <button
+      type="button"
+      onClick={() => onSelect(patient.patient_id)}
+      aria-pressed={selected}
       className={cn(
-        'group/row flex items-center gap-3 rounded-lg border bg-card px-4 py-3 transition-colors hover:bg-muted/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring',
+        'group/row flex w-full items-center gap-3 rounded-lg border bg-card px-4 py-3 text-left transition-colors hover:bg-muted/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring',
         latestUnackedAlert?.severity === 'critical' && 'border-red-500/40',
+        selected && 'border-primary/60 bg-primary/5',
       )}
     >
       <StatusDot status={status} />
@@ -43,8 +56,8 @@ export function LiveGridRow({ patient, latestUnackedAlert, now }: LiveGridRowPro
         <span
           className="hidden md:block"
           onClick={(e) => {
-            // Stop the row-level <Link> from taking the click when the
-            // user is just acknowledging.
+            // Stop the row click from taking precedence when the user
+            // is just acknowledging — Ack should be a single-click action.
             e.preventDefault();
             e.stopPropagation();
           }}
@@ -53,7 +66,7 @@ export function LiveGridRow({ patient, latestUnackedAlert, now }: LiveGridRowPro
         </span>
       ) : null}
       <ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover/row:translate-x-0.5" />
-    </Link>
+    </button>
   );
 }
 
@@ -74,8 +87,6 @@ function StatusDot({ status }: { status: ReturnType<typeof deriveConnectionStatu
 }
 
 function RiskBadge({ risk }: { risk: string }) {
-  // PR-1 placeholder. PR-2 introduces the real low/medium/high enum on
-  // patients and this branch lights up.
   if (risk === 'high') return <Badge variant="destructive">High risk</Badge>;
   if (risk === 'medium') return <Badge variant="secondary">Medium risk</Badge>;
   if (risk === 'low') return <Badge variant="outline">Low risk</Badge>;

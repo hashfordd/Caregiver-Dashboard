@@ -1,14 +1,16 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/features/auth/AuthProvider';
 import { useAllocatedAlerts } from '@/features/alerts/useAllocatedAlerts';
 import { CreatePatientDialog } from '@/features/patients/CreatePatientDialog';
+import { ActivityFeed } from './ActivityFeed';
 import { AlertStream } from './AlertStream';
 import { LiveGrid } from './LiveGrid';
+import { PatientSideRail } from './PatientSideRail';
 import { SituationHeader } from './SituationHeader';
-import { deriveConnectionStatus } from './connectionStatus';
 import { useSituationOverview } from './useSituationOverview';
 
 export function SituationRoomPage() {
@@ -17,32 +19,55 @@ export function SituationRoomPage() {
   const alerts = useAllocatedAlerts();
   const [createOpen, setCreateOpen] = useState(false);
 
+  // Phase II.D: ?focus=<patient-id> drives the side-rail. Bookmarkable
+  // and survives history navigation, so a caregiver can return to
+  // exactly the patient they were watching.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const focusedId = searchParams.get('focus');
+
+  const setFocus = useCallback(
+    (patientId: string | null) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (patientId) next.set('focus', patientId);
+          else next.delete('focus');
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
   const firstName = useMemo(() => {
     const fullName = user?.user_metadata?.full_name as string | undefined;
     return fullName ? fullName.split(/\s+/)[0] : null;
   }, [user]);
 
   const patients = patientsQuery.data ?? [];
-  const counts = useMemo(() => {
-    let stale = 0;
-    let offline = 0;
-    let unresolvedIncidents = 0;
-    const now = Date.now();
-    for (const p of patients) {
-      const status = deriveConnectionStatus(p.last_position_at, now);
-      if (status === 'stale') stale += 1;
-      else if (status === 'offline') offline += 1;
-      unresolvedIncidents += p.unresolved_incidents_24h_count ?? 0;
-    }
-    return { stale, offline, unresolvedIncidents };
-    // patientsQuery.dataUpdatedAt forces recompute on every poll tick
-    // so the header counters track the same data the grid renders.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [patientsQuery.dataUpdatedAt]);
 
   const unackedAlerts = useMemo(
     () => alerts.rows.filter((r) => r.acknowledged_at == null),
     [alerts.rows],
+  );
+
+  // Resolve the focused situation row. If the id is in the URL but the
+  // patient has fallen out of the caller's allocation set, we silently
+  // drop the rail rather than render an empty shell.
+  const focusedSituation = useMemo(
+    () => (focusedId ? (patients.find((p) => p.patient_id === focusedId) ?? null) : null),
+    [patients, focusedId],
+  );
+
+  const focusedAlerts = useMemo(
+    () =>
+      focusedId
+        ? unackedAlerts
+            .filter((a) => a.patient_id === focusedId)
+            .sort((a, b) => (a.fired_at < b.fired_at ? 1 : -1))
+        : [],
+    [unackedAlerts, focusedId],
   );
 
   return (
@@ -65,11 +90,8 @@ export function SituationRoomPage() {
 
       <div className="mb-6">
         <SituationHeader
-          patientCount={patients.length}
-          openAlertsCount={alerts.unackedCount}
-          staleCount={counts.stale}
-          offlineCount={counts.offline}
-          unresolvedIncidentsCount={counts.unresolvedIncidents}
+          patients={patients}
+          unackedAlerts={unackedAlerts}
           hasCriticalAlert={alerts.hasCritical}
         />
       </div>
@@ -97,9 +119,28 @@ export function SituationRoomPage() {
             patients={patients}
             unackedAlerts={unackedAlerts}
             isLoading={patientsQuery.isLoading}
+            selectedPatientId={focusedSituation?.patient_id ?? null}
+            onSelect={(id) => setFocus(id === focusedSituation?.patient_id ? null : id)}
           />
         </section>
-        <AlertStream rows={alerts.rows} isLoading={alerts.isLoading} isError={alerts.isError} />
+        <div className="flex flex-col gap-6">
+          {focusedSituation ? (
+            <PatientSideRail
+              situation={focusedSituation}
+              unackedAlerts={focusedAlerts}
+              onClose={() => setFocus(null)}
+            />
+          ) : (
+            <>
+              <AlertStream
+                rows={alerts.rows}
+                isLoading={alerts.isLoading}
+                isError={alerts.isError}
+              />
+              <ActivityFeed />
+            </>
+          )}
+        </div>
       </div>
 
       <CreatePatientDialog open={createOpen} onOpenChange={setCreateOpen} />

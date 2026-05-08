@@ -298,3 +298,56 @@ export function useUpdateMemberRole() {
     onError: (err) => toast.error((err as Error).message),
   });
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase II.E — provider home overview + audit log
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ProviderOverview {
+  provider_id: string;
+  patient_count: number;
+  caregiver_count: number;
+  admin_count: number;
+  open_alerts_count: number;
+  unresolved_incidents_24h: number;
+  doses_logged_24h: number;
+  notes_logged_24h: number;
+  avg_ack_minutes_7d: number | null;
+}
+
+export function useProviderOverview() {
+  return useQuery({
+    queryKey: ['care-provider', 'overview'],
+    refetchInterval: 30_000,
+    queryFn: async (): Promise<ProviderOverview | null> => {
+      const { data, error } = await supabase.rpc('get_provider_overview');
+      if (error) throw error;
+      const rows = (data ?? []) as ProviderOverview[];
+      return rows[0] ?? null;
+    },
+  });
+}
+
+export interface ProviderAuditEntry {
+  id: string;
+  actor_id: string | null;
+  actor_name: string | null;
+  action: string;
+  target_table: string | null;
+  target_id: string | null;
+  occurred_at: string;
+  payload: Record<string, unknown>;
+}
+
+export function useProviderAuditLog(limit = 100) {
+  return useQuery({
+    queryKey: ['care-provider', 'audit-log', limit],
+    queryFn: async (): Promise<ProviderAuditEntry[]> => {
+      const { data, error } = await supabase.rpc('get_provider_audit_log', {
+        p_limit: limit,
+      });
+      if (error) throw error;
+      return (data ?? []) as ProviderAuditEntry[];
+    },
+  });
+}

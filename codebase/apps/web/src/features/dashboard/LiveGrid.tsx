@@ -10,13 +10,21 @@ interface LiveGridProps {
   patients: PatientSituation[];
   unackedAlerts: AlertRow[];
   isLoading: boolean;
+  selectedPatientId: string | null;
+  onSelect: (patientId: string) => void;
 }
 
 // Re-render cadence for relative-time labels ("3s ago"). Independent
 // of the data poll — derived purely from the cached timestamps.
 const TICK_MS = 1_000;
 
-export function LiveGrid({ patients, unackedAlerts, isLoading }: LiveGridProps) {
+export function LiveGrid({
+  patients,
+  unackedAlerts,
+  isLoading,
+  selectedPatientId,
+  onSelect,
+}: LiveGridProps) {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -62,6 +70,8 @@ export function LiveGrid({ patients, unackedAlerts, isLoading }: LiveGridProps) 
           patient={patient}
           latestUnackedAlert={latestByPatient.get(patient.patient_id) ?? null}
           now={now}
+          selected={patient.patient_id === selectedPatientId}
+          onSelect={onSelect}
         />
       ))}
     </div>
