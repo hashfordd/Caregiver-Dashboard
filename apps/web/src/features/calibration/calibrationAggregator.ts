@@ -166,6 +166,16 @@ export function evaluateQuality(
   // finaliseSignature). When fewer than N are observed, evaluate what's
   // there — a 1-beacon fingerprint is unusual but not invalid.
   const top = ble.samples.slice(0, STDDEV_TOP_N);
+  // Item 127: require each top-N BLE entry to have at least 4 samples
+  // before evaluating stddev. stddev() returns 0 when count < 2, which
+  // the prior implementation treated as "stable" — silently letting a
+  // capture with WiFi-dominant samples + 1-sample BLE entries pass as
+  // "ok". Fingerprint matching needs more than one observation per BLE
+  // peer to be useful.
+  const MIN_BLE_SAMPLES_PER_ENTRY = 4;
+  if (top.some((s) => s.sample_count < MIN_BLE_SAMPLES_PER_ENTRY)) {
+    return { ok: false, reason: 'unstable_signal' };
+  }
   if (top.some((s) => s.rssi_stddev > MAX_STDDEV_DB)) {
     return { ok: false, reason: 'unstable_signal' };
   }

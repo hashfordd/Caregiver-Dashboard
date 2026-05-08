@@ -44,18 +44,23 @@ export function PatientTabs({ patientId }: Props) {
 
   return (
     <Tabs value={value} onValueChange={setValue}>
-      {/* UI-29: at narrow widths the six triggers overflow the inline
+      {/* UI-29: at narrow widths the seven triggers overflow the inline
           flex list. The wrapper makes the strip horizontally scrollable
-          on touch — see /touch-pan-x — without affecting desktop layout. */}
-      <div className="-mx-2 overflow-x-auto px-2 sm:mx-0 sm:px-0">
+          on touch — see /touch-pan-x — without affecting desktop layout.
+          Item 119: a right-edge mask + scroll-snap surface a "more tabs
+          past the right" affordance so caregivers don't miss Settings
+          on narrow viewports. */}
+      <div
+        className="-mx-2 overflow-x-auto px-2 sm:mx-0 sm:px-0 [scroll-snap-type:x_mandatory] sm:[scroll-snap-type:none] [mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)] sm:[mask-image:none]"
+      >
         <TabsList className="min-w-max">
-          <TabsTrigger value="live">Live</TabsTrigger>
-          <TabsTrigger value="place">Place</TabsTrigger>
-          <TabsTrigger value="history">History</TabsTrigger>
-          <TabsTrigger value="alerts">Alerts</TabsTrigger>
-          <TabsTrigger value="notes">Notes</TabsTrigger>
-          <TabsTrigger value="caregivers">Caregivers</TabsTrigger>
-          <TabsTrigger value="settings">Settings</TabsTrigger>
+          <TabsTrigger value="live" className="[scroll-snap-align:start]">Live</TabsTrigger>
+          <TabsTrigger value="place" className="[scroll-snap-align:start]">Place</TabsTrigger>
+          <TabsTrigger value="history" className="[scroll-snap-align:start]">History</TabsTrigger>
+          <TabsTrigger value="alerts" className="[scroll-snap-align:start]">Alerts</TabsTrigger>
+          <TabsTrigger value="notes" className="[scroll-snap-align:start]">Notes</TabsTrigger>
+          <TabsTrigger value="caregivers" className="[scroll-snap-align:start]">Caregivers</TabsTrigger>
+          <TabsTrigger value="settings" className="[scroll-snap-align:start]">Settings</TabsTrigger>
         </TabsList>
       </div>
       <TabsContent value="live">

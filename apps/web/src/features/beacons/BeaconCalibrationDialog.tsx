@@ -168,8 +168,15 @@ export function BeaconCalibrationDialog({
     try {
       // Round to nearest dBm — the bridge writes integers and the
       // path-loss model is insensitive at sub-dB precision anyway.
+      // Item 126: drop the tx_power write. tx_power is the broadcaster's
+      // transmit dBm (a beacon-config attribute set on programming),
+      // not a 1-metre measurement. The path-loss model only consumes
+      // rssi_at_1m; writing the same value to both columns conflated
+      // two distinct concepts and would produce wrong distances if a
+      // future consumer reads tx_power. Existing rows retain whatever
+      // was previously written; new captures only update rssi_at_1m.
       const rounded = Math.round(meanRssi);
-      await update.mutateAsync({ id: beacon.id, rssi_at_1m: rounded, tx_power: rounded });
+      await update.mutateAsync({ id: beacon.id, rssi_at_1m: rounded });
       setPhase('done');
     } catch (err) {
       setPhase('failed');

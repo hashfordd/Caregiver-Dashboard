@@ -5,10 +5,16 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useBeacons } from '@/features/beacons/beaconQueries';
 import { useFloorPlan } from '@/features/floor-plan/floorPlanQueries';
+import { useNow } from '@/lib/useNow';
 import { FloorPlanCanvas } from './FloorPlanCanvas';
 import { ModeIndicator } from './ModeIndicator';
 import { usePositionMarker } from './usePositionMarker';
 import type { BeaconSprite, FloorPlanCanvasHandle, PatientMarkerSprite } from './types';
+
+// Item 94: indoor patient marker stale ring threshold. Mirrors the
+// outdoor PatientPin's 30 s amber ring (apps/web/src/features/map/
+// PatientPin.tsx) so caregivers can tell live from stale at a glance.
+const STALE_THRESHOLD_MS = 30_000;
 
 interface LivePositionViewProps {
   patientId: string;
@@ -29,6 +35,9 @@ export function LivePositionView({ patientId }: LivePositionViewProps) {
   const beaconsQuery = useBeacons(patientId);
   const estimate = usePositionMarker();
   const canvasRef = useRef<FloorPlanCanvasHandle | null>(null);
+  // Item 94: 5 s tick drives the stale ring transition. Cheaper than
+  // a 1 Hz timer; the patient marker doesn't need sub-5 s freshness.
+  const nowMs = useNow(5_000);
 
   // Mirror placed beacons into the canvas as visual context. The Live
   // view doesn't care about beacon-placement mode but the overlay
@@ -48,7 +57,9 @@ export function LivePositionView({ patientId }: LivePositionViewProps) {
 
   // Push the latest estimate into the canvas marker. Outdoor mode and
   // null canvas coords both clear the marker (no useful indoor position
-  // to render).
+  // to render). Item 94: pass an isStale flag so the canvas can render
+  // an amber ring around the dot when the latest estimate is older than
+  // 30 s — matching the outdoor PatientPin.
   useEffect(() => {
     if (
       estimate == null ||
@@ -59,14 +70,16 @@ export function LivePositionView({ patientId }: LivePositionViewProps) {
       canvasRef.current?.setPatientMarker(null);
       return;
     }
+    const ageMs = nowMs - new Date(estimate.recorded_at).getTime();
     const sprite: PatientMarkerSprite = {
       x: estimate.x_canvas,
       y: estimate.y_canvas,
       confidence: estimate.confidence ?? 0,
       recorded_at: estimate.recorded_at,
+      isStale: ageMs > STALE_THRESHOLD_MS,
     };
     canvasRef.current?.setPatientMarker(sprite);
-  }, [estimate]);
+  }, [estimate, nowMs]);
 
   if (planQuery.isLoading) {
     return (

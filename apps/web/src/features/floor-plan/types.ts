@@ -53,6 +53,8 @@ export interface FloorPlanRow {
   canvas_json: unknown;
   scale_meters_per_pixel: number | null;
   created_at: string;
+  updated_at: string;
+  is_active: boolean;
 }
 
 export interface UpsertFloorPlanInput {
@@ -146,6 +148,10 @@ export interface PatientMarkerSprite {
   /** ISO 8601, surfaced in the marker tooltip so the caregiver can see
    *  how stale the latest estimate is. */
   recorded_at: string;
+  /** Item 94: when true, the marker renders an amber stale ring (parity
+   *  with map/PatientPin). Set by LivePositionView when the latest
+   *  estimate is older than 30 s. */
+  isStale?: boolean;
 }
 
 /** F13 replay trail dot. Each rendered row in the position history

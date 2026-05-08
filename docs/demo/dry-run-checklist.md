@@ -91,7 +91,12 @@ hosted project or insert rows manually via Studio before the dry run.
 ## Backup tab {#backup-tab}
 
 - [ ] A second Chrome incognito tab is open on the prod URL, already signed in as
-      `admin@bizzieapp.com`, and sitting on the demo patient's History tab.
+      `admin@bizzieapp.com`, and sitting on the **patient roster** (`/patients`).
+      Item 142: previously this checklist said the backup tab should land on the
+      demo patient's History tab; the script's Beat 1 fallback assumes "auth or
+      navigation broke" and the backup needs to be the recovery surface, which
+      is the roster — opening from the roster lets the presenter re-navigate to
+      whichever beat broke without first having to back out of History.
 - [ ] The backup tab is positioned as Tab 2 in the window. Confirm you can reach
       it with a single Cmd+2 press.
 - [ ] If the [backup video](./backup-video-plan.md) is the last resort, confirm the

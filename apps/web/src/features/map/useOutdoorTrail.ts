@@ -36,8 +36,12 @@ export function useOutdoorTrail(): {
     }
   }, [patientId, initialQuery.data]);
 
-  // Append realtime outdoor estimates; ignore indoor.
+  // Append realtime outdoor estimates; ignore indoor. Item 152: refcount
+  // the store via acquire/release so future second consumers don't lose
+  // the trail when the first unmounts. The store's release() clears the
+  // trail only when the count hits zero.
   useEffect(() => {
+    useOutdoorTrailStore.getState().acquire(patientId);
     const unsubscribe = onPositionEstimate((row) => {
       if (row.mode !== 'outdoor') return;
       if (row.lat == null || row.lng == null) return;
@@ -45,7 +49,7 @@ export function useOutdoorTrail(): {
     });
     return () => {
       unsubscribe();
-      useOutdoorTrailStore.getState().reset(patientId);
+      useOutdoorTrailStore.getState().release(patientId);
     };
   }, [patientId, onPositionEstimate]);
 

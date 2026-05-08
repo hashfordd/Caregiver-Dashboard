@@ -91,9 +91,17 @@ function OutdoorMapViewBody({ patientId, estimate }: OutdoorMapViewProps) {
     mapRef.easeTo({ center: [estimate.lng, estimate.lat], duration: 600 });
   }, [mapRef, estimate?.lat, estimate?.lng]);
 
-  const dirty =
-    editing &&
-    JSON.stringify(draftPolygon) !== JSON.stringify(geofenceQuery.data?.params.geofence ?? null);
+  // Item 156: memoise the JSON-stringify dirty check so it doesn't run
+  // on every render (including the 5 s useNow tick that fires for the
+  // patient-pin staleness ring). Polygons can be hundreds of [lng, lat]
+  // pairs; serialising both sides 12× per minute on idle was wasteful.
+  const dirty = useMemo(
+    () =>
+      editing &&
+      JSON.stringify(draftPolygon) !==
+        JSON.stringify(geofenceQuery.data?.params.geofence ?? null),
+    [editing, draftPolygon, geofenceQuery.data?.params.geofence],
+  );
 
   return (
     <Card>
@@ -177,7 +185,7 @@ function OutdoorMapViewBody({ patientId, estimate }: OutdoorMapViewProps) {
         </div>
         <div className="aspect-[4/3] max-h-[720px] min-h-[280px] sm:min-h-[420px] w-full overflow-hidden rounded-lg border border-border">
           <Map
-            ref={(r) => setMapRef(r)}
+            ref={setMapRef}
             mapboxAccessToken={mapboxToken}
             initialViewState={{
               latitude: center.latitude,

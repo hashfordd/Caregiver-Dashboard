@@ -38,7 +38,24 @@ and the Live tab renders the marker.
 ### Browser configuration
 
 - Chrome (latest stable), **one tab only** on the patient detail page, Live tab
-  active throughout.
+  active throughout — with two scheduled excursions to the History tab below.
+
+### Required History-tab excursions (Phase I item 100)
+
+The failure-mode triage at the bottom of this document names ReplayScrubber +
+Recharts as primary suspects. Those subsystems are NOT mounted on the Live tab,
+so a Live-only 60-min run cannot exercise the failures it's designed to catch.
+At two scheduled points during the run:
+
+- **t = 15 min** — switch to History → Vitals (24 h preset). Wait for the chart
+  to render. Switch sub-tab to Replay. Press play at 10× and let it run for
+  60 s. Pause. Return to Live tab. Record the heap delta (`performance.memory.
+  usedJSHeapSize`) before and after the excursion.
+- **t = 45 min** — repeat the History excursion. Record heap delta separately.
+
+If either excursion's heap delta exceeds 30 MB and doesn't return after a forced
+GC + 5 min on the Live tab, the leak is in the History sub-tree (most likely
+ReplayScrubber sprite list or Recharts series state). Triage section below.
 - DevTools open to the **Memory** panel before the run starts (not closed during
   the run — the panel adds minimal overhead and is needed for heap snapshots).
 - Console cleared immediately before starting (right-click → Clear console).
@@ -165,10 +182,16 @@ contributor.
 
 **Diagnostic step**: open the `ReplayScrubber.tsx` render loop. Confirm that dots
 whose `recorded_at` precedes the trail window are removed via `canvas.remove(dot)`.
-If `canvas.remove` is called but the object array still grows, check whether the dot
-is also being added to a separate React ref array that is never pruned. The unit
-test in `ReplayScrubber.test.tsx` assertion 3 (canvas object count after scrubber
-advance) should catch this — re-run the test first.
+If `canvas.remove` is called but the object array still grows, check whether the
+dot is also being added to a separate React ref array that is never pruned.
+
+The unit test in `ReplayScrubber.test.tsx` test 3 asserts **sprite-list
+trimming** (the contents of the array passed to `setReplayDots`); it does NOT
+assert canvas-level retention. A real Fabric.Object leak with a correctly-trimmed
+sprite list would pass that test. To check canvas retention specifically, take
+a heap snapshot in DevTools after a long replay session and search for retained
+`Fabric.Object` instances — the trimming test is necessary but not sufficient
+(item 125).
 
 ### Suspect 2 — Recharts series object accumulation
 

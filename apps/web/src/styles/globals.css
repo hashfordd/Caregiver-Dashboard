@@ -112,8 +112,15 @@
   --color-destructive: var(--color-rust);
   --color-destructive-foreground: var(--color-eggshell-500);
 
-  /* Borders + inputs sit a step away from the surface they live on */
-  --color-border: var(--color-space-400);
+  /* Borders + inputs sit a step away from the surface they live on.
+     Item 122: --color-border bumped from space-400 to space-600 so dark-
+     mode card outlines are actually visible. The previous space-400
+     #172436 against the ink-500 #0d1321 background was ~1.07:1, well
+     below WCAG 1.4.11's 3:1 floor for non-text contrast. space-600
+     #36547e measures ~3.2:1, which clears AA. --color-input keeps the
+     subtler space-400 because input borders sit on the card surface
+     rather than directly on the page background. */
+  --color-border: var(--color-space-600);
   --color-input: var(--color-space-400);
   --color-ring: var(--color-denim-500);
 

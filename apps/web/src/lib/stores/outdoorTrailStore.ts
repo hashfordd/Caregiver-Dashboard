@@ -13,17 +13,28 @@ import type { PositionEstimateRow } from '@/lib/usePatientStream';
 
 const TRAIL_WINDOW_MS = 30 * 60 * 1000;
 
+// Item 152: refcount the store, mirroring positionMarkerStore. Future
+// second consumers (e.g. a sidebar "outdoor minutes today" widget) can
+// then mount alongside OutdoorMapView without losing the trail when one
+// unmounts first. Reset only fires on the last release.
 interface OutdoorTrailState {
   byPatient: Record<string, PositionEstimateRow[]>;
+  refcountByPatient: Record<string, number>;
   /** Replace the trail with a fresh fetch (initial mount, route change). */
   hydrate: (patientId: string, rows: PositionEstimateRow[]) => void;
   /** Append a new realtime estimate; trim to the 30-min window. */
   push: (patientId: string, row: PositionEstimateRow) => void;
+  /** Increment a patient's subscriber count. */
+  acquire: (patientId: string) => void;
+  /** Decrement; clear the trail when refcount hits zero. */
+  release: (patientId: string) => void;
+  /** Force-clear regardless of refcount. Tests + explicit logout. */
   reset: (patientId: string) => void;
 }
 
 export const useOutdoorTrailStore = create<OutdoorTrailState>((set) => ({
   byPatient: {},
+  refcountByPatient: {},
   hydrate: (patientId, rows) =>
     set((state) => ({
       byPatient: {
@@ -36,6 +47,26 @@ export const useOutdoorTrailStore = create<OutdoorTrailState>((set) => ({
       const prev = state.byPatient[patientId] ?? [];
       const next = trimTo30Min([...prev, row]);
       return { byPatient: { ...state.byPatient, [patientId]: next } };
+    }),
+  acquire: (patientId) =>
+    set((state) => ({
+      refcountByPatient: {
+        ...state.refcountByPatient,
+        [patientId]: (state.refcountByPatient[patientId] ?? 0) + 1,
+      },
+    })),
+  release: (patientId) =>
+    set((state) => {
+      const next = (state.refcountByPatient[patientId] ?? 0) - 1;
+      const nextRefcount = { ...state.refcountByPatient };
+      const nextByPatient = { ...state.byPatient };
+      if (next <= 0) {
+        delete nextRefcount[patientId];
+        delete nextByPatient[patientId];
+      } else {
+        nextRefcount[patientId] = next;
+      }
+      return { refcountByPatient: nextRefcount, byPatient: nextByPatient };
     }),
   reset: (patientId) =>
     set((state) => {

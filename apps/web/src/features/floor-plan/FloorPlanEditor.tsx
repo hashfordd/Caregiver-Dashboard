@@ -50,13 +50,18 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
   // Reload the canvas when the server version changes — unless the caregiver
   // has unsaved changes, in which case we surface a "remote update" pill so
   // they can choose to discard or keep editing.
+  //
+  // Item 92: track the version via floor_plans.updated_at (the new
+  // auto-bump trigger column) instead of created_at. UPDATE doesn't
+  // change created_at, so the prior implementation could never detect
+  // a concurrent caregiver's save — they silently overwrote each other.
   useEffect(() => {
-    const created = planQuery.data?.created_at;
-    if (!created) return;
-    if (lastLoadedVersionRef.current === created) return;
+    const updated = planQuery.data?.updated_at;
+    if (!updated) return;
+    if (lastLoadedVersionRef.current === updated) return;
     if (lastLoadedVersionRef.current === null) {
       // First load — the canvas mounts with initialJson, no need to reload.
-      lastLoadedVersionRef.current = created;
+      lastLoadedVersionRef.current = updated;
       return;
     }
     if (dirty) {
@@ -64,9 +69,9 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
       return;
     }
     void canvasRef.current?.deserialize(planQuery.data?.canvas_json);
-    lastLoadedVersionRef.current = created;
+    lastLoadedVersionRef.current = updated;
     setRemoteVersionPending(false);
-  }, [planQuery.data?.created_at, planQuery.data?.canvas_json, dirty]);
+  }, [planQuery.data?.updated_at, planQuery.data?.canvas_json, dirty]);
 
   const handleModeChange = useCallback((next: ToolMode) => {
     setMode(next);
@@ -103,9 +108,11 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
     });
     setDirty(false);
     setWarningOpen(false);
-    setSavedTone(`Saved · ${new Date(result.created_at).toLocaleTimeString()}`);
+    setSavedTone(`Saved · ${new Date(result.updated_at).toLocaleTimeString()}`);
     // Track the just-saved version so the refetch effect doesn't reload.
-    lastLoadedVersionRef.current = result.created_at;
+    // Item 92: anchor on updated_at (auto-bumped on UPDATE) so the
+    // version-conflict banner can detect a peer's save.
+    lastLoadedVersionRef.current = result.updated_at;
     setRemoteVersionPending(false);
     // Saving exits edit mode — the floor plan is locked again until the
     // caregiver explicitly clicks Edit.
@@ -191,8 +198,8 @@ export function FloorPlanEditor({ patientId }: FloorPlanEditorProps) {
     void canvasRef.current?.deserialize(planQuery.data?.canvas_json);
     setDirty(false);
     setRemoteVersionPending(false);
-    if (planQuery.data?.created_at) {
-      lastLoadedVersionRef.current = planQuery.data.created_at;
+    if (planQuery.data?.updated_at) {
+      lastLoadedVersionRef.current = planQuery.data.updated_at;
     }
   }, [planQuery.data?.canvas_json, planQuery.data?.created_at]);
 

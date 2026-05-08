@@ -931,9 +931,15 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         el.style.left = `${screen.x}px`;
         el.style.top = `${screen.y}px`;
         el.style.opacity = String(opacity);
-        el.title = `Position · confidence ${(markerSprite.confidence * 100).toFixed(0)}% · ${
-          markerSprite.recorded_at
-        }`;
+        // Item 94: amber stale ring overlay when isStale; matches
+        // map/PatientPin's 30-second threshold treatment.
+        const isStale = markerSprite.isStale === true;
+        el.style.boxShadow = isStale
+          ? '0 0 0 4px rgba(245, 158, 11, 0.55), 0 1px 2px rgba(0,0,0,0.18)'
+          : '0 1px 2px rgba(0,0,0,0.18)';
+        el.title = isStale
+          ? `Position (stale > 30 s) · confidence ${(markerSprite.confidence * 100).toFixed(0)}% · ${markerSprite.recorded_at}`
+          : `Position · confidence ${(markerSprite.confidence * 100).toFixed(0)}% · ${markerSprite.recorded_at}`;
       }
 
       // ─── F13 replay dots ────────────────────────────────────────────────
@@ -1218,7 +1224,11 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         const tagged = canvas.getObjects().filter((o) => kindOf(o));
         if (tagged.length === 0) return;
         for (const o of tagged) canvas.remove(o);
-        canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+        // Item 153: don't reset the viewport transform on clear. The
+        // caregiver's pan/zoom is independent of object content, and the
+        // dialog already promises "you can recover with Cmd/Ctrl+Z"; that
+        // promise is undermined if Reset also resets the camera. Pan/zoom
+        // survives the clear; objects are gone but the framing stays.
         canvas.requestRenderAll();
         emitDirty();
         emitEmpty();

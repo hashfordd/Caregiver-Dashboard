@@ -42,7 +42,14 @@ export function useCaptureCalibrationPoint(floorPlanId: string) {
       if (error) throw error;
       return data as CalibrationPointRow;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: calibrationKey(floorPlanId) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: calibrationKey(floorPlanId) });
+      // Item 93: also invalidate the count query the editor's
+      // CalibrationStaleWarning gate reads from. Without this the
+      // editor needs a page reload to surface the stale-warning after
+      // the first calibration capture.
+      qc.invalidateQueries({ queryKey: ['calibration-count', floorPlanId] });
+    },
   });
 }
 
@@ -53,6 +60,9 @@ export function useDeleteCalibrationPoint(floorPlanId: string) {
       const { error } = await supabase.from('calibration_points').delete().eq('id', id);
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: calibrationKey(floorPlanId) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: calibrationKey(floorPlanId) });
+      qc.invalidateQueries({ queryKey: ['calibration-count', floorPlanId] });
+    },
   });
 }

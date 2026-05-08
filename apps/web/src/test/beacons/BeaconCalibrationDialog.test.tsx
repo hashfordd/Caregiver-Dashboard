@@ -140,8 +140,8 @@ describe('BeaconCalibrationDialog', () => {
     expect(screen.getAllByText(/-65/).length).toBeGreaterThan(0);
   });
 
-  it('writes rssi_at_1m and tx_power to the same rounded mean on save', async () => {
-    mutateAsyncMock.mockResolvedValue({ ...BEACON, rssi_at_1m: -65, tx_power: -65 });
+  it('writes only rssi_at_1m on save (item 126: tx_power no longer conflated)', async () => {
+    mutateAsyncMock.mockResolvedValue({ ...BEACON, rssi_at_1m: -65 });
     renderDialog();
     fireEvent.click(screen.getByRole('button', { name: /start 5 s capture/i }));
 
@@ -163,7 +163,6 @@ describe('BeaconCalibrationDialog', () => {
     expect(mutateAsyncMock).toHaveBeenCalledWith({
       id: 'b-1',
       rssi_at_1m: -65,
-      tx_power: -65,
     });
   });
 

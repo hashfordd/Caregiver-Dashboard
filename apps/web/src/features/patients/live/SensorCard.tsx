@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useLiveSensorStore, type Metric } from '@/lib/stores/liveSensorStore';
+import { useNow } from '@/lib/useNow';
 import { cn } from '@/lib/utils';
 import { Sparkline } from './Sparkline';
 
@@ -25,12 +25,11 @@ interface SensorCardProps {
 
 export function SensorCard({ patientId, metric }: SensorCardProps) {
   const card = useLiveSensorStore((s) => s.cards[patientId]?.[metric]);
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, []);
+  // Item 120: shared 1 Hz tick from useNow instead of a per-card
+  // setInterval. Three sensor cards on a patient detail page were
+  // running three independent timers driving 32,400 redundant React
+  // state updates over the 60-min TST-10 run; now they share one.
+  const now = useNow(1000);
 
   const lastReceivedAt = card?.lastReceivedAt ?? null;
   const isStale = lastReceivedAt != null && now - lastReceivedAt > STALE_MS;

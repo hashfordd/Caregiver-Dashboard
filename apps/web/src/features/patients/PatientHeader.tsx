@@ -49,7 +49,11 @@ export function PatientHeader({ patient }: { patient: Patient }) {
         <ChevronLeft className="mr-1 h-3.5 w-3.5" />
         Roster
       </Link>
-      <div className="mt-3 flex items-center justify-between gap-6">
+      {/* Item 97: flex-wrap + reduced text size at narrow widths so the
+          414 px (iPhone Pro) floor doesn't collide name + edit button +
+          status pill. The Edit button + status pill drop below the
+          identity block on narrow viewports. */}
+      <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-center gap-4">
           <div
             aria-hidden
@@ -58,7 +62,9 @@ export function PatientHeader({ patient }: { patient: Patient }) {
             {initials(patient.full_name)}
           </div>
           <div className="min-w-0">
-            <h1 className="font-serif italic text-4xl text-foreground">{patient.full_name}</h1>
+            <h1 className="font-serif italic text-2xl sm:text-4xl text-foreground">
+              {patient.full_name}
+            </h1>
             <div className="mt-1 flex items-baseline gap-3 text-sm text-muted-foreground">
               {age && <span className="shrink-0">age {age}</span>}
               {patient.description && (
