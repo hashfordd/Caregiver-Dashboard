@@ -200,7 +200,10 @@ export async function handleRulesEngineRequest(
       .maybeSingle();
     if (lastFiredRes.error) return dbError('alerts', lastFiredRes.error);
     const lastFiredAt = (lastFiredRes.data as { fired_at: string } | null)?.fired_at ?? null;
-    if (withinCooldown(rule, lastFiredAt, serverNowIso)) {
+    // Cooldown gap is measured against the event's own timestamp so a
+    // replay or backfill respects per-event cooldown semantics; fired_at
+    // (the row timestamp) stays at server time per item 90.
+    if (withinCooldown(rule, lastFiredAt, dataPointAt(dataPoint))) {
       outcomes.push({ rule_id: rule.id, decision: 'cooldown_suppressed' });
       continue;
     }

@@ -2,8 +2,16 @@ import { useMemo } from 'react';
 import { Bell } from 'lucide-react';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
-import type { AlertRule, FallRule, InactivityRule, VitalsRule, ZoneRule } from '@alzcare/shared';
+import type {
+  AlertRule,
+  DeviceSilenceRule,
+  FallRule,
+  InactivityRule,
+  VitalsRule,
+  ZoneRule,
+} from '@alzcare/shared';
 import { useAlertRules } from './useAlertRules';
+import { DeviceSilenceRuleCard } from './rule-types/DeviceSilenceRuleCard';
 import { FallRuleCard } from './rule-types/FallRuleCard';
 import { InactivityRuleCard } from './rule-types/InactivityRuleCard';
 import { VitalsRuleCard } from './rule-types/VitalsRuleCard';
@@ -51,8 +59,14 @@ export function RuleSettingsTab({ patientId }: Props) {
         </p>
       </header>
 
-      <section className="space-y-3">
-        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      {/* Item 138: each section has id + aria-labelledby on the heading
+          so screen readers announce the section name when tabbing into
+          the first focusable child. */}
+      <section className="space-y-3" aria-labelledby="rules-vitals-heading">
+        <h4
+          id="rules-vitals-heading"
+          className="text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+        >
           Vitals
         </h4>
         <VitalsRuleCard
@@ -75,25 +89,44 @@ export function RuleSettingsTab({ patientId }: Props) {
         />
       </section>
 
-      <section className="space-y-3">
-        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <section className="space-y-3" aria-labelledby="rules-zone-heading">
+        <h4
+          id="rules-zone-heading"
+          className="text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+        >
           Zone (geofence)
         </h4>
         <ZoneRuleCard patientId={patientId} rule={grouped.zone} />
       </section>
 
-      <section className="space-y-3">
-        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <section className="space-y-3" aria-labelledby="rules-fall-heading">
+        <h4
+          id="rules-fall-heading"
+          className="text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+        >
           Fall
         </h4>
         <FallRuleCard patientId={patientId} rule={grouped.fall} />
       </section>
 
-      <section className="space-y-3">
-        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <section className="space-y-3" aria-labelledby="rules-inactivity-heading">
+        <h4
+          id="rules-inactivity-heading"
+          className="text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+        >
           Inactivity
         </h4>
         <InactivityRuleCard patientId={patientId} rule={grouped.inactivity} />
+      </section>
+
+      <section className="space-y-3" aria-labelledby="rules-device-silence-heading">
+        <h4
+          id="rules-device-silence-heading"
+          className="text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+        >
+          Device silence
+        </h4>
+        <DeviceSilenceRuleCard patientId={patientId} rule={grouped.device_silence} />
       </section>
     </div>
   );
@@ -104,6 +137,7 @@ interface Grouped {
   zone: ZoneRule | null;
   fall: FallRule | null;
   inactivity: InactivityRule | null;
+  device_silence: DeviceSilenceRule | null;
 }
 
 function groupRules(rules: AlertRule[]): Grouped {
@@ -112,6 +146,7 @@ function groupRules(rules: AlertRule[]): Grouped {
     zone: null,
     fall: null,
     inactivity: null,
+    device_silence: null,
   };
   for (const r of rules) {
     if (r.type === 'vitals') {
@@ -126,6 +161,8 @@ function groupRules(rules: AlertRule[]): Grouped {
       grouped.fall = r;
     } else if (r.type === 'inactivity' && grouped.inactivity == null) {
       grouped.inactivity = r;
+    } else if (r.type === 'device_silence' && grouped.device_silence == null) {
+      grouped.device_silence = r;
     }
   }
   return grouped;

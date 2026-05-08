@@ -78,6 +78,16 @@ const InactivityParams = z.object({
 });
 export type InactivityParams = z.infer<typeof InactivityParams>;
 
+// Item 131: device_silence — fires when the patient's wearable hasn't
+// reported in `silence_minutes`. Distinct from inactivity (which is
+// "patient not moving but device reporting"); same patient surface,
+// different sensor expectation.
+const DeviceSilenceParams = z.object({
+  silence_minutes: z.number().int().positive(),
+  cooldown_seconds: z.number().int().positive().optional(),
+});
+export type DeviceSilenceParams = z.infer<typeof DeviceSilenceParams>;
+
 // ─── union ────────────────────────────────────────────────────────────
 
 interface AlertRuleBase {
@@ -105,8 +115,17 @@ export interface InactivityRule extends AlertRuleBase {
   type: 'inactivity';
   params: InactivityParams;
 }
+export interface DeviceSilenceRule extends AlertRuleBase {
+  type: 'device_silence';
+  params: DeviceSilenceParams;
+}
 
-export type AlertRule = ZoneRule | VitalsRule | FallRule | InactivityRule;
+export type AlertRule =
+  | ZoneRule
+  | VitalsRule
+  | FallRule
+  | InactivityRule
+  | DeviceSilenceRule;
 export type AlertRuleType = AlertRule['type'];
 
 /** Zod parser keyed off the rule's `type` field. Used by the UI on save
@@ -117,6 +136,7 @@ export const AlertRuleParams = z.discriminatedUnion('type', [
   z.object({ type: z.literal('vitals'), params: VitalsParams }),
   z.object({ type: z.literal('fall'), params: FallParams }),
   z.object({ type: z.literal('inactivity'), params: InactivityParams }),
+  z.object({ type: z.literal('device_silence'), params: DeviceSilenceParams }),
 ]);
 
 // AlertSeverity is re-exported from db/alerts via the package barrel.

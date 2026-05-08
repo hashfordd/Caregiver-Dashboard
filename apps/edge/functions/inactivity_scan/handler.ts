@@ -25,9 +25,11 @@ import {
   AlertRuleParams,
   evaluateRule,
   withinCooldown,
+  type AlertRule,
+  type DeviceSilenceRule,
   type InactivityRule,
 } from '@alzcare/shared/rules';
-import type { PositionEstimateRow } from '@alzcare/shared/db';
+import type { PositionEstimateRow, SensorReadingRow } from '@alzcare/shared/db';
 
 interface HandlerEnv {
   serviceRoleKey: string;
@@ -73,10 +75,13 @@ export async function handleInactivityScan(
   const nowIso = new Date().toISOString();
   const nowMs = new Date(nowIso).getTime();
 
+  // Item 131: this handler now scans both 'inactivity' and 'device_silence'
+  // rule types. They share the cron tick + per-rule loop shape; only the
+  // history fetch and evaluator branch differ.
   const rulesRes = await supabase
     .from('alert_rules')
     .select('id, patient_id, type, params, severity, enabled, created_at, updated_at')
-    .eq('type', 'inactivity')
+    .in('type', ['inactivity', 'device_silence'])
     .eq('enabled', true);
   if (rulesRes.error) return dbError('alert_rules', rulesRes.error);
 
@@ -90,20 +95,33 @@ export async function handleInactivityScan(
     created_at: string;
     updated_at: string;
   }>;
-  const rules: InactivityRule[] = [];
+  const rules: AlertRule[] = [];
   for (const row of rawRules) {
     const parsed = AlertRuleParams.safeParse({ type: row.type, params: row.params });
-    if (!parsed.success || parsed.data.type !== 'inactivity') continue;
-    rules.push({
-      id: row.id,
-      patient_id: row.patient_id,
-      severity: row.severity,
-      enabled: row.enabled,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-      type: 'inactivity',
-      params: parsed.data.params,
-    });
+    if (!parsed.success) continue;
+    if (parsed.data.type === 'inactivity') {
+      rules.push({
+        id: row.id,
+        patient_id: row.patient_id,
+        severity: row.severity,
+        enabled: row.enabled,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+        type: 'inactivity',
+        params: parsed.data.params,
+      } satisfies InactivityRule);
+    } else if (parsed.data.type === 'device_silence') {
+      rules.push({
+        id: row.id,
+        patient_id: row.patient_id,
+        severity: row.severity,
+        enabled: row.enabled,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+        type: 'device_silence',
+        params: parsed.data.params,
+      } satisfies DeviceSilenceRule);
+    }
   }
 
   if (rules.length === 0) {
@@ -112,41 +130,82 @@ export async function handleInactivityScan(
 
   const outcomes: ScanOutcome[] = [];
   for (const rule of rules) {
-    const lookbackMinutes = Math.min(MAX_LOOKBACK_MINUTES, rule.params.inactive_minutes + 5);
-    const sinceIso = new Date(nowMs - lookbackMinutes * 60_000).toISOString();
-    const positionsRes = await supabase
-      .from('position_estimates')
-      .select(
-        'id, patient_id, recorded_at, mode, x_canvas, y_canvas, lat, lng, confidence, indoor_confidence, gps_strong, created_at',
-      )
-      .eq('patient_id', rule.patient_id)
-      .gte('recorded_at', sinceIso)
-      .order('recorded_at', { ascending: false })
-      .limit(POSITION_LOOKBACK_LIMIT);
-    if (positionsRes.error) {
-      outcomes.push({
-        rule_id: rule.id,
-        decision: 'no_match',
-        details: 'position_fetch_failed',
-      });
-      console.error(
-        JSON.stringify({
-          level: 'error',
-          msg: 'inactivity_scan: positions fetch failed',
+    let positions: PositionEstimateRow[] = [];
+    let sensors: SensorReadingRow[] = [];
+
+    if (rule.type === 'inactivity') {
+      const lookbackMinutes = Math.min(MAX_LOOKBACK_MINUTES, rule.params.inactive_minutes + 5);
+      // Item 90: bound the lookback by rule.updated_at — we shouldn't
+      // count "the patient was stationary" against position rows that
+      // predate the rule's last edit. A freshly-edited threshold starts
+      // counting from the edit moment.
+      const lookbackStart = nowMs - lookbackMinutes * 60_000;
+      const updatedMs = Date.parse(rule.updated_at);
+      const sinceIso = new Date(Math.max(lookbackStart, updatedMs)).toISOString();
+      const positionsRes = await supabase
+        .from('position_estimates')
+        .select(
+          'id, patient_id, recorded_at, mode, x_canvas, y_canvas, lat, lng, confidence, indoor_confidence, gps_strong, created_at',
+        )
+        .eq('patient_id', rule.patient_id)
+        .gte('recorded_at', sinceIso)
+        .order('recorded_at', { ascending: false })
+        .limit(POSITION_LOOKBACK_LIMIT);
+      if (positionsRes.error) {
+        outcomes.push({
           rule_id: rule.id,
-          err: positionsRes.error.message,
-        }),
-      );
-      continue;
+          decision: 'no_match',
+          details: 'position_fetch_failed',
+        });
+        console.error(
+          JSON.stringify({
+            level: 'error',
+            msg: 'inactivity_scan: positions fetch failed',
+            rule_id: rule.id,
+            err: positionsRes.error.message,
+          }),
+        );
+        continue;
+      }
+      positions = (positionsRes.data ?? []) as PositionEstimateRow[];
+    } else {
+      // device_silence: fetch the patient's newest sensor_reading. We
+      // only need the timestamp.
+      const sinceIso = new Date(
+        Math.max(nowMs - MAX_LOOKBACK_MINUTES * 60_000, Date.parse(rule.updated_at)),
+      ).toISOString();
+      const sensorRes = await supabase
+        .from('sensor_readings')
+        .select('id, patient_id, device_id, recorded_at, hr_bpm, spo2_pct, temp_c, accel, gyro, created_at')
+        .eq('patient_id', rule.patient_id)
+        .gte('recorded_at', sinceIso)
+        .order('recorded_at', { ascending: false })
+        .limit(1);
+      if (sensorRes.error) {
+        outcomes.push({
+          rule_id: rule.id,
+          decision: 'no_match',
+          details: 'sensor_fetch_failed',
+        });
+        console.error(
+          JSON.stringify({
+            level: 'error',
+            msg: 'inactivity_scan: sensor fetch failed',
+            rule_id: rule.id,
+            err: sensorRes.error.message,
+          }),
+        );
+        continue;
+      }
+      sensors = (sensorRes.data ?? []) as SensorReadingRow[];
     }
-    const positions = (positionsRes.data ?? []) as PositionEstimateRow[];
 
     const result = evaluateRule(
       rule,
       { kind: 'tick', at: nowIso },
       {
         positions,
-        sensors: [],
+        sensors,
         events: [],
       },
     );

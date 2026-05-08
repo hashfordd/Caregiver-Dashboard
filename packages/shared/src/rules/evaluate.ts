@@ -16,6 +16,7 @@ import { APP_TIMEZONE } from '../index.ts';
 import type {
   AlertRule,
   DataPoint,
+  DeviceSilenceRule,
   EvaluatorResult,
   HistoryWindow,
   InactivityRule,
@@ -49,7 +50,41 @@ export function evaluateRule(
       return evaluateZone(rule, dataPoint, history);
     case 'inactivity':
       return evaluateInactivity(rule, dataPoint, history);
+    case 'device_silence':
+      return evaluateDeviceSilence(rule, dataPoint, history);
   }
+}
+
+// Item 131: device_silence is a tick-driven rule (no per-row trigger).
+// Caller fetches the patient's most recent telemetry sample and passes
+// it via `history.sensors[0]` (newest first). When sensors is empty,
+// gate against `rule.updated_at` so a freshly-enabled rule on a
+// long-silent patient doesn't fire instantly.
+function evaluateDeviceSilence(
+  rule: DeviceSilenceRule,
+  dp: DataPoint,
+  history: HistoryWindow,
+): EvaluatorResult {
+  if (dp.kind !== 'tick') return { fire: false };
+  const nowMs = Date.parse(dp.at);
+  const newest = history.sensors[0];
+  const lastSeenMs = newest
+    ? Date.parse(newest.recorded_at)
+    : Date.parse(rule.updated_at);
+  const silentMs = nowMs - lastSeenMs;
+  const thresholdMs = rule.params.silence_minutes * 60_000;
+  if (silentMs < thresholdMs) return { fire: false };
+  return {
+    fire: true,
+    severity: rule.severity,
+    context: {
+      kind: 'device_silence',
+      silence_minutes: rule.params.silence_minutes,
+      device_last_seen_at: newest?.recorded_at ?? null,
+      silence_ms: silentMs,
+      tick_at: dp.at,
+    },
+  };
 }
 
 // ─── vitals ───────────────────────────────────────────────────────────
