@@ -46,7 +46,9 @@ export function AlertsFilter({ value, onChange }: Props) {
             type="button"
             onClick={() => toggleSeverity(p.sev)}
             className={cn(
+              // Item 99: visible focus ring for keyboard nav (Phase 5 a11y).
               'rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background',
               active ? `${p.classes} border-transparent` : 'border-border text-muted-foreground',
             )}
             aria-pressed={active}
@@ -67,6 +69,7 @@ export function AlertsFilter({ value, onChange }: Props) {
             onClick={() => onChange({ ...value, state: p.state })}
             className={cn(
               'rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background',
               active
                 ? 'border-primary/40 bg-primary/10 text-foreground'
                 : 'border-border text-muted-foreground',

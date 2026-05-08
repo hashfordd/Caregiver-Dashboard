@@ -40,6 +40,10 @@ const { usePositionHistoryMock, capturedDotCalls } = vi.hoisted(() => {
 });
 
 vi.mock('@/lib/queries/history', () => ({
+  // Item 117: ReplayScrubber imports MAX_HISTORY_ROWS to render a
+  // truncation notice when the server cap clips the window. Re-export
+  // the same constant value the real module exposes.
+  MAX_HISTORY_ROWS: 100_000,
   usePositionHistory: (...args: unknown[]) => usePositionHistoryMock(...args),
   useVitalsHistory: vi.fn(),
   useAlertHistory: vi.fn(),

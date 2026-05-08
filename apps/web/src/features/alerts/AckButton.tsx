@@ -36,13 +36,14 @@ export function AckButton({ alert, onAcked }: AckButtonProps) {
       qc.setQueriesData<AlertRow[]>({ queryKey: ['alerts'] }, (prev) =>
         prev?.map((r) => (r.id === alert.id ? optimisticRow : r)),
       );
-      return { previous: alert };
     },
-    onError: (_err, _vars, ctx) => {
-      if (!ctx) return;
-      qc.setQueriesData<AlertRow[]>({ queryKey: ['alerts'] }, (prev) =>
-        prev?.map((r) => (r.id === alert.id ? ctx.previous : r)),
-      );
+    onError: () => {
+      // Item 130: invalidate instead of rollback. A concurrent realtime
+      // UPDATE from another tab may have already patched the cache to
+      // acked between onMutate and onError; rolling back to
+      // acknowledged_at: null would clobber that. The server is the
+      // truth — refetch and let the row reflect actual state.
+      void qc.invalidateQueries({ queryKey: ['alerts'] });
     },
     onSuccess: () => {
       onAcked?.();

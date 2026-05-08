@@ -2,7 +2,7 @@ import { useMemo, useCallback } from 'react';
 import { Download } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useVitalsHistory, usePositionHistory, useAlertHistory } from '@/lib/queries/history';
-import { computeRange, type DateRange, type AlertHistoryFilters } from './types';
+import { computeRange, type DateRange } from './types';
 import { alertRowsToCsv, positionRowsToCsv, vitalsRowsToCsv } from './csv';
 
 interface Props {
@@ -18,11 +18,10 @@ function use24hRange(): DateRange {
   }, []);
 }
 
-// Wide-open alert filters — all severities, all rule types.
-const ALL_ALERT_FILTERS: AlertHistoryFilters = {
-  severities: new Set(['info', 'warn', 'critical']),
-  ruleTypes: new Set(['zone', 'vitals', 'fall', 'inactivity', 'repetitive_movement']),
-};
+// V2: stream via ReadableStream + BlobPart[] when row counts grow beyond
+// 100k. At V1 scale (24h × 1Hz vitals = 86,400 rows ≈ 3.5 MB joined
+// string) the synchronous click blocks the main thread ~50–80 ms which
+// is acceptable for the demo path.
 
 function utcDateStamp(): string {
   return new Date().toISOString().slice(0, 10);
@@ -91,7 +90,7 @@ export function CsvExport({ patientId }: Props) {
 
   const vitals = useVitalsHistory(patientId, range);
   const positions = usePositionHistory(patientId, range);
-  const alerts = useAlertHistory(patientId, range, ALL_ALERT_FILTERS);
+  const alerts = useAlertHistory(patientId, range);
 
   const handleVitals = useCallback(() => {
     if (!vitals.data?.length) return;

@@ -1,3 +1,4 @@
+import { useCallback, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 
@@ -7,7 +8,12 @@ import { supabase } from '@/lib/supabase';
  *
  *  Cached under a dedicated key (not the roster cache) so this hook
  *  can stay a thin "id → name" lookup without coupling to the
- *  roster query's column shape. */
+ *  roster query's column shape.
+ *
+ *  Item 128: byId Map + resolve are memoised on query.data so consumers
+ *  using either as a dep array don't invalidate every render. The
+ *  resulting closure identity is stable when the underlying patient
+ *  list is unchanged — preserves the hook's staleTime cache benefit. */
 const KEY = ['patients', 'lookup'] as const;
 
 export interface PatientLookup {
@@ -26,17 +32,22 @@ export function usePatientsLookup(): PatientLookup {
     },
   });
 
-  const byId = new Map<string, string>();
-  for (const row of query.data ?? []) byId.set(row.id, row.full_name);
+  const byId = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const row of query.data ?? []) m.set(row.id, row.full_name);
+    return m;
+  }, [query.data]);
 
-  return {
-    byId,
-    resolve: (id) => {
+  const resolve = useCallback(
+    (id: string | null | undefined) => {
       if (!id) return 'Unknown patient';
       const name = byId.get(id);
       if (name) return name;
       // Fall back to a short UUID prefix while the lookup loads.
       return `Patient ${id.slice(0, 8)}`;
     },
-  };
+    [byId],
+  );
+
+  return { byId, resolve };
 }

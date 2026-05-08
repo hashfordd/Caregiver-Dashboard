@@ -33,8 +33,14 @@ export function AlertBell() {
           {unackedCount > 0 && (
             <span
               className={cn(
-                'absolute -right-0.5 -top-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold text-white',
-                hasCritical ? 'bg-red-600' : 'bg-amber-500',
+                // Item 96: WCAG AA contrast pass.
+                //   amber-500 #f59e0b vs amber-950 #451a03 ≈ 11.5:1
+                //   red-700  #b91c1c vs white            ≈ 5.4:1
+                // Previous text-white on amber-500 measured ~1.64:1, which
+                // failed AA for small text and was the only badge state
+                // surfaced during the demo unacked-count beat.
+                'absolute -right-0.5 -top-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold',
+                hasCritical ? 'bg-red-700 text-white' : 'bg-amber-500 text-amber-950',
               )}
             >
               {unackedCount > 99 ? '99+' : unackedCount}

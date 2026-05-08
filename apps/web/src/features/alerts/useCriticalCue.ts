@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { AlertRow } from '@alzcare/shared';
+import { useAuth } from '@/features/auth/AuthProvider';
 import { usePatientsLookup } from '@/features/patients/usePatientsLookup';
 import {
   playCriticalSound,
@@ -23,11 +23,19 @@ import { useAllocatedAlerts } from './useAllocatedAlerts';
  *      desktop notification body and console log say "Margaret
  *      Holloway" instead of "Patient 11111111". */
 export function useCriticalCue(): void {
+  const { user } = useAuth();
   const { rows, isSuccess } = useAllocatedAlerts();
   const navigate = useNavigate();
   const lookup = usePatientsLookup();
   const seenRef = useRef<Set<string>>(new Set());
   const armedRef = useRef(false);
+
+  // Item 157: reset on caregiver change so the previous user's arming
+  // state doesn't carry over after an in-SPA logout/login.
+  useEffect(() => {
+    armedRef.current = false;
+    seenRef.current = new Set();
+  }, [user?.id]);
 
   // Seed the seen-set the moment the initial fetch resolves so historical
   // alerts don't trigger a cue. Arming on isSuccess (rather than rows

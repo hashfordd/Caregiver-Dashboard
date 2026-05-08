@@ -5,6 +5,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { AlertRow } from './AlertRow';
 import { AlertsFilter, type FilterState } from './AlertsFilter';
 import { useAllocatedAlerts } from './useAllocatedAlerts';
+import { usePatientsLookup } from '@/features/patients/usePatientsLookup';
 import type { AlertSeverity } from '@alzcare/shared';
 
 const ALL_SEVERITIES: AlertSeverity[] = ['info', 'warn', 'critical'];
@@ -14,6 +15,9 @@ const ALL_SEVERITIES: AlertSeverity[] = ['info', 'warn', 'critical'];
  *  here doesn't re-fetch. Filters mirror the per-patient AlertsTab. */
 export function AlertsPage() {
   const { rows, isLoading, isError } = useAllocatedAlerts();
+  // Item 98: resolve patient names so the /alerts feed matches the bell
+  // instead of showing 'Patient 11111111'-style truncations.
+  const lookup = usePatientsLookup();
   const [filter, setFilter] = useState<FilterState>({
     severities: new Set<AlertSeverity>(ALL_SEVERITIES),
     state: 'active',
@@ -76,7 +80,7 @@ export function AlertsPage() {
               key={row.id}
               alert={row}
               patientHref={`/patients/${row.patient_id}?tab=alerts`}
-              patientLabel={`Patient ${row.patient_id.slice(0, 8)}`}
+              patientLabel={lookup.resolve(row.patient_id)}
             />
           ))}
         </div>

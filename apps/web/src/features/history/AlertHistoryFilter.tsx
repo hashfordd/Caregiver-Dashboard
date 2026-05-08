@@ -3,6 +3,7 @@ import { Bell } from 'lucide-react';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
+import { formatAppTz } from '@/lib/time';
 import { useAlertHistory, filterAlerts } from '@/lib/queries/history';
 import type { AlertSeverity } from '@alzcare/shared';
 import type { AlertHistoryFilters, AlertHistoryRow, AlertRuleType, DateRange } from './types';
@@ -59,7 +60,7 @@ function AckCell({ row }: { row: AlertHistoryRow }) {
 export function AlertHistoryFilter({ patientId, range }: Props) {
   const [filters, setFilters] = useState<AlertHistoryFilters>(defaultFilters);
 
-  const query = useAlertHistory(patientId, range, filters);
+  const query = useAlertHistory(patientId, range);
 
   const filtered = useMemo(() => filterAlerts(query.data ?? [], filters), [query.data, filters]);
 
@@ -92,6 +93,7 @@ export function AlertHistoryFilter({ patientId, range }: Props) {
                 onClick={() => toggleSeverity(p.sev)}
                 className={cn(
                   'rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background',
                   active
                     ? `${p.classes} border-transparent`
                     : 'border-border text-muted-foreground',
@@ -114,6 +116,7 @@ export function AlertHistoryFilter({ patientId, range }: Props) {
                 onClick={() => toggleRuleType(p.type)}
                 className={cn(
                   'rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background',
                   active
                     ? 'border-primary/40 bg-primary/10 text-foreground'
                     : 'border-border text-muted-foreground',
@@ -165,7 +168,7 @@ export function AlertHistoryFilter({ patientId, range }: Props) {
               {filtered.map((row) => (
                 <tr key={row.id} className="hover:bg-muted/30">
                   <td className="px-3 py-2 font-mono text-xs text-foreground">
-                    {new Date(row.fired_at).toLocaleString()}
+                    {formatAppTz(row.fired_at)}
                   </td>
                   <td className="px-3 py-2">
                     <SeverityChip severity={row.severity} />

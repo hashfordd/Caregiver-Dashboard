@@ -23,7 +23,10 @@ const ALERT_COLUMNS =
 // can't lock the tab. 100k rows is well above realistic V1 volume
 // (~86,400 rows for 24 h × 1 Hz vitals); the soft default in the UI
 // is 6 h for vitals and 1 h for replay.
-const MAX_ROWS = 100_000;
+// Item 117: exported so consumers (ReplayScrubber) can surface a
+// truncation notice when the server cap clipped the window.
+export const MAX_HISTORY_ROWS = 100_000;
+const MAX_ROWS = MAX_HISTORY_ROWS;
 
 export function useVitalsHistory(patientId: string | undefined, range: DateRange) {
   return useQuery({
@@ -80,11 +83,11 @@ interface AlertJoinedRow {
   alert_rules: { type: AlertRuleType }[] | { type: AlertRuleType } | null;
 }
 
-export function useAlertHistory(
-  patientId: string | undefined,
-  range: DateRange,
-  filters: AlertHistoryFilters,
-) {
+// Item 155: filters are applied client-side via filterAlerts() so the
+// hook signature dropped the unused `filters` parameter that previously
+// only appeared in a comment. Callers pipe the query data through
+// filterAlerts directly.
+export function useAlertHistory(patientId: string | undefined, range: DateRange) {
   return useQuery({
     queryKey: ['history', 'alerts', patientId, range.from, range.to] as const,
     enabled: !!patientId,
@@ -114,10 +117,6 @@ export function useAlertHistory(
         };
       });
     },
-    // Filters are applied client-side via filterAlerts() so toggling a
-    // chip doesn't refetch — the date range is the only server-side
-    // predicate per the F13 spec (Risks: alert filter combinatorics).
-    select: (rows) => rows,
   });
 }
 

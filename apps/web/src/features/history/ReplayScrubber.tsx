@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pause, Play } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { History as HistoryIcon } from 'lucide-react';
-import { usePositionHistory } from '@/lib/queries/history';
+import { MAX_HISTORY_ROWS, usePositionHistory } from '@/lib/queries/history';
+import { formatAppTz } from '@/lib/time';
 import type { ReplayDotSprite } from '@/features/floor-plan/types';
 import type { PositionHistoryRow } from './types';
 import type { DateRange } from './types';
@@ -46,9 +47,6 @@ export function ReplayScrubber({ patientId, range, canvasJson, scaleMetersPerPix
 
   // Filtered, time-ordered indoor rows.
   const rows = useRef<PositionHistoryRow[]>([]);
-  useEffect(() => {
-    rows.current = (query.data ?? []).filter(isReplayable);
-  }, [query.data]);
 
   // Scrubber state. idx is the index of the *current* row (the leading
   // edge of the playhead); -1 means "before the start". headTimeMs is
@@ -64,8 +62,20 @@ export function ReplayScrubber({ patientId, range, canvasJson, scaleMetersPerPix
   const [speed, setSpeed] = useState<Speed>(60);
   const speedRef = useRef<Speed>(60);
 
-  // When rows change (range change), reset to the beginning.
+  // Item 115: rows-array swap + idx reset are coordinated in a single
+  // effect so a refetch can never expose the RAF loop to "new rows with
+  // old idx" for one frame. We hash the dataset's edges (length, first,
+  // last recorded_at); a noop refetch (same hash) skips the reset, so
+  // resuming play after a stale-time revalidation doesn't lose position.
+  const lastHashRef = useRef<string | null>(null);
   useEffect(() => {
+    const filtered = (query.data ?? []).filter(isReplayable);
+    const hash = filtered.length === 0
+      ? 'empty'
+      : `${filtered.length}-${filtered[0]?.recorded_at}-${filtered[filtered.length - 1]?.recorded_at}`;
+    rows.current = filtered;
+    if (lastHashRef.current === hash) return;
+    lastHashRef.current = hash;
     setIdx(-1);
     idxRef.current = -1;
     setPlaying(false);
@@ -114,6 +124,13 @@ export function ReplayScrubber({ patientId, range, canvasJson, scaleMetersPerPix
   // visible without making them painful.
   const rafRef = useRef<number | null>(null);
   const lastRafTs = useRef<number | null>(null);
+  // Item 124: throttle setReplayDots / Fabric mutation to once per
+  // ~50 ms even though idx state can update at full rate. At 300×
+  // playback this caps Fabric ops at ~20/s × trail size instead of
+  // 25/s × trail size, which keeps the demo path smooth on slower
+  // laptops without losing perceived smoothness.
+  const lastTrailRenderMs = useRef<number>(0);
+  const TRAIL_THROTTLE_MS = 50;
 
   const stopRaf = useCallback(() => {
     if (rafRef.current != null) {
@@ -140,9 +157,16 @@ export function ReplayScrubber({ patientId, range, canvasJson, scaleMetersPerPix
       }
 
       // Initialise the playhead on first tick from the current idx.
+      // Item 116: defensive check — a refetch race could leave us with
+      // a startIdx that's out of bounds. Bail rather than throw.
       if (headTimeRef.current === 0) {
         const startIdx = Math.max(0, idxRef.current);
-        headTimeRef.current = new Date(currentRows[startIdx]!.recorded_at).getTime();
+        const startRow = currentRows[startIdx];
+        if (!startRow) {
+          stopRaf();
+          return;
+        }
+        headTimeRef.current = new Date(startRow.recorded_at).getTime();
       }
 
       const advance = wallDelta * speedRef.current;
@@ -172,7 +196,15 @@ export function ReplayScrubber({ patientId, range, canvasJson, scaleMetersPerPix
       if (nextIdx !== idxRef.current) {
         idxRef.current = nextIdx;
         setIdx(nextIdx);
-        renderTrail(nextIdx);
+        // Item 124: rate-limit canvas writes; idx state still updates
+        // at full rate so the scrubber + timestamp readout stay live.
+        // Always render on the final tick (when the loop is about to
+        // stop) so the trail reflects the playback's last moment.
+        const isFinalTick = nextIdx >= currentRows.length - 1;
+        if (isFinalTick || nowMs - lastTrailRenderMs.current >= TRAIL_THROTTLE_MS) {
+          lastTrailRenderMs.current = nowMs;
+          renderTrail(nextIdx);
+        }
       }
 
       if (nextIdx >= currentRows.length - 1) {
@@ -188,6 +220,11 @@ export function ReplayScrubber({ patientId, range, canvasJson, scaleMetersPerPix
   }, [stopRaf, renderTrail]);
 
   const togglePlay = useCallback(() => {
+    // Item 116: empty-rows guard. A refetch race or refresh-while-paused
+    // can leave us with no replayable rows; pressing Play would then
+    // crash on the headTime initialisation. Bail with a no-op.
+    if (rows.current.length === 0) return;
+
     const wasPlaying = playingRef.current;
     playingRef.current = !wasPlaying;
     setPlaying(!wasPlaying);
@@ -198,7 +235,12 @@ export function ReplayScrubber({ patientId, range, canvasJson, scaleMetersPerPix
         idxRef.current = 0;
         setIdx(0);
         const first = rows.current[0];
-        headTimeRef.current = first ? new Date(first.recorded_at).getTime() : 0;
+        if (!first) {
+          playingRef.current = false;
+          setPlaying(false);
+          return;
+        }
+        headTimeRef.current = new Date(first.recorded_at).getTime();
         renderTrail(0);
       } else {
         // Re-anchor the playhead to whatever row we paused at — avoids
@@ -302,10 +344,29 @@ export function ReplayScrubber({ patientId, range, canvasJson, scaleMetersPerPix
 
   const total = indoorRows.length;
   const currentRow = idx >= 0 ? indoorRows[idx] : null;
-  const timestamp = currentRow ? new Date(currentRow.recorded_at).toLocaleTimeString() : '—';
+  // Item 101: timestamp readout in AEST so the value matches the badge
+  // claim in DateRangePicker regardless of the presenter machine's TZ.
+  const timestamp = currentRow
+    ? formatAppTz(currentRow.recorded_at, {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      })
+    : '—';
+  // Item 117: surface a notice when the server cap clipped the window.
+  const truncated = (query.data?.length ?? 0) >= MAX_HISTORY_ROWS;
 
   return (
     <div className="space-y-3">
+      {truncated && (
+        <p
+          role="status"
+          className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-700 dark:text-amber-300"
+        >
+          Showing first {MAX_HISTORY_ROWS.toLocaleString()} rows · narrow the window for full coverage.
+        </p>
+      )}
       {/* Controls */}
       <div className="flex flex-wrap items-center gap-3">
         <button
@@ -340,6 +401,10 @@ export function ReplayScrubber({ patientId, range, canvasJson, scaleMetersPerPix
       {/* Labelled range slider — screen readers announce position. */}
       <label className="block">
         <span className="sr-only">Playback position</span>
+        {/* Item 139: keyboard-shortcut hint for SR users. */}
+        <span className="sr-only">
+          Use Space to play or pause, arrow keys to scrub one frame, Shift+arrow to scrub ten frames.
+        </span>
         <input
           type="range"
           min={0}
@@ -348,6 +413,7 @@ export function ReplayScrubber({ patientId, range, canvasJson, scaleMetersPerPix
           onChange={onSliderChange}
           onKeyDown={onSliderKeyDown}
           aria-label="Playback position"
+          aria-keyshortcuts="Space ArrowLeft ArrowRight Shift+ArrowLeft Shift+ArrowRight"
           aria-valuemin={0}
           aria-valuemax={total - 1}
           aria-valuenow={Math.max(0, idx)}

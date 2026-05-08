@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { usePatientStreamContext } from '@/features/patients/PatientStreamContext';
 import type { AlertRule } from '@alzcare/shared';
@@ -9,29 +9,41 @@ interface RulePreviewProps {
   rule: AlertRule;
 }
 
+/** Item 158: tiny debounced-value hook so polygon/textarea keystrokes
+ *  don't fire the preview evaluator on every char. */
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const handle = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(handle);
+  }, [value, delayMs]);
+  return debounced;
+}
+
 /** "Would have alerted in last 24 h" surface. Runs the same evaluator
  *  the engine uses against the patient's last 24 h of stored data, with
  *  per-rule cooldown tracked in the same way. The hits count is what
  *  the engine would have written to alerts; the per-severity breakdown
  *  matches the badge colours in the live feed.
  *
- *  Pure-function preview — never inserts anything. The render re-runs
- *  the evaluator on every parameter change (cheap; the window is
- *  bounded). */
+ *  Pure-function preview — never inserts anything. The rule prop is
+ *  debounced 250 ms so editor keystrokes (zone polygon JSON, vitals
+ *  number inputs) don't run the 24 h evaluator on every char. */
 export function RulePreview({ rule }: RulePreviewProps) {
   const { patientId } = usePatientStreamContext();
   const window = usePreviewWindow(patientId);
+  const debouncedRule = useDebouncedValue(rule, 250);
 
   const result = useMemo(() => {
     if (!window.data) return null;
     return previewRule({
-      rule,
+      rule: debouncedRule,
       sensors: window.data.sensors,
       positions: window.data.positions,
       events: window.data.events,
       now: window.data.now,
     });
-  }, [rule, window.data]);
+  }, [debouncedRule, window.data]);
 
   if (window.isLoading) {
     return (

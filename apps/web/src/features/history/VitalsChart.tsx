@@ -10,9 +10,11 @@ import {
   ResponsiveContainer,
   type TooltipProps,
 } from 'recharts';
+import { useMemo } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { useVitalsHistory } from '@/lib/queries/history';
+import { formatAppTz } from '@/lib/time';
 import type { DateRange } from './types';
 
 // Dual-axis approach: HR on the left axis (physiological range 40–180 bpm),
@@ -38,39 +40,33 @@ const RANGE_MS = {
   '7d': 7 * 24 * HOUR_MS,
 } as const;
 
+// Item 101: tick + tooltip formatters render in AEST regardless of the
+// presenter machine's local TZ — matches the badge claim in DateRangePicker.
 function formatXTick(isoString: string, rangePreset: string): string {
-  const date = new Date(isoString);
   const ms = (RANGE_MS as Record<string, number>)[rangePreset] ?? RANGE_MS['7d'];
   if (ms <= RANGE_MS['24h']) {
-    // HH:mm for 1h/6h/24h
-    return new Intl.DateTimeFormat(undefined, {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    }).format(date);
+    return formatAppTz(isoString, { hour: '2-digit', minute: '2-digit', hour12: false });
   }
-  // MMM d HH:mm for 7d / custom
-  return new Intl.DateTimeFormat(undefined, {
+  return formatAppTz(isoString, {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
-  }).format(date);
+  });
 }
 
 function CustomTooltip({ active, payload, label }: TooltipProps<number, string>) {
   if (!active || !payload?.length) return null;
 
-  const date = new Date(label as string);
-  const timeStr = new Intl.DateTimeFormat(undefined, {
+  const timeStr = formatAppTz(label as string, {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
     hour12: false,
-  }).format(date);
+  });
 
   return (
     <div className="rounded-md border border-border bg-popover px-3 py-2 text-xs shadow-md">
@@ -95,8 +91,28 @@ function CustomTooltip({ active, payload, label }: TooltipProps<number, string>)
   );
 }
 
+// Item 95: client-side decimator. At 24h × 1Hz × 3 series each <Line>
+// renders a ~700KB SVG path; tooltip hit-test sweep + chart re-render
+// blow the 200ms budget on the demo path 1h → 6h → 24h → 1h. Stride
+// every Nth row preserving first + last when the dataset exceeds
+// MAX_POINTS. Skip decimation for windows ≤ 1 h (≤3600 rows ≤ MAX_POINTS).
+const MAX_POINTS = 1500;
+function decimate<T extends { recorded_at: string }>(rows: T[], maxPoints: number): T[] {
+  if (rows.length <= maxPoints) return rows;
+  const stride = Math.max(1, Math.floor(rows.length / maxPoints));
+  const out: T[] = [];
+  for (let i = 0; i < rows.length; i += stride) out.push(rows[i]!);
+  // Always keep the last row so the chart's right edge matches the
+  // window's `to`. Avoid a duplicate when stride lands cleanly on the
+  // final index.
+  const last = rows[rows.length - 1]!;
+  if (out[out.length - 1]?.recorded_at !== last.recorded_at) out.push(last);
+  return out;
+}
+
 export function VitalsChart({ patientId, range }: Props) {
   const { data, isLoading, isError, error } = useVitalsHistory(patientId, range);
+  const decimated = useMemo(() => (data ? decimate(data, MAX_POINTS) : data), [data]);
 
   if (isLoading) {
     return <Skeleton className="h-80 w-full" />;
@@ -128,7 +144,7 @@ export function VitalsChart({ patientId, range }: Props) {
 
   return (
     <ResponsiveContainer width="100%" height={320}>
-      <LineChart data={data} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
+      <LineChart data={decimated} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
         <XAxis
           dataKey="recorded_at"
