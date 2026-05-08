@@ -1,12 +1,13 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { CaregiverRole, type CaregiverProfile } from '@alzcare/shared';
+import { CaregiverRole } from '@alzcare/shared';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth/AuthProvider';
+import { useCurrentCaregiver } from '@/features/provider/providerQueries';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -26,26 +27,15 @@ const profileSchema = z.object({
 });
 type ProfileFormValues = z.infer<typeof profileSchema>;
 
-async function fetchProfile(userId: string): Promise<CaregiverProfile> {
-  const { data, error } = await supabase
-    .from('caregivers')
-    .select('id, email, full_name, role, company_name')
-    .eq('id', userId)
-    .single();
-  if (error) throw error;
-  return data as CaregiverProfile;
-}
-
+// Item 84: profile data goes through useCurrentCaregiver — single
+// source of truth shared with the navbar so the Admin badge doesn't
+// race the profile form's column-narrower fetch.
 export function ProfilePage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  const profileQuery = useQuery({
-    queryKey: ['profile', user?.id],
-    queryFn: () => fetchProfile(user!.id),
-    enabled: !!user?.id,
-  });
+  const profileQuery = useCurrentCaregiver();
 
   const form = useForm<ProfileFormValues>({
     resolver: zodResolver(profileSchema),
@@ -72,7 +62,7 @@ export function ProfilePage() {
       const { error } = await supabase.from('caregivers').update(payload).eq('id', user!.id);
       if (error) throw error;
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['profile', user?.id] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['caregiver', 'me'] }),
   });
 
   if (profileQuery.isLoading) {

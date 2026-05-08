@@ -400,4 +400,114 @@ describe.skipIf(!enabled)('RLS denial — F1 caregiver write surface', () => {
     expect(error).not.toBeNull();
     expect((error?.message ?? '').toLowerCase()).toMatch(/cross-provider/);
   });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Items 79+80+83 — caregivers self-update lockdown + set_caregiver_role.
+  // ──────────────────────────────────────────────────────────────────────
+
+  it('Phase-I.A: member cannot self-promote provider_role', async () => {
+    // Bob is a member of his own tenant. The trigger should refuse a
+    // direct UPDATE that touches provider_role.
+    const { error } = await bob.client
+      .from('caregivers')
+      .update({ provider_role: 'admin' })
+      .eq('id', bob.id);
+    expect(error).not.toBeNull();
+    expect((error?.message ?? '').toLowerCase()).toMatch(/set_caregiver_role/);
+  });
+
+  it('Phase-I.A: member cannot rebind care_provider_id on themselves', async () => {
+    // Bob attempts to rebind to Alice's tenant.
+    const { error } = await bob.client
+      .from('caregivers')
+      .update({ care_provider_id: aliceProviderId })
+      .eq('id', bob.id);
+    expect(error).not.toBeNull();
+    expect((error?.message ?? '').toLowerCase()).toMatch(/set_caregiver_role/);
+  });
+
+  it('Phase-I.A: admin can promote a peer via set_caregiver_role', async () => {
+    // Alice invites a member into her tenant via the admin path
+    // (bootstrap a fresh user, set them admin via the RPC, then back to
+    // member to leave the tenant in the same shape afterward).
+    const peer = await createUser(admin, 'peer', 'Peer Test');
+    // Move peer into Alice's tenant by admin-bypass (test helper).
+    await admin
+      .from('caregivers')
+      .update({ care_provider_id: aliceProviderId, provider_role: 'member' })
+      .eq('id', peer.id);
+
+    const { error: promoteErr } = await alice.client.rpc('set_caregiver_role', {
+      p_target_id: peer.id,
+      p_role: 'admin',
+    });
+    expect(promoteErr).toBeNull();
+
+    const { data: row } = await admin
+      .from('caregivers')
+      .select('provider_role')
+      .eq('id', peer.id)
+      .single();
+    expect((row as { provider_role: string }).provider_role).toBe('admin');
+
+    // Cleanup
+    await admin.from('caregivers').update({ care_provider_id: null, provider_role: 'member' }).eq('id', peer.id);
+    await admin.auth.admin.deleteUser(peer.id);
+  });
+
+  it('Phase-I.A: set_caregiver_role refuses cross-tenant target', async () => {
+    // Alice tries to promote Bob (different tenant). Must refuse.
+    const { error } = await alice.client.rpc('set_caregiver_role', {
+      p_target_id: bob.id,
+      p_role: 'admin',
+    });
+    expect(error).not.toBeNull();
+    expect((error?.message ?? '').toLowerCase()).toMatch(/forbidden/);
+  });
+
+  it('Phase-I.A: last admin cannot self-demote', async () => {
+    // Alice is the only admin in her tenant. Self-demote must refuse.
+    const { error } = await alice.client.rpc('set_caregiver_role', {
+      p_target_id: alice.id,
+      p_role: 'member',
+    });
+    expect(error).not.toBeNull();
+    expect((error?.message ?? '').toLowerCase()).toMatch(/cannot_demote_last_admin/);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Item 86 — peer caregiver email + company_name closed; directory RPC.
+  // ──────────────────────────────────────────────────────────────────────
+
+  it('Phase-I.A: peer cannot read another caregivers full row directly', async () => {
+    // Alice is in her own tenant. Bob is in another. The new
+    // caregivers_self_read policy returns only auth.uid() rows.
+    const { data } = await alice.client
+      .from('caregivers')
+      .select('id, email, full_name')
+      .neq('id', alice.id);
+    expect(data ?? []).toHaveLength(0);
+  });
+
+  it('Phase-I.A: get_caregiver_directory exposes id+full_name+role for tenant peers', async () => {
+    const peer = await createUser(admin, 'dirpeer', 'Directory Peer');
+    await admin
+      .from('caregivers')
+      .update({ care_provider_id: aliceProviderId, provider_role: 'member' })
+      .eq('id', peer.id);
+
+    const { data, error } = await alice.client.rpc('get_caregiver_directory');
+    expect(error).toBeNull();
+    const rows = (data ?? []) as Array<{ id: string; full_name: string; provider_role: string }>;
+    const found = rows.find((r) => r.id === peer.id);
+    expect(found).toBeDefined();
+    expect(found?.full_name).toBe('Directory Peer');
+    // Email + company_name + care_provider_id are NOT in the directory shape.
+    expect(Object.keys(found ?? {})).not.toContain('email');
+    expect(Object.keys(found ?? {})).not.toContain('company_name');
+
+    // Cleanup
+    await admin.from('caregivers').update({ care_provider_id: null }).eq('id', peer.id);
+    await admin.auth.admin.deleteUser(peer.id);
+  });
 });

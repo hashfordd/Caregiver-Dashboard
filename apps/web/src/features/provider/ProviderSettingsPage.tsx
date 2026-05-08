@@ -161,7 +161,11 @@ function MembersSection({ canAdmin }: { canAdmin: boolean }) {
                           <span className="ml-2 text-xs text-muted-foreground">(you)</span>
                         )}
                       </p>
-                      <p className="truncate text-xs text-muted-foreground">{m.email}</p>
+                      {/* Item 86: peer email is not exposed; show role
+                          instead so the row still has a secondary line. */}
+                      <p className="truncate text-xs text-muted-foreground">
+                        {role === 'admin' ? 'Administrator' : 'Member'}
+                      </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">

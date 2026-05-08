@@ -12,7 +12,10 @@ const profileRow = {
   company_name: null as string | null,
 };
 
-const singleMock = vi.fn();
+// Item 84: ProfilePage now reads via useCurrentCaregiver which calls
+// `.maybeSingle()` (the row may not exist yet on first-tick after
+// signup). Mock the chain accordingly.
+const maybeSingleMock = vi.fn();
 const updateEqMock = vi.fn();
 const updateMock = vi.fn();
 
@@ -23,7 +26,7 @@ vi.mock('@/lib/supabase', () => ({
     },
     from: vi.fn(() => ({
       select: vi.fn(() => ({
-        eq: vi.fn(() => ({ single: singleMock })),
+        eq: vi.fn(() => ({ maybeSingle: maybeSingleMock })),
       })),
       update: updateMock,
     })),
@@ -50,20 +53,20 @@ function renderProfilePage() {
 
 describe('ProfilePage', () => {
   beforeEach(() => {
-    singleMock.mockReset();
+    maybeSingleMock.mockReset();
     updateMock.mockReset();
     updateEqMock.mockReset();
     updateMock.mockReturnValue({ eq: updateEqMock });
   });
 
   it('renders the loading state while the query is in flight', () => {
-    singleMock.mockReturnValue(new Promise(() => {})); // never resolves
+    maybeSingleMock.mockReturnValue(new Promise(() => {})); // never resolves
     renderProfilePage();
     expect(screen.getByText(/loading/i)).toBeInTheDocument();
   });
 
   it('renders the caregiver profile once loaded', async () => {
-    singleMock.mockResolvedValue({
+    maybeSingleMock.mockResolvedValue({
       data: { ...profileRow, company_name: 'St. Vincent’s' },
       error: null,
     });
@@ -80,7 +83,7 @@ describe('ProfilePage', () => {
   });
 
   it('submits full_name, role and company_name on save (email is read-only)', async () => {
-    singleMock.mockResolvedValue({ data: profileRow, error: null });
+    maybeSingleMock.mockResolvedValue({ data: profileRow, error: null });
     updateEqMock.mockResolvedValue({ error: null });
 
     renderProfilePage();
@@ -105,7 +108,7 @@ describe('ProfilePage', () => {
   });
 
   it('persists null when company is left blank', async () => {
-    singleMock.mockResolvedValue({ data: profileRow, error: null });
+    maybeSingleMock.mockResolvedValue({ data: profileRow, error: null });
     updateEqMock.mockResolvedValue({ error: null });
 
     renderProfilePage();

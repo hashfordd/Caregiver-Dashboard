@@ -1,6 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { ErrorBoundary, type FallbackProps } from 'react-error-boundary';
-import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, RotateCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,20 +17,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 //                                   page; caregiver can switch tabs.
 
 function RootFallback({ error, resetErrorBoundary }: FallbackProps) {
-  // useNavigate may not be available if the boundary is above the
-  // Router (e.g. we're in main.tsx). Fall back to window.location.
-  let navigate: ((to: string) => void) | null = null;
-  try {
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    navigate = useNavigate();
-  } catch {
-    navigate = null;
-  }
-
+  // Item 136: the fallback may render above the Router (boundary lives in
+  // main.tsx wrapping AuthProvider + BrowserRouter), so a conditional
+  // useNavigate inside try/catch was always brittle and required an
+  // eslint-disable for rules-of-hooks. window.location is the right tool
+  // — the page is already broken and a hard navigation guarantees a fresh
+  // tree.
   function goHome() {
     resetErrorBoundary();
-    if (navigate) navigate('/');
-    else window.location.assign('/');
+    window.location.assign('/');
   }
 
   return (

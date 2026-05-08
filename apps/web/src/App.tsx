@@ -8,7 +8,6 @@ import { ProtectedRoute } from '@/features/auth/ProtectedRoute';
 import { RosterPage } from '@/features/patients/RosterPage';
 import { PatientDetailPage } from '@/features/patients/PatientDetailPage';
 import { AlertsPage } from '@/features/alerts/AlertsPage';
-import { ReportsPage } from '@/features/reports/ReportsPage';
 import { OnboardingPage } from '@/features/provider/OnboardingPage';
 import { ProviderSettingsPage } from '@/features/provider/ProviderSettingsPage';
 import { AcceptInvitePage } from '@/features/provider/AcceptInvitePage';
@@ -32,7 +31,6 @@ export function App() {
                 <Route path="/patients" element={<RosterPage />} />
                 <Route path="/patients/:id" element={<PatientDetailPage />} />
                 <Route path="/alerts" element={<AlertsPage />} />
-                <Route path="/history" element={<ReportsPage />} />
                 <Route path="/profile" element={<ProfilePage />} />
                 <Route path="/provider" element={<ProviderSettingsPage />} />
               </Route>

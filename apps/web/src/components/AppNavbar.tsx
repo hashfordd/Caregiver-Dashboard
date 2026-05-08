@@ -1,12 +1,11 @@
 import { useState } from 'react';
 import { Link, NavLink as RouterNavLink, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
 import { Building2, LogOut, Menu as MenuIcon, User as UserIcon, X as XIcon } from 'lucide-react';
 import type { CaregiverProfile } from '@alzcare/shared';
 import { Brand } from '@/components/Brand';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { AlertBell } from '@/features/alerts/AlertBell';
-import { useAuth } from '@/features/auth/AuthProvider';
+import { useCurrentCaregiver } from '@/features/provider/providerQueries';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -20,21 +19,12 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 
+// Item 102: ReportsPage was a Phase 5 stub but F13 ships through the
+// per-patient History tab. Removed.
 const NAV_LINKS = [
   { to: '/patients', label: 'Patients' },
   { to: '/alerts', label: 'Alerts' },
-  { to: '/history', label: 'Reports' },
 ] as const;
-
-async function fetchCurrentProfile(userId: string): Promise<CaregiverProfile | null> {
-  const { data, error } = await supabase
-    .from('caregivers')
-    .select('id, email, full_name, role, company_name, care_provider_id, provider_role')
-    .eq('id', userId)
-    .maybeSingle();
-  if (error) throw error;
-  return (data as CaregiverProfile) ?? null;
-}
 
 function initials(fullName: string | null | undefined): string {
   if (!fullName) return '?';
@@ -52,14 +42,14 @@ function firstName(fullName: string | null | undefined): string {
 }
 
 export function AppNavbar() {
-  const { user } = useAuth();
+  // Item 84: collapsed onto the same query key as ProfilePage + the
+  // useCurrentCaregiver source-of-truth. Previously the navbar fetched
+  // ['profile', userId] with a wider column list and ProfilePage fetched
+  // the same key with a narrower list — TanStack dedupes by key so
+  // whichever resolved first won, racing the Admin badge for 60 s.
+  const me = useCurrentCaregiver();
+  const profile = me.data ?? null;
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const profile = useQuery({
-    queryKey: ['profile', user?.id],
-    queryFn: () => fetchCurrentProfile(user!.id),
-    enabled: !!user?.id,
-    staleTime: 60_000,
-  });
 
   return (
     <header className="sticky top-0 z-40 border-b border-border/60 bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -86,14 +76,14 @@ export function AppNavbar() {
           </nav>
         </div>
         <div className="flex items-center gap-2">
-          {profile.data?.company_name && (
+          {profile?.company_name && (
             <span className="hidden text-xs uppercase tracking-[0.16em] text-muted-foreground lg:inline">
-              {profile.data.company_name}
+              {profile.company_name}
             </span>
           )}
           <AlertBell />
           <ThemeToggle />
-          <UserMenu profile={profile.data ?? null} />
+          <UserMenu profile={profile} />
         </div>
       </div>
       <MobileNavDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />

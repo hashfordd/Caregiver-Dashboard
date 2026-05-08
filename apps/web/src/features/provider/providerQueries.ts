@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import type {
   CaregiverProfile,
   CareProvider,
@@ -7,6 +8,17 @@ import type {
 } from '@alzcare/shared';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth/AuthProvider';
+
+// Item 86: peer caregiver email + company_name closed at the RLS layer.
+// Surfaces that previously selected from caregivers for in-tenant peers
+// (Members section, allocation pickers) now go through this RPC, which
+// returns only id + full_name + provider_role.
+type DirectoryEntry = Pick<CaregiverProfile, 'id' | 'full_name' | 'provider_role'>;
+async function fetchDirectory(): Promise<DirectoryEntry[]> {
+  const { data, error } = await supabase.rpc('get_caregiver_directory');
+  if (error) throw error;
+  return (data ?? []) as DirectoryEntry[];
+}
 
 const CAREGIVER_PROFILE_COLUMNS =
   'id, email, full_name, role, company_name, care_provider_id, provider_role';
@@ -59,16 +71,7 @@ export function useProviderMembers() {
   const providerId = me.data?.care_provider_id ?? null;
   return useQuery({
     queryKey: ['care-provider', 'members', providerId],
-    queryFn: async (): Promise<CaregiverProfile[]> => {
-      if (!providerId) return [];
-      const { data, error } = await supabase
-        .from('caregivers')
-        .select(CAREGIVER_PROFILE_COLUMNS)
-        .eq('care_provider_id', providerId)
-        .order('full_name', { ascending: true });
-      if (error) throw error;
-      return (data ?? []) as CaregiverProfile[];
-    },
+    queryFn: fetchDirectory,
     enabled: !!providerId,
     staleTime: 30_000,
   });
@@ -96,47 +99,47 @@ export function useProviderInvites() {
 }
 
 // Caregivers in the current provider, NOT yet allocated to a given patient.
-// Used by the patient-allocation picker.
+// Used by the patient-allocation picker. Item 86: directory RPC, not raw
+// caregivers select — exposes id + full_name + provider_role only.
 export function useUnallocatedMembers(patientId: string) {
   const me = useCurrentCaregiver();
   const providerId = me.data?.care_provider_id ?? null;
   return useQuery({
     queryKey: ['care-provider', 'unallocated', providerId, patientId],
-    queryFn: async (): Promise<CaregiverProfile[]> => {
+    queryFn: async (): Promise<DirectoryEntry[]> => {
       if (!providerId || !patientId) return [];
-      const { data: members, error: membersErr } = await supabase
-        .from('caregivers')
-        .select(CAREGIVER_PROFILE_COLUMNS)
-        .eq('care_provider_id', providerId);
-      if (membersErr) throw membersErr;
+      const members = await fetchDirectory();
       const { data: allocated, error: allocErr } = await supabase
         .from('caregiver_patient')
         .select('caregiver_id')
         .eq('patient_id', patientId);
       if (allocErr) throw allocErr;
       const allocatedIds = new Set((allocated ?? []).map((r: { caregiver_id: string }) => r.caregiver_id));
-      return ((members ?? []) as CaregiverProfile[]).filter((m) => !allocatedIds.has(m.id));
+      return members.filter((m) => !allocatedIds.has(m.id));
     },
     enabled: !!providerId && !!patientId,
   });
 }
 
-// Caregivers allocated to a specific patient — joined with caregivers row
-// for full_name / role display in the patient detail "Caregivers" tab.
+// Caregivers allocated to a specific patient. Item 86: peer rows are
+// hidden by RLS; resolve via the directory RPC instead of joining
+// caregivers in the SELECT.
 export function usePatientCaregivers(patientId: string) {
   return useQuery({
     queryKey: ['caregiver_patient', 'patient', patientId],
-    queryFn: async (): Promise<CaregiverProfile[]> => {
+    queryFn: async (): Promise<DirectoryEntry[]> => {
       if (!patientId) return [];
-      const { data, error } = await supabase
+      const { data: rows, error } = await supabase
         .from('caregiver_patient')
-        .select(`caregiver:caregivers!caregiver_id ( ${CAREGIVER_PROFILE_COLUMNS} )`)
+        .select('caregiver_id')
         .eq('patient_id', patientId);
       if (error) throw error;
-      type Row = { caregiver: CaregiverProfile | null };
-      return ((data ?? []) as unknown as Row[])
-        .map((r) => r.caregiver)
-        .filter((c): c is CaregiverProfile => !!c)
+      const allocatedIds = new Set(
+        ((rows ?? []) as { caregiver_id: string }[]).map((r) => r.caregiver_id),
+      );
+      const directory = await fetchDirectory();
+      return directory
+        .filter((c) => allocatedIds.has(c.id))
         .sort((a, b) => a.full_name.localeCompare(b.full_name));
     },
     enabled: !!patientId,
@@ -155,10 +158,12 @@ export function useCreateProvider() {
       if (error) throw error;
       return data as CareProvider;
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['caregiver', 'me'] });
       qc.invalidateQueries({ queryKey: ['care-provider'] });
+      toast.success('Care provider created', { description: data.name });
     },
+    onError: (err) => toast.error((err as Error).message),
   });
 }
 
@@ -173,7 +178,11 @@ export function useInviteCaregiver() {
       if (error) throw error;
       return data as CaregiverInvite;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['care-provider', 'invites'] }),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['care-provider', 'invites'] });
+      toast.success('Invite sent', { description: data.email });
+    },
+    onError: (err) => toast.error((err as Error).message),
   });
 }
 
@@ -188,7 +197,9 @@ export function useAcceptInvite() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['caregiver', 'me'] });
       qc.invalidateQueries({ queryKey: ['care-provider'] });
+      toast.success('Invite accepted');
     },
+    onError: (err) => toast.error((err as Error).message),
   });
 }
 
@@ -199,7 +210,11 @@ export function useRevokeInvite() {
       const { error } = await supabase.rpc('revoke_invite', { p_invite_id: inviteId });
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['care-provider', 'invites'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['care-provider', 'invites'] });
+      toast.success('Invite revoked');
+    },
+    onError: (err) => toast.error((err as Error).message),
   });
 }
 
@@ -247,24 +262,35 @@ export function useUpdateProviderName() {
         .eq('id', input.providerId);
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['care-provider'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['care-provider'] });
+      toast.success('Provider name updated');
+    },
+    onError: (err) => toast.error((err as Error).message),
   });
 }
 
+// Items 79+80+83: role changes go through the SECURITY DEFINER RPC
+// (set_caregiver_role) with admin-of-same-tenant + last-admin guards.
+// The prior direct UPDATE on caregivers was a silent no-op because the
+// caregivers self-update RLS policy filtered out peer rows; the new
+// trigger-backed lockdown also makes direct UPDATE on
+// provider_role / care_provider_id raise.
 export function useUpdateMemberRole() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: { caregiverId: string; role: CaregiverProviderRole }) => {
-      // Direct UPDATE — RLS gates this to admins via the
-      // caregivers_self_or_peer_read SELECT policy plus the caregivers_self_update
-      // policy (admins of the provider can update peers). If a future
-      // migration requires an RPC for promote/demote, swap here.
-      const { error } = await supabase
-        .from('caregivers')
-        .update({ provider_role: input.role })
-        .eq('id', input.caregiverId);
+      const { error } = await supabase.rpc('set_caregiver_role', {
+        p_target_id: input.caregiverId,
+        p_role: input.role,
+      });
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['care-provider', 'members'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['care-provider', 'members'] });
+      qc.invalidateQueries({ queryKey: ['caregiver', 'me'] });
+      toast.success('Role updated');
+    },
+    onError: (err) => toast.error((err as Error).message),
   });
 }

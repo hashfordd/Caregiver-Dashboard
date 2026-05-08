@@ -68,21 +68,29 @@ export function subscribeWithRetry<T = unknown>(
   }
 
   function open(): void {
-    let ch: RealtimeChannel = supabase.channel(opts.channelName);
+    // Cast through `any` because `RealtimeChannel.on('postgres_changes', …)`
+    // is one of several overloads and TS narrows to broadcast first when
+    // the predicate object has dynamic shape. The runtime contract is the
+    // documented Supabase Realtime postgres_changes shape.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let ch: RealtimeChannel = supabase.channel(opts.channelName) as any;
 
     for (const h of opts.postgresHandlers) {
-      ch = ch.on(
-        'postgres_changes',
-        {
-          event: h.event,
-          schema: h.schema,
-          table: h.table,
-          ...(h.filter ? { filter: h.filter } : {}),
-        },
-        (payload) => {
-          h.onMessage(payload.new as T);
-        },
-      );
+      const filterShape: Record<string, unknown> = {
+        event: h.event,
+        schema: h.schema,
+        table: h.table,
+      };
+      if (h.filter) filterShape.filter = h.filter;
+      ch = (ch as unknown as {
+        on: (
+          type: 'postgres_changes',
+          filter: Record<string, unknown>,
+          handler: (payload: { new: unknown }) => void,
+        ) => RealtimeChannel;
+      }).on('postgres_changes', filterShape, (payload) => {
+        h.onMessage(payload.new as T);
+      });
     }
 
     ch.subscribe((subStatus, err) => {

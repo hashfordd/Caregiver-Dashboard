@@ -78,7 +78,11 @@ export function CaregiversTab({ patientId }: Props) {
                           {c.full_name}
                           {isSelf && <span className="ml-2 text-xs text-muted-foreground">(you)</span>}
                         </p>
-                        <p className="truncate text-xs text-muted-foreground">{c.email}</p>
+                        {/* Item 86: peer email is not exposed via the
+                            directory RPC; show role as the secondary line. */}
+                        <p className="truncate text-xs text-muted-foreground">
+                          {role === 'admin' ? 'Administrator' : 'Member'}
+                        </p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -148,7 +152,10 @@ function AllocatePickerDialog({
               <li key={c.id} className="flex items-center justify-between gap-3 py-3">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium">{c.full_name}</p>
-                  <p className="truncate text-xs text-muted-foreground">{c.email}</p>
+                  {/* Item 86: peer email is not exposed via the directory RPC. */}
+                  <p className="truncate text-xs text-muted-foreground">
+                    {c.provider_role === 'admin' ? 'Administrator' : 'Member'}
+                  </p>
                 </div>
                 <Button
                   size="sm"
