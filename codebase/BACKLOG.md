@@ -1,0 +1,103 @@
+# Backlog
+
+Items deferred from the foundational scaffold. Add new entries here rather than expanding scope mid-build.
+
+Format: `- **<area>** — what + why deferred + reference (feature ID / task ID).`
+
+## Deferred during scaffold
+
+- **Vulnerability remediation** — `npm audit` reports 13 transitive vulnerabilities (4 low / 5 moderate / 3 high / 1 critical) at scaffold time. Deferred because `npm audit fix --force` would likely downgrade pinned versions; review individually and patch before any production-shaped deploy.
+
+- **Canvas a11y narration (UI-28 V2)** — F13's ReplayCanvas and the F5 FloorPlanCanvas now expose `role="img"` + `aria-label` for screen-reader identification, but the canvas content itself is not narrated. Full canvas a11y (announcing wall lengths on focus, beacon names on selection, replay-dot positions during playback) is V2. The scrubber is already a labelled `<input type="range">` so playback position is announced; only the canvas geometry remains opaque to screen readers.
+
+- **Edge function shared-schema bundling** — `apps/edge/deno.json` resolves `@alzcare/shared/mqtt` via relative path to the workspace source. Works for `deno check` and `supabase functions serve` locally; verify the import graph survives `supabase functions deploy` bundling, or publish `@alzcare/shared` to npm and switch to `npm:` specifiers. (BE-06)
+
+- **`mqtt_bridge` runtime model** — Supabase Edge Functions are request-scoped; a real MQTT subscriber needs a long-running process. The current stub provides the validation shape via HTTP, but the production bridge will likely run as a Deno container on Fly.io or EC2. (BE-06 / MQ-01)
+
+- **RLS write policies** — only read-scoping policies are stubbed. Inserts / updates / deletes need explicit policies once the edge functions write rows under user JWTs (currently they'd run with the service role and bypass RLS). (BE-04)
+
+- **`audit_log` SELECT policy** — RLS is on with no SELECT policy, so the table is currently inaccessible to clients. Add an admin-role SELECT policy when the role system lands. (BE-11 / REG-04)
+
+- **Storage buckets** — `supabase/config.toml` enables Storage but no buckets are created. Bucket + access rules added alongside F5 (floor plan asset uploads). (BE-10)
+
+- **Audit log triggers** — Auto-log triggers on device pairing / beacon placement / rule changes / acknowledgements are TODO. (BE-11)
+
+- **Seed demo data** — `supabase/seed.sql` is an empty placeholder. Demo patient + 4 placed beacons + sample alert rules + 24h synthetic history are TODO. (BE-12)
+
+- **Per-device Mosquitto credentials** — `../mqtt-infra/passwd.example` documents the pattern but no automation exists for generating per-device entries during firmware enrollment. (MQ-04 / MQ-05 / FW-19)
+
+- **Mosquitto monitoring + retention** — broker has a healthcheck in docker-compose; no log retention or device-count dashboard yet. (MQ-08)
+
+- **Front-end libs not yet installed** — _none_. (Recharts landed with F13 at `2.15.4`. Mapbox GL JS landed with F9. Fabric landed with F5.)
+
+- **Realtime broadcast channel auth** — F6's `patient:<id>:signals` channel relies on namespacing as the auth boundary. Any authenticated caregiver can subscribe to any patient's signals channel; we don't currently enforce that they're allocated to that patient. V2: adopt Supabase Realtime Authorization when it's GA so a caregiver can only join a channel for a patient they're allocated to. Until then, it's a deliberate gap noted in `docs/features/F6.md` Risks. (F6 / SEC-01)
+
+- **F7 calibration: stale-calibration banner** — F5 warns on canvas edits but doesn't auto-invalidate captures. The panel should surface "this point predates a recent canvas edit" by comparing `captured_at` to `floor_plans.created_at`. Adds a join we don't currently surface in the calibration query; defer to V2 once the F8 fingerprint matcher actually consumes calibration data and stale points start mattering. (F7 / UI-08)
+
+- **F7 calibration: per-room density visualisation** — F7.md notes V1 ships count-only; V2 should colour the canvas by density (heatmap of placed points per closed-wall room) so caregivers can see under-sampled rooms before F8 matching runs. Requires a published "closed-room geometry" API from F5 which doesn't currently exist outside `findClosedRooms` in `geometry.ts`. (F7 / UI-09)
+
+- **F7 calibration: quality glyph on placed dots** — Captured points all passed thresholds at write time, so all written rows are "good" — but caregivers may still want to distinguish "barely passed" from "well in spec" visually on the canvas. Render a small quality indicator (e.g. ring colour scale by stddev) on each dot. Requires no schema change. (F7 / UI-10)
+
+- **F8 positioning: position_estimates retention** — Rows accumulate at ~1 Hz × patients. At one patient × one week that's ~600k rows; at scale a 1-min aggregate compactor (CROSS_CUTTING §8) is needed before any deployment with >1 patient × week of history. (F8 / Phase 5)
+
+- **F11 repetitive_movement rule type** — V2 deferral. The `repetitive_movement` value is in the `alert_rule_type` enum but no card renders for it in V1 and the evaluator has no branch. Spec says the trigger is an accelerometer pattern that we don't yet capture; revisit once the wearable's motion stream feeds something the evaluator can match. (F11)
+
+- **F11 zone rule: on-canvas polygon picker** — V1's ZoneRuleCard accepts the polygon as a JSON array of canvas coords. Mirrors F9's geofence picker (which uses outdoor lat/lng); a Fabric-canvas overlay with click-to-add-vertex would make caregiver-edited polygons low-friction. (F11 / UI-22)
+
+- **F11 inactivity_scan: pg_cron clock skew** — The scheduler ticks against the DB clock at minute resolution. Rules tuned to the minute may fire one tick later than expected. Acceptable for V1; document if production tightens precision. (F11 / POS-08)
+
+- **F11 webhooks: vault secret bootstrap is manual** — `20260506100200_rules_engine_webhooks_and_cron.sql` reads the function URL + service-role key from Supabase Vault. The migration creates the trigger + cron job but the deployer must register `edge_functions_base_url` and `edge_functions_service_role_key` once per environment via the Studio SQL editor. Until then the triggers raise-notice and no-op cleanly so no inserts are blocked. Consider a deploy script (or doc the call sites in the README). (F11)
+
+- **Edge function local serve (`supabase functions serve`)** — fails on this repo because the `_shared` symlinks under `supabase/functions/{mqtt_bridge,position_estimator}` aren't followed by the runtime container ("Module not found `_shared/mqtt/index.ts`"). Same root cause as the deploy workaround we already use (a no-spaces deploy stage in `/tmp/`). Local development relies on the long-running `npm run bridge:start` against the local DB, which works. Fix paths: (a) flatten `_shared` into per-function copies via a build step, (b) move the function source into `supabase/functions/` proper and drop the `apps/edge/` mirror, or (c) wait for the runtime to handle bind-mount symlinks. Until then, end-to-end integration tests via the replay harness must target a hosted project, not local serve. (DX / TST-14)
+
+- **F8 positioning: real-environment replay fixtures** — `tools/replay-signals/fixtures/walk-1.jsonl` is currently synthesised by reverse-applying the path-loss model + Gaussian RSSI noise. That catches algorithm regressions deterministically but doesn't catch model-vs-physics gaps (multipath, NLOS, body shadowing). Replace with a captured walkthrough recording before EV-05; the synthesised baseline is the algorithmic floor, not the production-accuracy ceiling. Also add per-scenario fixtures (dropout, NLOS, mode-flap) once the real-environment capture pipeline exists. (F8 / TST-14)
+
+- **Husky pre-commit aggressiveness** — `lint-staged` runs ESLint + Prettier on staged files. Add a typecheck stage if false-positive PRs become a problem.
+
+- **Auth signup flow** — `LoginPage` only handles sign-in (password + magic link). Signup with role selection (professional / family) is F1 feature work. (UI-03)
+
+- **Caregiver profile page** — name / contact / role / °C–°F preference is F1 / UI-05 feature work.
+
+- **Peer caregiver chips on the patient header** — F3 currently shows only the
+  patient's name, age and connection status. Rendering chips for every
+  caregiver allocated to a patient requires either broadening the
+  `caregivers` SELECT policy to "visible to a peer who shares a patient" or a
+  `SECURITY DEFINER` `get_patient_with_caregivers(patient_id)` RPC. Defer
+  until multi-caregiver allocation lands as a feature; V1 has one caregiver
+  per patient. (F3 / UI-05)
+
+- **Bridge Dockerfile + docker-compose service entry** — Phase 1 closure
+  shipped the long-running Deno bridge (run via `npm run bridge:start`),
+  Mosquitto auth (`npm run broker:creds`), and the `mqtt` mode in the
+  mock generator. Containerising the bridge so `npm run broker:up`
+  brings both up together (and so it deploys to Fly.io as a single image)
+  is production hardening — defer to before any non-team deployment.
+
+- **°F unit toggle on sensor cards** — F4 displays temperature in °C only.
+  The spec calls for a caregiver preference; F1's profile page didn't ship
+  the unit toggle. Add a `temperature_unit: 'c' | 'f'` column on
+  `caregivers`, surface in profile, and switch the formatter in
+  `SensorCard`. (F4 / UI-05)
+
+- **Recharts** — landed with F13 at `2.15.4` (exact pin). F4 sparkline
+  remains hand-rolled SVG by design — too small to justify the bundle
+  cost there.
+
+- **Production latency instrumentation** — F4 includes a console-log of
+  publish-to-render delta only in dev. Replacing it with a structured
+  metric pipeline (e.g. Vercel Analytics / Logflare ingest) is a Phase 5
+  / production-hardening item.
+
+- **Realtime broadcast channel auth** — Supabase Realtime broadcast channels (used by F6 for live signals delivery from `mqtt_bridge` to the dashboard) are not RLS-protected in V1. Channels are namespaced by `patient_id` but a determined client could subscribe to any channel name. Acceptable for V1 because dashboard subscribers are authenticated caregivers and the data on the channel (raw RSSI vectors) is low-sensitivity, but tighten when Supabase Realtime Authorization goes GA. (See [docs/CROSS_CUTTING.md §7](./docs/CROSS_CUTTING.md#7-realtime-patterns).)
+
+## Recommended first feature: F1 closure → F2 (Patient Roster)
+
+The DB scaffolding for F1 is in place (`caregivers` table + `handle_new_user` trigger + RLS read-scoping). To finish F1 and unblock the spine:
+
+1. Add `/signup` route with role selection (professional / family); pass role via Supabase `signUp({ options: { data: { role, full_name } }})` so the `handle_new_user` trigger picks it up.
+2. Add `/profile` page that reads/updates `caregivers` (RLS self-update policy is already in place).
+3. Add a small admin/test seed inserting a `caregiver_patient` row so the new user has a patient to see — or hold this until F2 is built.
+4. Vitest: assert `is_caregiver_for(<unrelated_uuid>) = false` and self-allocated = true.
+5. Smoke-test in browser: signup → profile → sign out → sign in → magic-link path.
+
+Then build **F2 (patient roster)** — it's the first thing a logged-in caregiver actually sees post-login, and unblocks **F3 (patient dashboard shell)** which unblocks all downstream features.

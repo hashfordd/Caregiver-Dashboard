@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+
+# Builds
+dist/
+build/
+coverage/
+.next/
+.turbo/
+.vite/
+
+# Env
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Editor
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Mosquitto runtime artifacts
+mqtt/certs/
+mqtt/data/
+mqtt/log/
+mqtt/passwd
+mqtt/acl
+
+# Supabase local
+supabase/.branches/
+supabase/.temp/
+supabase/seed.sql.bak
+
+# OS
+Thumbs.db
+
+# Local Claude Code state — never commit
+.claude/
+
+# Course artefacts (held outside the repo)
+*.docx
+.vercel

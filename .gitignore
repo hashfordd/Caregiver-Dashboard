@@ -1,49 +1,19 @@
-# Dependencies
-node_modules/
+# Project-root gitignore. The npm monorepo at codebase/ has its own
+# .gitignore covering node_modules, dist, .env, etc. This file covers
+# project-root level concerns + IDE / OS noise.
 
-# Builds
-dist/
-build/
-coverage/
-.next/
-.turbo/
-.vite/
-
-# Env
-.env
-.env.local
-.env.*.local
-!.env.example
-
-# Editor
+# OS / editor noise
 .DS_Store
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Logs
-*.log
-npm-debug.log*
-
-# Mosquitto runtime artifacts
-mqtt/certs/
-mqtt/data/
-mqtt/log/
-mqtt/passwd
-mqtt/acl
-
-# Supabase local
-supabase/.branches/
-supabase/.temp/
-supabase/seed.sql.bak
-
-# OS
 Thumbs.db
+*.swp
 
-# Local Claude Code state — never commit
+# Stray node_modules from before the codebase/ restructure (the npm
+# workspace now installs into codebase/node_modules — the parent-level
+# folder, if it exists, is leftover).
+/node_modules/
+
+# Project-level build artefacts (none today; placeholder).
+*.log
+
+# Local-only Claude config — already at .claude/ (not staged).
 .claude/
-
-# Course artefacts (held outside the repo)
-*.docx
-.vercel

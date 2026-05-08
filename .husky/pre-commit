@@ -1,1 +1,4 @@
-npx lint-staged
+#!/usr/bin/env sh
+# After the codebase/ restructure git's cwd here is the project root
+# (Saas/), so we hop into the npm monorepo before running lint-staged.
+cd codebase && npx lint-staged

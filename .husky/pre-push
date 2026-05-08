@@ -6,5 +6,8 @@
 # pushing a typecheck-broken branch wastes the CI runner and burns
 # review attention on a fixable problem.
 #
+# After the codebase/ restructure the npm monorepo lives at codebase/;
+# git fires hooks from the project root (Saas/), so we hop in first.
+#
 # Skip with: git push --no-verify
-npm run typecheck
+cd codebase && npm run typecheck

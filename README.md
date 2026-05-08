@@ -1,107 +1,59 @@
-# ENG40011 · Caregiver Dashboard SaaS
+# ENG40011 · Alzheimer's Care Project
 
-Caregiver-side software for the ENG40011 Alzheimer's Care Device. Wearable telemetry plus BLE/WiFi positioning signals stream over MQTT, land in Supabase via an edge function, and surface in a React dashboard via Realtime. The build spec and workstream task list are course artefacts held outside this repo.
-
-> **Status:** Phase 4 closed (F1–F12 shipped — auth + caregiver profile, patient roster + detail, device pairing, live telemetry + sensor cards, floor-plan editor, beacons + calibration, indoor position estimator with POS-08 hysteresis, outdoor map + geofence, alert rules + feed). Phase 5 (reports/demo polish) is outstanding. See [docs/IMPLEMENTATION_PLAN.md](./docs/IMPLEMENTATION_PLAN.md) for current phase status and [BACKLOG.md](./BACKLOG.md) for deferred items.
-
-For implementation planning, start at [docs/IMPLEMENTATION_PLAN.md](./docs/IMPLEMENTATION_PLAN.md) — it indexes the phase-by-phase plan ([PHASES.md](./docs/PHASES.md)), cross-cutting decisions ([CROSS_CUTTING.md](./docs/CROSS_CUTTING.md)), workstream parallelism ([PARALLEL_TRACKS.md](./docs/PARALLEL_TRACKS.md)), and the per-feature execution sheets in [docs/features/](./docs/features/).
-
-## Repo layout
+Project-level workspace. The application code lives in `codebase/`;
+sibling folders hold the firmware, hardware design, and planning
+artefacts that aren't part of the npm monorepo.
 
 ```
 .
-├── apps/
-│   ├── web/            # Vite + React + TS + Tailwind + Shadcn dashboard
-│   └── edge/           # Supabase Edge Functions (Deno): mqtt_bridge, position_estimator, rules_engine
-├── packages/
-│   └── shared/         # Zod schemas + inferred TS types — single source of truth for MQTT contracts
-├── supabase/           # CLI config + migrations; functions/ is a symlink to apps/edge/functions
-├── mqtt/               # Mosquitto docker-compose, ACL pattern, cert generation script
-├── .github/workflows/  # CI (lint, typecheck, test, build)
-└── vercel.json         # Vercel deploy config for apps/web
+├── codebase/             ← npm monorepo (Vite + React + Supabase + Deno edge)
+│   └── README.md           ← daily commands live there
+├── mqtt-infra/           ← Mosquitto broker config (docker-compose, ACL, certs)
+├── mqtt-firmware/        ← ESP32 / Arduino wearable sources
+├── hardware/             ← PCB designs, BOMs, mechanical CAD
+├── planning/             ← course artefacts, milestone plans, diagrams
+└── README.md             ← (this file)
 ```
 
-## Prerequisites
+## Day-to-day work
 
-- **Node.js 20.x** — `nvm use` will pick up `.nvmrc`
-- **npm 10+**
-- **Docker Desktop** — for Mosquitto + the Supabase local stack
-- **Supabase CLI** — `brew install supabase/tap/supabase`
-- **Deno** — for edge function typechecks; `brew install deno`
-
-## First-time setup
+Almost everything happens inside `codebase/`:
 
 ```bash
-# 1. Install monorepo deps
-npm install
-
-# 2. Generate Mosquitto self-signed certs + passwd/acl (one-time)
-npm run broker:certs
-npm run broker:creds
-
-# 3. Web env vars
-cp apps/web/.env.example apps/web/.env.local
-# Fill VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY (from `supabase status` after start)
-
-# 4. Bridge env vars
-cp apps/edge/.env.example apps/edge/.env
-# Fill SUPABASE_SERVICE_ROLE_KEY (from `supabase status`); MQTT_PASSWORD defaults match broker:creds.
+cd codebase
+npm install            # one-time
+npm run dev            # web dashboard
+npm run broker:up      # starts Mosquitto from ../mqtt-infra/
+npm run typecheck
+npm run test
 ```
 
-## Daily commands
+See [`codebase/README.md`](./codebase/README.md) for the full setup
+guide, daily commands, and architecture overview.
 
-```bash
-# Supabase (Postgres + Auth + Realtime + Studio at localhost:54323)
-npm run supabase:start
-npm run supabase:reset    # apply migrations / reset DB
+## Sibling areas
 
-# MQTT broker
-npm run broker:up
-npm run broker:logs
-npm run broker:down
+- **`mqtt-infra/`** — Mosquitto docker-compose stack, ACL pattern,
+  certificate + credential generation scripts. Scoped to broker
+  operations only; the bridge code that connects Postgres to MQTT
+  lives in `codebase/apps/edge/functions/mqtt_bridge/`.
+- **`mqtt-firmware/`** — wearable firmware (separate toolchain — PlatformIO
+  / Arduino / ESP-IDF). Empty until the firmware track starts.
+- **`hardware/`** — PCB schematics, BOMs, mechanical drawings. Empty
+  until the hardware track produces deliverables.
+- **`planning/`** — project-level documents that don't belong inside
+  the codebase: course-deliverable docs, milestone gantts, demo plans
+  not tied to a specific feature.
 
-# Long-running bridge (subscribes to broker, persists telemetry)
-npm run bridge:start      # leave running in its own terminal
+## Why the split
 
-# Dashboard dev server (http://localhost:5173)
-npm run dev
+The codebase needed to move into a subfolder so the project root could
+host project-related material (firmware sources, PCB files, course
+deliverables) without polluting the `npm` workspace tree, the TypeScript
+project, or the CI workflows. Tooling boundaries follow folder
+boundaries — `npm install` only resolves inside `codebase/`, prettier
+and eslint only see the codebase tree, vercel deploys only what's at
+`codebase/`.
 
-# Mock telemetry — three modes, see tools/mock-telemetry/README.md
-SB_SERVICE_KEY=… npm run -w @alzcare/mock-telemetry start -- \
-  --patient-id <uuid> --device-id <uuid> --mode mqtt --interval 1000
-
-# Tear down
-npm run supabase:stop
-```
-
-## Verifying
-
-```bash
-npm run lint        # eslint across the monorepo
-npm run typecheck   # tsc + deno check across all workspaces
-npm run test        # vitest in shared/edge/web
-npm run build       # production build (apps/web)
-```
-
-## Edge function deployment
-
-Functions live in `apps/edge/functions/` and are exposed to the Supabase CLI via the `supabase/functions` symlink. The import map at `apps/edge/deno.json` maps `@alzcare/shared/mqtt` to the workspace source.
-
-```bash
-npm run -w @alzcare/edge deploy:all
-```
-
-## Frontend deployment (Vercel)
-
-`vercel.json` at the repo root drives the build (`apps/web/dist` output). Set `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` (and `VITE_MAPBOX_TOKEN` if the outdoor map is in use) in the Vercel project's environment variables.
-
-Preview deploys per PR are handled by Vercel's GitHub App **independently** of this repo's GitHub Actions `verify` workflow. CI lints/typechecks/tests/builds but does not gate Vercel; configure required status checks in the GitHub repo settings if you want CI to block bad previews.
-
-The Mapbox token is a public `pk.*` token shipped in the client bundle. To prevent unrestricted reuse, configure a URL/origin allowlist on the Mapbox account dashboard covering your production domain plus the Vercel preview wildcard (`*.vercel.app` or your team's preview domain).
-
-## Architecture cheat-sheet
-
-- **MQTT topics**: `device/{patient_id}/{telemetry|signals|events}`, enforced via Mosquitto ACL pattern.
-- **Type contracts**: every MQTT message validated against Zod schemas in `packages/shared`; Vite and Deno consume the same TS source via path alias / import map.
-- **Realtime**: dashboard subscribes to Supabase Realtime channels (`patient:<uuid>`); the broker is the ingestion-side scaling story (AWS IoT Core swap-in path, see MQ-09).
-- **RLS**: caregivers see patients allocated via `caregiver_patient`. Read-scoping policies are stubbed; write policies are TODO (see BACKLOG).
+The git repo stays at this project-level root so the whole thing
+(codebase + firmware + hardware + planning) is versioned together.
