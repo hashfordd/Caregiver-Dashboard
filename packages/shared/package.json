@@ -13,7 +13,9 @@
     "./positioning": "./src/positioning/index.ts",
     "./positioning/*": "./src/positioning/*.ts",
     "./rules": "./src/rules/index.ts",
-    "./rules/*": "./src/rules/*.ts"
+    "./rules/*": "./src/rules/*.ts",
+    "./db": "./src/db/index.ts",
+    "./db/*": "./src/db/*.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

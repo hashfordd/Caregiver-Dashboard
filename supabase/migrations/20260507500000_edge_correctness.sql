@@ -57,9 +57,11 @@ declare
 begin
   if not pg_try_advisory_xact_lock(v_lock_key) then
     -- Concurrent estimator for the same patient — caller decides.
-    -- Surfaced via PostgREST as a 'P0001' raised exception with this
-    -- specific code so the handler can map it to a 200 'skipped' rather
-    -- than a 5xx error.
+    -- Surfaced via PostgREST as SQLSTATE 55P03 (lock_not_available)
+    -- so the handler can map it to a 200 'skipped' rather than a 5xx.
+    -- Item 149: prior comment claimed code 'P0001' which is the default
+    -- for raise exception with no explicit using-clause; the actual
+    -- raised code is 55P03 (set in the using clause below).
     raise exception 'concurrent_estimator' using errcode = '55P03';
   end if;
 

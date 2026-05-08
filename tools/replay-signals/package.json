@@ -2,11 +2,12 @@
   "name": "@alzcare/replay-signals",
   "version": "0.0.0",
   "private": true,
-  "description": "F8 verification harness — replay synthetic SignalsMessage fixtures through the bridge and report indoor-positioning accuracy against ground truth. Phase 3 deliverable.",
+  "description": "F8 verification harness \u2014 replay synthetic SignalsMessage fixtures through the bridge and report indoor-positioning accuracy against ground truth. Phase 3 deliverable.",
   "type": "module",
   "scripts": {
     "start": "tsx index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "@alzcare/shared": "*",

@@ -2,6 +2,14 @@
 -- column in favour of resolving the author's full_name via PostgREST
 -- embed (caregivers!author_caregiver_id (full_name)) on read.
 --
+-- Rollback (item 146): DATA-LOSSY. To revert:
+--   alter table public.patient_notes add column author_name text;
+--   -- Prior author_name values are gone; the UI now derives the author
+--   -- name from the caregivers row, so post-rollback rendering would
+--   -- need to backfill author_name from caregivers.full_name at the
+--   -- caller's discretion (or the column stays null and the UI keeps
+--   -- using the embedded caregivers.full_name).
+--
 -- Why: author_name was being written client-side from
 -- user.user_metadata.full_name, which is *user-controllable* via
 -- supabase.auth.signUp({ options: { data: { full_name: '...' } }}).

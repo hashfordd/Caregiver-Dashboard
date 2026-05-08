@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "start": "tsx index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.45.4"

@@ -1,6 +1,14 @@
 -- F11: rename patients.notes → patients.description (the existing column has
 -- always been used as a short bio/condition summary), and introduce a proper
 -- patient_notes log so caregivers can leave timestamped care notes.
+--
+-- Rollback (item 146): DATA-LOSSY if patient_notes has rows. To revert:
+--   alter table public.patients rename column description to notes;
+--   drop table public.patient_notes;        -- destroys per-care notes
+--   drop function public.create_patient_with_allocation(text, date, text);
+--   -- Re-create the original RPC signature with p_notes parameter.
+-- The patient_notes contents cannot be reconstructed from the rename
+-- alone; back up the table before rolling back if any rows exist.
 
 -- patients.notes → patients.description ─────────────────────────────────────
 alter table public.patients rename column notes to description;

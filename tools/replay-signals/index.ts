@@ -28,13 +28,11 @@ import { parseArgs } from 'node:util';
 import { createClient } from '@supabase/supabase-js';
 import { DEFAULT_PATH_LOSS_EXPONENT, DEFAULT_RSSI_AT_1M } from '@alzcare/shared/positioning';
 import type { SignalsMessage } from '@alzcare/shared/mqtt';
-
-interface BeaconArg {
-  id: string;
-  x: number;
-  y: number;
-  rssi_at_1m: number;
-}
+import {
+  parseBeaconArg as parseBeaconArgImpl,
+  ParseBeaconArgError,
+  type BeaconArg,
+} from './lib/parse-beacon-arg.ts';
 
 interface TruthRow {
   recorded_at: string;
@@ -99,23 +97,15 @@ function gaussian(rand: () => number, mean: number, stddev: number): number {
 }
 
 function parseBeaconArg(arg: string): BeaconArg {
-  // Format: `<mac>|<x>,<y>[,<rssi1m>]`. The `|` separator is required
-  // because BLE MAC addresses already contain colons (so a `:`-split
-  // on `AA:BB:CC:DD:EE:01:60:120:rssi` is ambiguous).
-  const [id, rest] = arg.split('|');
-  if (!id || !rest) {
-    fail(`invalid --beacon arg: ${arg} (expected '<mac>|<x>,<y>[,<rssi1m>]')`);
+  // Item 110: parser is unit-tested in lib/parse-beacon-arg.ts. The
+  // wrapper preserves the harness's fail() exit semantics so a malformed
+  // CLI arg still produces a clean process.exit(2) instead of throwing.
+  try {
+    return parseBeaconArgImpl(arg, DEFAULT_RSSI_AT_1M);
+  } catch (err) {
+    if (err instanceof ParseBeaconArgError) fail(err.message);
+    throw err;
   }
-  const [xs, ys, rssi1m] = rest.split(',');
-  if (!xs || !ys) {
-    fail(`invalid --beacon arg: ${arg} (expected '<mac>|<x>,<y>[,<rssi1m>]')`);
-  }
-  return {
-    id,
-    x: Number(xs),
-    y: Number(ys),
-    rssi_at_1m: rssi1m != null && rssi1m !== '' ? Number(rssi1m) : DEFAULT_RSSI_AT_1M,
-  };
 }
 
 // ─── generate subcommand ──────────────────────────────────────────────

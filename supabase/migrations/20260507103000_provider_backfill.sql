@@ -1,5 +1,16 @@
 -- Phase B step 4: backfill + invariant trigger + drop primary_caregiver_id.
 --
+-- Rollback (item 146): DATA-LOSSY for the dropped column. To revert:
+--   alter table public.patients add column primary_caregiver_id uuid;
+--   alter table public.patients alter column care_provider_id drop not null;
+--   drop trigger caregiver_patient_invariant on public.caregiver_patient;
+--   drop function public.caregiver_patient_invariant();
+--   -- The original primary_caregiver_id values cannot be reconstructed
+--   -- without a snapshot taken before this migration ran; the backfill
+--   -- moved their semantics into caregiver_patient + care_provider_id.
+--   -- Restore from backup or accept that primary_caregiver_id is null
+--   -- on every patient post-rollback.
+--
 -- For each existing caregiver with no provider:
 --   1. Create a care_providers row using their company_name (fallback
 --      'Personal'). One provider per existing caregiver — they're the
