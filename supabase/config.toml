@@ -70,7 +70,14 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.rules_engine]
-verify_jwt = true
+# Same reasoning as position_estimator above — webhook + cron callers send
+# Authorization: Bearer <sb_secret_*>, which the gateway can't verify as a
+# JWT. Auth is enforced in handler.ts via timingSafeEqual on the bearer
+# against SUPABASE_SERVICE_ROLE_KEY. (audit item 82)
+verify_jwt = false
+
+[functions.inactivity_scan]
+verify_jwt = false
 
 [analytics]
 enabled = false
