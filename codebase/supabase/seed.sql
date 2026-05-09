@@ -980,3 +980,435 @@ begin
 end
 $more_activity$;
 
+-- ============================================================================
+-- All-tabs richness — fills the gaps so every patient tab has content
+-- ============================================================================
+--
+-- Gap matrix before this section (✓ has, ✗ missing):
+--                  Live  Place  Calib  Hist  Alerts  Meds  Rules
+--   Eve              ✓    ✓      ✓     ✓     ✓       ✓     ✓
+--   Frank            ✓    ✗      ✗     ✓     ✓       ✓     ✓
+--   Grace            ✗    ✗      ✗     ✗     ✗       ✗     ✗
+--   Henry            ✓    ✗      ✗     ✓     ✓       ✓     ✓
+--
+-- The blocks below close those ✗s. Idempotent — deterministic UUIDs +
+-- if-not-exists guards.
+-- ============================================================================
+
+-- ─────────────────────────────────────────────────────────────────────
+-- Floor plans + beacons for Frank, Grace, Henry. Same 760×520 canvas
+-- shape as Eve's so the geometry primitives line up; per-patient
+-- variation in interior walls keeps the Place tab visually distinct.
+-- ─────────────────────────────────────────────────────────────────────
+do $places$
+declare
+  v_frank_id        uuid := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb2';
+  v_grace_id        uuid := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb3';
+  v_henry_id        uuid := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb4';
+  v_frank_plan_id   uuid := 'dddddddd-dddd-dddd-dddd-ddddddddddd2';
+  v_grace_plan_id   uuid := 'dddddddd-dddd-dddd-dddd-ddddddddddd3';
+  v_henry_plan_id   uuid := 'dddddddd-dddd-dddd-dddd-ddddddddddd4';
+begin
+  -- Frank's plan — ground-floor unit with a side door near the carpark
+  -- zone (top-right) so the Restricted carpark zone alert visualisation
+  -- makes sense.
+  insert into public.floor_plans
+    (id, patient_id, name, canvas_json, scale_meters_per_pixel)
+  values (
+    v_frank_plan_id, v_frank_id, 'Ground-floor unit',
+    '{
+      "version":"1.0",
+      "objects":[
+        {"type":"wall","x1":40,"y1":40,"x2":760,"y2":40},
+        {"type":"wall","x1":760,"y1":40,"x2":760,"y2":520},
+        {"type":"wall","x1":760,"y1":520,"x2":40,"y2":520},
+        {"type":"wall","x1":40,"y1":520,"x2":40,"y2":40},
+        {"type":"wall","x1":40,"y1":260,"x2":480,"y2":260},
+        {"type":"wall","x1":480,"y1":260,"x2":480,"y2":40},
+        {"type":"wall","x1":640,"y1":40,"x2":640,"y2":160}
+      ]
+    }'::jsonb,
+    0.04
+  )
+  on conflict (id) do nothing;
+
+  -- Grace's plan — single bedsit, smaller layout, bay-window nook
+  -- (drawn as a chamfered corner top-left).
+  insert into public.floor_plans
+    (id, patient_id, name, canvas_json, scale_meters_per_pixel)
+  values (
+    v_grace_plan_id, v_grace_id, 'Bedsit',
+    '{
+      "version":"1.0",
+      "objects":[
+        {"type":"wall","x1":120,"y1":40,"x2":760,"y2":40},
+        {"type":"wall","x1":760,"y1":40,"x2":760,"y2":520},
+        {"type":"wall","x1":760,"y1":520,"x2":40,"y2":520},
+        {"type":"wall","x1":40,"y1":520,"x2":40,"y2":160},
+        {"type":"wall","x1":40,"y1":160,"x2":120,"y2":40},
+        {"type":"wall","x1":40,"y1":380,"x2":280,"y2":380}
+      ]
+    }'::jsonb,
+    0.04
+  )
+  on conflict (id) do nothing;
+
+  -- Henry's plan — long room with a library nook (right-hand alcove).
+  insert into public.floor_plans
+    (id, patient_id, name, canvas_json, scale_meters_per_pixel)
+  values (
+    v_henry_plan_id, v_henry_id, 'Library suite',
+    '{
+      "version":"1.0",
+      "objects":[
+        {"type":"wall","x1":40,"y1":40,"x2":760,"y2":40},
+        {"type":"wall","x1":760,"y1":40,"x2":760,"y2":520},
+        {"type":"wall","x1":760,"y1":520,"x2":40,"y2":520},
+        {"type":"wall","x1":40,"y1":520,"x2":40,"y2":40},
+        {"type":"wall","x1":520,"y1":40,"x2":520,"y2":300},
+        {"type":"wall","x1":520,"y1":300,"x2":760,"y2":300}
+      ]
+    }'::jsonb,
+    0.04
+  )
+  on conflict (id) do nothing;
+
+  -- Beacons — 4 per plan in corner positions for triangulation.
+  insert into public.beacons
+    (id, patient_id, floor_plan_id, mac_address, x_canvas, y_canvas, label, tx_power, rssi_at_1m)
+  values
+    -- Frank
+    (uuid_generate_v5('e0000000-0000-0000-0000-000000000000'::uuid, 'frank-1'),
+     v_frank_id, v_frank_plan_id, 'b2:00:00:00:00:01', 120, 120, 'Bedroom',  -59, -65),
+    (uuid_generate_v5('e0000000-0000-0000-0000-000000000000'::uuid, 'frank-2'),
+     v_frank_id, v_frank_plan_id, 'b2:00:00:00:00:02', 600, 120, 'Lounge',   -59, -64),
+    (uuid_generate_v5('e0000000-0000-0000-0000-000000000000'::uuid, 'frank-3'),
+     v_frank_id, v_frank_plan_id, 'b2:00:00:00:00:03', 200, 420, 'Kitchen',  -59, -66),
+    (uuid_generate_v5('e0000000-0000-0000-0000-000000000000'::uuid, 'frank-4'),
+     v_frank_id, v_frank_plan_id, 'b2:00:00:00:00:04', 600, 420, 'Garden door', -59, -65),
+    -- Grace
+    (uuid_generate_v5('e0000000-0000-0000-0000-000000000000'::uuid, 'grace-1'),
+     v_grace_id, v_grace_plan_id, 'b3:00:00:00:00:01', 200, 120, 'Window nook', -59, -65),
+    (uuid_generate_v5('e0000000-0000-0000-0000-000000000000'::uuid, 'grace-2'),
+     v_grace_id, v_grace_plan_id, 'b3:00:00:00:00:02', 600, 120, 'Reading chair', -59, -65),
+    (uuid_generate_v5('e0000000-0000-0000-0000-000000000000'::uuid, 'grace-3'),
+     v_grace_id, v_grace_plan_id, 'b3:00:00:00:00:03', 160, 460, 'Bed',  -59, -66),
+    (uuid_generate_v5('e0000000-0000-0000-0000-000000000000'::uuid, 'grace-4'),
+     v_grace_id, v_grace_plan_id, 'b3:00:00:00:00:04', 600, 460, 'En-suite',  -59, -65),
+    -- Henry
+    (uuid_generate_v5('e0000000-0000-0000-0000-000000000000'::uuid, 'henry-1'),
+     v_henry_id, v_henry_plan_id, 'b4:00:00:00:00:01', 120, 120, 'Bedroom',  -59, -65),
+    (uuid_generate_v5('e0000000-0000-0000-0000-000000000000'::uuid, 'henry-2'),
+     v_henry_id, v_henry_plan_id, 'b4:00:00:00:00:02', 360, 120, 'Hallway',  -59, -64),
+    (uuid_generate_v5('e0000000-0000-0000-0000-000000000000'::uuid, 'henry-3'),
+     v_henry_id, v_henry_plan_id, 'b4:00:00:00:00:03', 640, 200, 'Library nook', -59, -66),
+    (uuid_generate_v5('e0000000-0000-0000-0000-000000000000'::uuid, 'henry-4'),
+     v_henry_id, v_henry_plan_id, 'b4:00:00:00:00:04', 360, 460, 'Bathroom', -59, -65)
+  on conflict (id) do nothing;
+
+  raise notice 'Place: floor plans + 4 beacons each for Frank / Grace / Henry.';
+end
+$places$;
+
+-- ─────────────────────────────────────────────────────────────────────
+-- Calibration captures for Frank, Grace, Henry — 3 each is enough to
+-- demo the Calibration tab without overloading.
+-- ─────────────────────────────────────────────────────────────────────
+do $more_calibration$
+declare
+  v_frank_plan_id  uuid := 'dddddddd-dddd-dddd-dddd-ddddddddddd2';
+  v_grace_plan_id  uuid := 'dddddddd-dddd-dddd-dddd-ddddddddddd3';
+  v_henry_plan_id  uuid := 'dddddddd-dddd-dddd-dddd-ddddddddddd4';
+begin
+  -- Frank
+  if not exists (select 1 from public.calibration_points where floor_plan_id = v_frank_plan_id) then
+    insert into public.calibration_points
+      (id, floor_plan_id, x_canvas, y_canvas, ble_signature, captured_at)
+    values
+      (uuid_generate_v5('aa000000-0000-0000-0000-000000000000'::uuid, 'frank-cal-1'),
+       v_frank_plan_id, 130, 140,
+       '[{"mac":"b2:00:00:00:00:01","rssi":-58,"samples":18},
+         {"mac":"b2:00:00:00:00:02","rssi":-78,"samples":17}]'::jsonb,
+       now() - interval '4 days'),
+      (uuid_generate_v5('aa000000-0000-0000-0000-000000000000'::uuid, 'frank-cal-2'),
+       v_frank_plan_id, 590, 140,
+       '[{"mac":"b2:00:00:00:00:02","rssi":-58,"samples":18},
+         {"mac":"b2:00:00:00:00:01","rssi":-77,"samples":16}]'::jsonb,
+       now() - interval '4 days' + interval '15 minutes'),
+      (uuid_generate_v5('aa000000-0000-0000-0000-000000000000'::uuid, 'frank-cal-3'),
+       v_frank_plan_id, 200, 420,
+       '[{"mac":"b2:00:00:00:00:03","rssi":-58,"samples":18},
+         {"mac":"b2:00:00:00:00:01","rssi":-79,"samples":15}]'::jsonb,
+       now() - interval '4 days' + interval '30 minutes');
+  end if;
+
+  -- Grace
+  if not exists (select 1 from public.calibration_points where floor_plan_id = v_grace_plan_id) then
+    insert into public.calibration_points
+      (id, floor_plan_id, x_canvas, y_canvas, ble_signature, captured_at)
+    values
+      (uuid_generate_v5('aa000000-0000-0000-0000-000000000000'::uuid, 'grace-cal-1'),
+       v_grace_plan_id, 200, 130,
+       '[{"mac":"b3:00:00:00:00:01","rssi":-57,"samples":18}]'::jsonb,
+       now() - interval '2 days'),
+      (uuid_generate_v5('aa000000-0000-0000-0000-000000000000'::uuid, 'grace-cal-2'),
+       v_grace_plan_id, 600, 130,
+       '[{"mac":"b3:00:00:00:00:02","rssi":-58,"samples":17}]'::jsonb,
+       now() - interval '2 days' + interval '12 minutes'),
+      (uuid_generate_v5('aa000000-0000-0000-0000-000000000000'::uuid, 'grace-cal-3'),
+       v_grace_plan_id, 380, 280,
+       '[{"mac":"b3:00:00:00:00:01","rssi":-71,"samples":17},
+         {"mac":"b3:00:00:00:00:04","rssi":-72,"samples":17}]'::jsonb,
+       now() - interval '2 days' + interval '24 minutes');
+  end if;
+
+  -- Henry
+  if not exists (select 1 from public.calibration_points where floor_plan_id = v_henry_plan_id) then
+    insert into public.calibration_points
+      (id, floor_plan_id, x_canvas, y_canvas, ble_signature, captured_at)
+    values
+      (uuid_generate_v5('aa000000-0000-0000-0000-000000000000'::uuid, 'henry-cal-1'),
+       v_henry_plan_id, 130, 130,
+       '[{"mac":"b4:00:00:00:00:01","rssi":-58,"samples":18}]'::jsonb,
+       now() - interval '3 days'),
+      (uuid_generate_v5('aa000000-0000-0000-0000-000000000000'::uuid, 'henry-cal-2'),
+       v_henry_plan_id, 640, 200,
+       '[{"mac":"b4:00:00:00:00:03","rssi":-57,"samples":18}]'::jsonb,
+       now() - interval '3 days' + interval '18 minutes'),
+      (uuid_generate_v5('aa000000-0000-0000-0000-000000000000'::uuid, 'henry-cal-3'),
+       v_henry_plan_id, 360, 460,
+       '[{"mac":"b4:00:00:00:00:04","rssi":-58,"samples":18},
+         {"mac":"b4:00:00:00:00:02","rssi":-72,"samples":17}]'::jsonb,
+       now() - interval '3 days' + interval '36 minutes');
+  end if;
+
+  raise notice 'Calibration: 3 captures each for Frank / Grace / Henry.';
+end
+$more_calibration$;
+
+-- ─────────────────────────────────────────────────────────────────────
+-- Grace's full setup — paired device + 12h history + recent positions
+-- + sensor readings, so her Live + History tabs match the others.
+-- ─────────────────────────────────────────────────────────────────────
+do $grace_setup$
+declare
+  v_grace_id         uuid := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb3';
+  v_grace_device_id  uuid := 'cccccccc-cccc-cccc-cccc-ccccccccccc3';
+  v_now              timestamptz := now();
+  v_oldest           timestamptz := now() - interval '12 hours';
+begin
+  -- Paired device (idempotent on id).
+  insert into public.devices
+    (id, mac_address, firmware_version, paired_patient_id, last_seen_at)
+  values (v_grace_device_id, 'aa:bb:cc:00:00:03', '1.4.2', v_grace_id, v_now - interval '8 seconds')
+  on conflict (id) do nothing;
+
+  -- Recent positions (last minute) — Grace stays in her bedsit, near
+  -- the reading chair.
+  if not exists (select 1 from public.position_estimates where patient_id = v_grace_id) then
+    insert into public.position_estimates
+      (patient_id, recorded_at, mode, x_canvas, y_canvas, confidence)
+    select
+      v_grace_id,
+      v_now - (i || ' seconds')::interval,
+      'indoor'::public.position_mode,
+      580 + (random() * 40)::numeric,
+      120 + (random() * 30)::numeric,
+      0.76 + random() * 0.10
+    from generate_series(0, 60, 5) as t(i);
+  end if;
+
+  -- 12h backfill at 10-min intervals — small drift around two anchors
+  -- (reading chair in the morning, bed in the evening).
+  if not exists (
+    select 1 from public.position_estimates
+     where patient_id = v_grace_id
+       and recorded_at < now() - interval '6 hours'
+  ) then
+    insert into public.position_estimates
+      (patient_id, recorded_at, mode, x_canvas, y_canvas, confidence)
+    select
+      v_grace_id,
+      v_oldest + (i * interval '10 minutes'),
+      'indoor'::public.position_mode,
+      case when i < 36 then 580 + (random() * 40)::numeric
+           else 160 + (random() * 30)::numeric end,
+      case when i < 36 then 120 + (random() * 30)::numeric
+           else 460 + (random() * 30)::numeric end,
+      0.72 + random() * 0.12
+    from generate_series(0, 71) as t(i);
+
+    -- Sensor readings — calmer baseline than Eve / Frank.
+    insert into public.sensor_readings
+      (patient_id, device_id, recorded_at, hr_bpm, spo2_pct, temp_c)
+    select
+      v_grace_id, v_grace_device_id,
+      v_oldest + (i * interval '10 minutes'),
+      (74 + sin(i::numeric / 7) * 3 + (random() - 0.5) * 1.5)::numeric(5,1),
+      (98 - random() * 1)::numeric(4,1),
+      (36.7 + (random() - 0.5) * 0.18)::numeric(4,2)
+    from generate_series(0, 71) as t(i);
+  end if;
+
+  -- Recent vitals so the Live sparkline isn't empty.
+  if not exists (
+    select 1 from public.sensor_readings
+     where patient_id = v_grace_id
+       and recorded_at > now() - interval '15 minutes'
+  ) then
+    insert into public.sensor_readings
+      (patient_id, device_id, recorded_at, hr_bpm, spo2_pct, temp_c)
+    select
+      v_grace_id, v_grace_device_id,
+      v_now - (i || ' seconds')::interval,
+      (74 + sin(i::numeric / 25) * 3 + (random() - 0.5) * 1.5)::numeric(5,1),
+      (98 - random() * 1)::numeric(4,1),
+      (36.7 + (random() - 0.5) * 0.18)::numeric(4,2)
+    from generate_series(0, 600, 30) as t(i);
+  end if;
+
+  raise notice 'Grace: paired device + recent positions + 12h backfill seeded.';
+end
+$grace_setup$;
+
+-- ─────────────────────────────────────────────────────────────────────
+-- Grace's alert rules + a couple of fired alerts so her Settings,
+-- Alerts, and dashboard counter contributions are populated.
+-- ─────────────────────────────────────────────────────────────────────
+do $grace_rules$
+declare
+  v_grace_id       uuid := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb3';
+  v_admin_id       uuid;
+  v_anna_id        uuid := '12121212-1212-1212-1212-121212121212';
+  v_rule_grace_v   uuid := 'ffffffff-ffff-ffff-ffff-fffffffffff5';
+  v_rule_grace_z   uuid := 'ffffffff-ffff-ffff-ffff-fffffffffff6';
+begin
+  select id into v_admin_id from auth.users where email = 'admin@bizzieapp.com';
+
+  -- Two rules: vitals + a "stay in the bedsit at night" zone rule.
+  insert into public.alert_rules
+    (id, patient_id, type, params, severity, enabled)
+  values
+    (v_rule_grace_v, v_grace_id, 'vitals',
+     '{"metric":"hr_bpm","min":55,"max":105,"window_seconds":120}'::jsonb,
+     'warn', true),
+    (v_rule_grace_z, v_grace_id, 'zone',
+     '{"polygon":[[40,160],[280,160],[280,380],[40,380]],"direction":"leave","label":"Bedsit only-between (night)"}'::jsonb,
+     'info', true)
+  on conflict (id) do nothing;
+
+  -- Three fired alerts — one open, two acked — so her Alerts tab + the
+  -- Open alerts counter both have content.
+  if not exists (
+    select 1 from public.alerts a
+     where a.patient_id = v_grace_id
+       and a.id in (
+         uuid_generate_v5('a0000000-0000-0000-0000-000000000000'::uuid, 'grace-alert-1'),
+         uuid_generate_v5('a0000000-0000-0000-0000-000000000000'::uuid, 'grace-alert-2'),
+         uuid_generate_v5('a0000000-0000-0000-0000-000000000000'::uuid, 'grace-alert-3')
+       )
+  ) then
+    insert into public.alerts
+      (id, patient_id, rule_id, severity, fired_at, acknowledged_at,
+       ack_by_caregiver_id, context)
+    values
+      -- Open: Grace just left her bedsit at night.
+      (uuid_generate_v5('a0000000-0000-0000-0000-000000000000'::uuid, 'grace-alert-1'),
+       v_grace_id, v_rule_grace_z, 'info',
+       now() - interval '8 minutes', null, null,
+       '{"kind":"zone","direction":"leave","label":"Bedsit only-between (night)"}'::jsonb),
+      -- Acked: HR spike yesterday.
+      (uuid_generate_v5('a0000000-0000-0000-0000-000000000000'::uuid, 'grace-alert-2'),
+       v_grace_id, v_rule_grace_v, 'warn',
+       now() - interval '1 day' + interval '14:30',
+       now() - interval '1 day' + interval '14:34', v_anna_id,
+       '{"kind":"vitals","metric":"hr_bpm","value":108,"breached":"high"}'::jsonb),
+      -- Acked: zone breach two nights ago.
+      (uuid_generate_v5('a0000000-0000-0000-0000-000000000000'::uuid, 'grace-alert-3'),
+       v_grace_id, v_rule_grace_z, 'info',
+       now() - interval '2 days' + interval '23:15',
+       now() - interval '2 days' + interval '23:21', coalesce(v_admin_id, v_anna_id),
+       '{"kind":"zone","direction":"leave","label":"Bedsit only-between (night)"}'::jsonb)
+    on conflict (id) do nothing;
+  end if;
+
+  raise notice 'Grace: 2 rules + 3 alerts seeded.';
+end
+$grace_rules$;
+
+-- ─────────────────────────────────────────────────────────────────────
+-- Grace's medications + administrations.
+-- ─────────────────────────────────────────────────────────────────────
+do $grace_meds$
+declare
+  v_grace_id       uuid := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb3';
+  v_admin_id       uuid;
+  v_anna_id        uuid := '12121212-1212-1212-1212-121212121212';
+  v_med_g_riv      uuid := '99999999-9999-9999-9999-999999999997'; -- Rivastigmine
+  v_med_g_para     uuid := '99999999-9999-9999-9999-999999999998'; -- Paracetamol PRN
+  v_med_g_vitd     uuid := '99999999-9999-9999-9999-999999999999'; -- Vitamin D
+begin
+  select id into v_admin_id from auth.users where email = 'admin@bizzieapp.com';
+
+  insert into public.medications
+    (id, patient_id, name, dose, route, schedule, prn, active, notes)
+  values
+    (v_med_g_riv, v_grace_id, 'Rivastigmine', '1.5 mg', 'oral',
+     '{"times":["09:00","21:00"],"tz":"Australia/Sydney"}'::jsonb, false, true,
+     'Cognitive support — start dose. Monitor for nausea over the first fortnight.'),
+    (v_med_g_para, v_grace_id, 'Paracetamol', '500 mg', 'oral',
+     null, true, true,
+     'PRN for headache. Max 4 doses / 24 h.'),
+    (v_med_g_vitd, v_grace_id, 'Vitamin D', '1000 IU', 'oral',
+     '{"times":["09:00"],"tz":"Australia/Sydney"}'::jsonb, false, true,
+     'Daily with breakfast.')
+  on conflict (id) do nothing;
+
+  -- A few administrations across the last 3 days.
+  insert into public.medication_administrations
+    (id, medication_id, scheduled_for, administered_at, administered_by, status, notes)
+  values
+    (uuid_generate_v5('a2000000-0000-0000-0000-000000000000'::uuid, 'grace-adm-1'),
+     v_med_g_riv, now() - interval '2 days' + interval '09:00',
+     now() - interval '2 days' + interval '09:08', v_anna_id, 'given', null),
+    (uuid_generate_v5('a2000000-0000-0000-0000-000000000000'::uuid, 'grace-adm-2'),
+     v_med_g_vitd, now() - interval '2 days' + interval '09:00',
+     now() - interval '2 days' + interval '09:09', v_anna_id, 'given', null),
+    (uuid_generate_v5('a2000000-0000-0000-0000-000000000000'::uuid, 'grace-adm-3'),
+     v_med_g_riv, now() - interval '1 day' + interval '21:00',
+     now() - interval '1 day' + interval '21:14', v_anna_id, 'given',
+     'Slight nausea afterward — within expected tolerance window.'),
+    (uuid_generate_v5('a2000000-0000-0000-0000-000000000000'::uuid, 'grace-adm-4'),
+     v_med_g_para, null,
+     now() - interval '4 hours', coalesce(v_admin_id, v_anna_id), 'given',
+     'PRN — Grace mentioned a mild headache after the morning visit.'),
+    (uuid_generate_v5('a2000000-0000-0000-0000-000000000000'::uuid, 'grace-adm-5'),
+     v_med_g_riv, date_trunc('day', now()) + interval '09:00',
+     date_trunc('day', now()) + interval '09:11', v_anna_id, 'given', null)
+  on conflict (id) do nothing;
+
+  raise notice 'Grace: 3 medications + 5 administrations seeded.';
+end
+$grace_meds$;
+
+-- ─────────────────────────────────────────────────────────────────────
+-- Unpaired devices — populate the device discovery flow on the Live
+-- tab so the pairing path has something to find.
+-- ─────────────────────────────────────────────────────────────────────
+do $unpaired$
+begin
+  insert into public.devices
+    (id, mac_address, firmware_version, paired_patient_id, last_seen_at)
+  values
+    (uuid_generate_v5('cd000000-0000-0000-0000-000000000000'::uuid, 'unpaired-1'),
+     'aa:bb:cc:00:00:11', '1.4.3', null, now() - interval '15 seconds'),
+    (uuid_generate_v5('cd000000-0000-0000-0000-000000000000'::uuid, 'unpaired-2'),
+     'aa:bb:cc:00:00:12', '1.4.2', null, now() - interval '40 seconds'),
+    (uuid_generate_v5('cd000000-0000-0000-0000-000000000000'::uuid, 'unpaired-3'),
+     'aa:bb:cc:00:00:13', '1.3.9', null, now() - interval '2 minutes')
+  on conflict (id) do nothing;
+
+  raise notice 'Discovery: 3 unpaired devices visible on the Live tab pairing panel.';
+end
+$unpaired$;
+
