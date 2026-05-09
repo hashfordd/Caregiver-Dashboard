@@ -440,3 +440,543 @@ begin
     v_admin_email, v_provider_id;
 end
 $seed$;
+
+-- ============================================================================
+-- Phase II demo richness — extra blocks to exercise every surface
+-- ============================================================================
+--
+-- The blocks above seed the bare minimum to load the dashboard. The
+-- blocks below add the depth needed to test the new Phase II features
+-- end-to-end — multi-caregiver tenant, 12h of historical telemetry for
+-- the History tab, varied alerts so the avg-ack KPI is meaningful,
+-- more activity so the feed fills past 30 entries, and calibration
+-- captures so the Calibration tab has something to render.
+--
+-- Each block is independently re-runnable. Demo caregivers and extra
+-- rows use deterministic UUIDs guarded by `if not exists` / `on
+-- conflict do nothing`, so re-running this file is safe.
+--
+-- DEMO CAREGIVERS (password: demo1234!)
+--   anna+demo@bizzieapp.com    member  · allocated to Eve + Grace
+--   priya+demo@bizzieapp.com   member  · allocated to Frank + Henry
+--   marcus+demo@bizzieapp.com  admin   · sees the whole tenant
+-- ============================================================================
+
+-- ─────────────────────────────────────────────────────────────────────
+-- Member caregivers — auth.users + handle_new_user trigger creates the
+-- public.caregivers row, then we bind tenant + role through the
+-- alzcare.role_change_authorized bypass.
+-- ─────────────────────────────────────────────────────────────────────
+do $members$
+declare
+  v_provider_id uuid := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1';
+  v_anna_id     uuid := '12121212-1212-1212-1212-121212121212';
+  v_priya_id    uuid := '13131313-1313-1313-1313-131313131313';
+  v_marcus_id   uuid := '14141414-1414-1414-1414-141414141414';
+  v_eve_id      uuid := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1';
+  v_frank_id    uuid := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb2';
+  v_grace_id    uuid := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb3';
+  v_henry_id    uuid := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb4';
+begin
+  -- Anna Lee
+  if not exists (select 1 from auth.users where id = v_anna_id) then
+    insert into auth.users (
+      instance_id, id, aud, role, email, encrypted_password,
+      email_confirmed_at, raw_app_meta_data, raw_user_meta_data,
+      created_at, updated_at,
+      confirmation_token, email_change, email_change_token_new, recovery_token
+    ) values (
+      '00000000-0000-0000-0000-000000000000', v_anna_id,
+      'authenticated', 'authenticated',
+      'anna+demo@bizzieapp.com',
+      crypt('demo1234!', gen_salt('bf')), now(),
+      '{"provider":"email","providers":["email"]}'::jsonb,
+      '{"full_name":"Anna Lee","role":"professional","company_name":"Acme Care Co"}'::jsonb,
+      now(), now(), '', '', '', ''
+    );
+  end if;
+
+  -- Priya Singh
+  if not exists (select 1 from auth.users where id = v_priya_id) then
+    insert into auth.users (
+      instance_id, id, aud, role, email, encrypted_password,
+      email_confirmed_at, raw_app_meta_data, raw_user_meta_data,
+      created_at, updated_at,
+      confirmation_token, email_change, email_change_token_new, recovery_token
+    ) values (
+      '00000000-0000-0000-0000-000000000000', v_priya_id,
+      'authenticated', 'authenticated',
+      'priya+demo@bizzieapp.com',
+      crypt('demo1234!', gen_salt('bf')), now(),
+      '{"provider":"email","providers":["email"]}'::jsonb,
+      '{"full_name":"Priya Singh","role":"professional","company_name":"Acme Care Co"}'::jsonb,
+      now(), now(), '', '', '', ''
+    );
+  end if;
+
+  -- Marcus Chen (second admin so the demote-last-admin guard doesn't
+  -- block role testing)
+  if not exists (select 1 from auth.users where id = v_marcus_id) then
+    insert into auth.users (
+      instance_id, id, aud, role, email, encrypted_password,
+      email_confirmed_at, raw_app_meta_data, raw_user_meta_data,
+      created_at, updated_at,
+      confirmation_token, email_change, email_change_token_new, recovery_token
+    ) values (
+      '00000000-0000-0000-0000-000000000000', v_marcus_id,
+      'authenticated', 'authenticated',
+      'marcus+demo@bizzieapp.com',
+      crypt('demo1234!', gen_salt('bf')), now(),
+      '{"provider":"email","providers":["email"]}'::jsonb,
+      '{"full_name":"Marcus Chen","role":"professional","company_name":"Acme Care Co"}'::jsonb,
+      now(), now(), '', '', '', ''
+    );
+  end if;
+
+  -- Bind role + tenant via the documented session-var bypass for the
+  -- caregivers_block_privileged_self_update trigger.
+  perform set_config('alzcare.role_change_authorized', 'true', true);
+
+  update public.caregivers
+     set care_provider_id = v_provider_id,
+         provider_role    = case when id = v_marcus_id
+                                  then 'admin'::public.caregiver_provider_role
+                                 else 'member'::public.caregiver_provider_role end,
+         company_name     = coalesce(company_name, 'Acme Care Co')
+   where id in (v_anna_id, v_priya_id, v_marcus_id);
+
+  -- Anna covers Eve + Grace; Priya covers Frank + Henry; Marcus is an
+  -- admin so the dashboard already shows him every patient via
+  -- can_access_patient — we still allocate explicitly so caregiver_patient
+  -- has a row (drives the Caregivers tab on each patient).
+  insert into public.caregiver_patient (caregiver_id, patient_id) values
+    (v_anna_id,   v_eve_id),
+    (v_anna_id,   v_grace_id),
+    (v_priya_id,  v_frank_id),
+    (v_priya_id,  v_henry_id),
+    (v_marcus_id, v_eve_id),
+    (v_marcus_id, v_frank_id),
+    (v_marcus_id, v_grace_id),
+    (v_marcus_id, v_henry_id)
+  on conflict (caregiver_id, patient_id) do nothing;
+
+  raise notice 'Demo members: anna / priya / marcus seeded (password demo1234!).';
+end
+$members$;
+
+-- ─────────────────────────────────────────────────────────────────────
+-- 12h of historical telemetry — gives the History tab a meaningful
+-- replay window and the vitals charts a populated x-axis. 10-minute
+-- intervals strike a balance between visible motion and insert volume.
+-- ─────────────────────────────────────────────────────────────────────
+do $history$
+declare
+  v_eve_id          uuid := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1';
+  v_frank_id        uuid := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb2';
+  v_henry_id        uuid := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb4';
+  v_eve_device_id   uuid := 'cccccccc-cccc-cccc-cccc-ccccccccccc1';
+  v_frank_device_id uuid := 'cccccccc-cccc-cccc-cccc-ccccccccccc2';
+  v_henry_device_id uuid := 'cccccccc-cccc-cccc-cccc-ccccccccccc4';
+  v_now             timestamptz := now();
+  v_oldest          timestamptz := now() - interval '12 hours';
+begin
+  -- Skip if any patient already has rows >= 6h old (signals that the
+  -- backfill ran on a previous invocation).
+  if not exists (
+    select 1 from public.position_estimates
+     where patient_id = v_eve_id
+       and recorded_at < now() - interval '6 hours'
+  ) then
+    -- Eve drifts within the lounge (x ~140-180, y ~150-180)
+    insert into public.position_estimates
+      (patient_id, recorded_at, mode, x_canvas, y_canvas, confidence)
+    select
+      v_eve_id,
+      v_oldest + (i * interval '10 minutes'),
+      'indoor'::public.position_mode,
+      150 + (random() * 40)::numeric,
+      155 + (random() * 35)::numeric,
+      0.74 + random() * 0.12
+    from generate_series(0, 71) as t(i);
+
+    -- Frank's room (x ~580-640) with a sundowning excursion toward the
+    -- carpark zone in the late afternoon (interval index ~50-58)
+    insert into public.position_estimates
+      (patient_id, recorded_at, mode, x_canvas, y_canvas, confidence)
+    select
+      v_frank_id,
+      v_oldest + (i * interval '10 minutes'),
+      'indoor'::public.position_mode,
+      case when i between 50 and 58 then 700 + (random() * 50)::numeric
+           else 590 + (random() * 50)::numeric end,
+      case when i between 50 and 58 then 90  + (random() * 30)::numeric
+           else 200 + (random() * 30)::numeric end,
+      0.70 + random() * 0.12
+    from generate_series(0, 71) as t(i);
+
+    -- Henry — mostly resting in the library, a few walks
+    insert into public.position_estimates
+      (patient_id, recorded_at, mode, x_canvas, y_canvas, confidence)
+    select
+      v_henry_id,
+      v_oldest + (i * interval '10 minutes'),
+      'indoor'::public.position_mode,
+      200 + (random() * 30)::numeric,
+      420 + (random() * 30)::numeric,
+      0.66 + random() * 0.10
+    from generate_series(0, 71) as t(i);
+
+    -- Vitals — Eve and Frank only (devices paired). Frank's HR climbs
+    -- during his sundowning window so the vitals trace correlates with
+    -- the alerts he triggers.
+    insert into public.sensor_readings
+      (patient_id, device_id, recorded_at, hr_bpm, spo2_pct, temp_c)
+    select
+      v_eve_id, v_eve_device_id,
+      v_oldest + (i * interval '10 minutes'),
+      (72 + sin(i::numeric / 6) * 5 + (random() - 0.5) * 2)::numeric(5,1),
+      (98 - random() * 1)::numeric(4,1),
+      (36.6 + (random() - 0.5) * 0.2)::numeric(4,2)
+    from generate_series(0, 71) as t(i);
+
+    insert into public.sensor_readings
+      (patient_id, device_id, recorded_at, hr_bpm, spo2_pct, temp_c)
+    select
+      v_frank_id, v_frank_device_id,
+      v_oldest + (i * interval '10 minutes'),
+      case when i between 50 and 58
+           then (108 + (random() - 0.5) * 6)::numeric(5,1)
+           else (84 + (random() - 0.5) * 5)::numeric(5,1) end,
+      (97 - random() * 1.5)::numeric(4,1),
+      (36.8 + (random() - 0.5) * 0.2)::numeric(4,2)
+    from generate_series(0, 71) as t(i);
+
+    insert into public.sensor_readings
+      (patient_id, device_id, recorded_at, hr_bpm, spo2_pct, temp_c)
+    select
+      v_henry_id, v_henry_device_id,
+      v_oldest + (i * interval '10 minutes'),
+      (68 + sin(i::numeric / 8) * 3 + (random() - 0.5) * 2)::numeric(5,1),
+      (96 - random() * 1.5)::numeric(4,1),
+      (36.5 + (random() - 0.5) * 0.2)::numeric(4,2)
+    from generate_series(0, 71) as t(i);
+
+    raise notice 'History: 12h of position + vitals seeded for Eve, Frank, Henry.';
+  else
+    raise notice 'History: skipped (existing data older than 6h found).';
+  end if;
+end
+$history$;
+
+-- ─────────────────────────────────────────────────────────────────────
+-- Calibration captures — 6 points around Eve's floor plan with mock
+-- BLE signatures so the Calibration tab shows real captures rather
+-- than the empty state.
+-- ─────────────────────────────────────────────────────────────────────
+do $calibration$
+declare
+  v_eve_plan_id uuid := 'dddddddd-dddd-dddd-dddd-ddddddddddd1';
+begin
+  if not exists (select 1 from public.calibration_points where floor_plan_id = v_eve_plan_id) then
+    insert into public.calibration_points
+      (id, floor_plan_id, x_canvas, y_canvas, ble_signature, captured_at)
+    values
+      (uuid_generate_v5('aa000000-0000-0000-0000-000000000000'::uuid, 'cal-1'),
+       v_eve_plan_id, 130, 130,
+       '[{"mac":"b1:00:00:00:00:01","rssi":-58,"samples":18},
+         {"mac":"b1:00:00:00:00:02","rssi":-78,"samples":17},
+         {"mac":"b1:00:00:00:00:03","rssi":-82,"samples":16}]'::jsonb,
+       now() - interval '5 days'),
+      (uuid_generate_v5('aa000000-0000-0000-0000-000000000000'::uuid, 'cal-2'),
+       v_eve_plan_id, 540, 170,
+       '[{"mac":"b1:00:00:00:00:01","rssi":-79,"samples":17},
+         {"mac":"b1:00:00:00:00:02","rssi":-57,"samples":18},
+         {"mac":"b1:00:00:00:00:04","rssi":-81,"samples":15}]'::jsonb,
+       now() - interval '5 days' + interval '20 minutes'),
+      (uuid_generate_v5('aa000000-0000-0000-0000-000000000000'::uuid, 'cal-3'),
+       v_eve_plan_id, 200, 420,
+       '[{"mac":"b1:00:00:00:00:03","rssi":-58,"samples":18},
+         {"mac":"b1:00:00:00:00:01","rssi":-80,"samples":15},
+         {"mac":"b1:00:00:00:00:04","rssi":-77,"samples":17}]'::jsonb,
+       now() - interval '5 days' + interval '40 minutes'),
+      (uuid_generate_v5('aa000000-0000-0000-0000-000000000000'::uuid, 'cal-4'),
+       v_eve_plan_id, 600, 420,
+       '[{"mac":"b1:00:00:00:00:04","rssi":-58,"samples":18},
+         {"mac":"b1:00:00:00:00:02","rssi":-78,"samples":16},
+         {"mac":"b1:00:00:00:00:03","rssi":-79,"samples":17}]'::jsonb,
+       now() - interval '5 days' + interval '60 minutes'),
+      (uuid_generate_v5('aa000000-0000-0000-0000-000000000000'::uuid, 'cal-5'),
+       v_eve_plan_id, 380, 280,
+       '[{"mac":"b1:00:00:00:00:01","rssi":-72,"samples":17},
+         {"mac":"b1:00:00:00:00:02","rssi":-72,"samples":17},
+         {"mac":"b1:00:00:00:00:03","rssi":-72,"samples":17},
+         {"mac":"b1:00:00:00:00:04","rssi":-72,"samples":17}]'::jsonb,
+       now() - interval '4 days'),
+      (uuid_generate_v5('aa000000-0000-0000-0000-000000000000'::uuid, 'cal-6'),
+       v_eve_plan_id, 400, 480,
+       '[{"mac":"b1:00:00:00:00:03","rssi":-66,"samples":18},
+         {"mac":"b1:00:00:00:00:04","rssi":-67,"samples":17},
+         {"mac":"b1:00:00:00:00:01","rssi":-83,"samples":16}]'::jsonb,
+       now() - interval '4 days' + interval '15 minutes');
+
+    raise notice 'Calibration: 6 captures seeded for Eve''s floor plan.';
+  end if;
+end
+$calibration$;
+
+-- ─────────────────────────────────────────────────────────────────────
+-- More alerts — 10 historical alerts with varied severities + ack
+-- deltas so the avg_ack_minutes_7d KPI on the provider Overview is
+-- meaningful, and so the alert stream + bell badge counts have depth.
+-- ─────────────────────────────────────────────────────────────────────
+do $more_alerts$
+declare
+  v_admin_id        uuid;
+  v_anna_id         uuid := '12121212-1212-1212-1212-121212121212';
+  v_priya_id        uuid := '13131313-1313-1313-1313-131313131313';
+  v_marcus_id       uuid := '14141414-1414-1414-1414-141414141414';
+  v_eve_id          uuid := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1';
+  v_frank_id        uuid := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb2';
+  v_henry_id        uuid := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb4';
+  v_rule_eve_vitals uuid := 'ffffffff-ffff-ffff-ffff-fffffffffff1';
+  v_rule_eve_zone   uuid := 'ffffffff-ffff-ffff-ffff-fffffffffff2';
+  v_rule_frank_zone uuid := 'ffffffff-ffff-ffff-ffff-fffffffffff3';
+  v_rule_henry_fall uuid := 'ffffffff-ffff-ffff-ffff-fffffffffff4';
+begin
+  select id into v_admin_id from auth.users where email = 'admin@bizzieapp.com';
+  if v_admin_id is null then
+    raise notice 'more_alerts: skipping — admin user not found.';
+    return;
+  end if;
+
+  -- Already at least 12 alerts? Skip.
+  if (select count(*) from public.alerts
+       where patient_id in (v_eve_id, v_frank_id, v_henry_id)) >= 12 then
+    raise notice 'more_alerts: skipped (>=12 alerts already present).';
+    return;
+  end if;
+
+  insert into public.alerts
+    (id, patient_id, rule_id, severity, fired_at, acknowledged_at,
+     ack_by_caregiver_id, context)
+  values
+    (uuid_generate_v5('a0000000-0000-0000-0000-000000000000'::uuid, 'alert-1'),
+     v_eve_id, v_rule_eve_vitals, 'warn',
+     now() - interval '6 days' + interval '08:30',
+     now() - interval '6 days' + interval '08:34', v_anna_id,
+     '{"kind":"vitals","metric":"hr_bpm","value":115,"breached":"high"}'::jsonb),
+    (uuid_generate_v5('a0000000-0000-0000-0000-000000000000'::uuid, 'alert-2'),
+     v_frank_id, v_rule_frank_zone, 'critical',
+     now() - interval '5 days' + interval '17:15',
+     now() - interval '5 days' + interval '17:17', v_priya_id,
+     '{"kind":"zone","direction":"enter","label":"Restricted carpark zone"}'::jsonb),
+    (uuid_generate_v5('a0000000-0000-0000-0000-000000000000'::uuid, 'alert-3'),
+     v_henry_id, v_rule_henry_fall, 'critical',
+     now() - interval '4 days' + interval '03:42',
+     now() - interval '4 days' + interval '03:48', v_priya_id,
+     '{"kind":"fall","accel_peak_g":2.9}'::jsonb),
+    (uuid_generate_v5('a0000000-0000-0000-0000-000000000000'::uuid, 'alert-4'),
+     v_eve_id, v_rule_eve_zone, 'info',
+     now() - interval '3 days' + interval '23:50',
+     now() - interval '3 days' + interval '23:58', v_admin_id,
+     '{"kind":"zone","direction":"leave","label":"Bedroom only-between"}'::jsonb),
+    (uuid_generate_v5('a0000000-0000-0000-0000-000000000000'::uuid, 'alert-5'),
+     v_frank_id, v_rule_frank_zone, 'warn',
+     now() - interval '3 days' + interval '18:20',
+     now() - interval '3 days' + interval '18:22', v_marcus_id,
+     '{"kind":"zone","direction":"enter","label":"Restricted carpark zone"}'::jsonb),
+    (uuid_generate_v5('a0000000-0000-0000-0000-000000000000'::uuid, 'alert-6'),
+     v_eve_id, v_rule_eve_vitals, 'warn',
+     now() - interval '2 days' + interval '11:10',
+     now() - interval '2 days' + interval '11:13', v_anna_id,
+     '{"kind":"vitals","metric":"hr_bpm","value":112,"breached":"high"}'::jsonb),
+    (uuid_generate_v5('a0000000-0000-0000-0000-000000000000'::uuid, 'alert-7'),
+     v_henry_id, v_rule_henry_fall, 'warn',
+     now() - interval '2 days' + interval '06:42',
+     now() - interval '2 days' + interval '06:50', v_priya_id,
+     '{"kind":"fall","accel_peak_g":2.4}'::jsonb),
+    (uuid_generate_v5('a0000000-0000-0000-0000-000000000000'::uuid, 'alert-8'),
+     v_frank_id, v_rule_frank_zone, 'critical',
+     now() - interval '1 day' + interval '17:42',
+     now() - interval '1 day' + interval '17:44', v_admin_id,
+     '{"kind":"zone","direction":"enter","label":"Restricted carpark zone"}'::jsonb),
+    (uuid_generate_v5('a0000000-0000-0000-0000-000000000000'::uuid, 'alert-9'),
+     v_eve_id, v_rule_eve_zone, 'info',
+     now() - interval '1 day' + interval '23:10',
+     now() - interval '1 day' + interval '23:24', v_anna_id,
+     '{"kind":"zone","direction":"leave","label":"Bedroom only-between"}'::jsonb),
+    (uuid_generate_v5('a0000000-0000-0000-0000-000000000000'::uuid, 'alert-10'),
+     v_henry_id, v_rule_henry_fall, 'warn',
+     now() - interval '12 hours',
+     now() - interval '12 hours' + interval '7 minutes', v_priya_id,
+     '{"kind":"fall","accel_peak_g":2.1}'::jsonb)
+  on conflict (id) do nothing;
+
+  raise notice 'Alerts: 10 historical alerts seeded across 7 days.';
+end
+$more_alerts$;
+
+-- ─────────────────────────────────────────────────────────────────────
+-- More activity — incidents, dose administrations, and notes from the
+-- new member caregivers so the activity feed fills past 30 entries
+-- and the audit log shows a multi-actor history.
+-- ─────────────────────────────────────────────────────────────────────
+do $more_activity$
+declare
+  v_admin_id     uuid;
+  v_anna_id      uuid := '12121212-1212-1212-1212-121212121212';
+  v_priya_id     uuid := '13131313-1313-1313-1313-131313131313';
+  v_marcus_id    uuid := '14141414-1414-1414-1414-141414141414';
+  v_eve_id       uuid := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1';
+  v_frank_id     uuid := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb2';
+  v_grace_id     uuid := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb3';
+  v_henry_id     uuid := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb4';
+  v_med_done     uuid := '99999999-9999-9999-9999-999999999991'; -- Donepezil
+  v_med_para     uuid := '99999999-9999-9999-9999-999999999992'; -- Paracetamol PRN
+  v_med_mema     uuid := '99999999-9999-9999-9999-999999999993'; -- Memantine
+  v_med_quet     uuid := '99999999-9999-9999-9999-999999999994'; -- Quetiapine
+  v_med_levo     uuid := '99999999-9999-9999-9999-999999999995'; -- Levothyroxine
+  v_med_atorv    uuid := '99999999-9999-9999-9999-999999999996'; -- Atorvastatin
+begin
+  select id into v_admin_id from auth.users where email = 'admin@bizzieapp.com';
+  if v_admin_id is null then
+    raise notice 'more_activity: skipping — admin user not found.';
+    return;
+  end if;
+
+  -- Extra incidents (8 across 7 days, varied authors).
+  insert into public.incidents
+    (id, patient_id, logged_by, occurred_at, type, severity, description,
+     follow_up_required, resolved_at)
+  values
+    (uuid_generate_v5('a1000000-0000-0000-0000-000000000000'::uuid, 'i-1'),
+     v_eve_id, v_anna_id, now() - interval '6 days' + interval '14:20',
+     'agitation', 1, 'Eve briefly anxious before the family video call. Settled with familiar music within 2 minutes.',
+     false, now() - interval '6 days' + interval '14:30'),
+    (uuid_generate_v5('a1000000-0000-0000-0000-000000000000'::uuid, 'i-2'),
+     v_grace_id, v_anna_id, now() - interval '5 days' + interval '11:00',
+     'refusal', 1, 'Declined morning coffee — said it tasted "wrong". Switched to tea, no further refusal.',
+     false, now() - interval '5 days' + interval '11:05'),
+    (uuid_generate_v5('a1000000-0000-0000-0000-000000000000'::uuid, 'i-3'),
+     v_frank_id, v_priya_id, now() - interval '4 days' + interval '17:30',
+     'wander', 2, 'Frank tried the side door at 17:30 — door alarm sounded. Redirected with promise of supper. Door alarm reset.',
+     true, null),
+    (uuid_generate_v5('a1000000-0000-0000-0000-000000000000'::uuid, 'i-4'),
+     v_henry_id, v_priya_id, now() - interval '3 days' + interval '06:15',
+     'fall', 2, 'Henry slipped on a damp patch in the en-suite. No injury, walker was within reach. Floor mopped + dried.',
+     false, now() - interval '3 days' + interval '06:45'),
+    (uuid_generate_v5('a1000000-0000-0000-0000-000000000000'::uuid, 'i-5'),
+     v_eve_id, v_marcus_id, now() - interval '2 days' + interval '15:30',
+     'medication_event', 1, 'Eve handed her donepezil to a visiting bird. Recovered before ingestion. Re-dosed 5 minutes later.',
+     false, now() - interval '2 days' + interval '15:32'),
+    (uuid_generate_v5('a1000000-0000-0000-0000-000000000000'::uuid, 'i-6'),
+     v_grace_id, v_marcus_id, now() - interval '2 days' + interval '20:00',
+     'other', 1, 'Grace recognised her grandson Theo by name during the evening visit — first time in 3 weeks.',
+     false, now() - interval '2 days' + interval '20:01'),
+    (uuid_generate_v5('a1000000-0000-0000-0000-000000000000'::uuid, 'i-7'),
+     v_frank_id, v_anna_id, now() - interval '1 day' + interval '18:10',
+     'agitation', 3, 'Severe sundowning episode — Frank shouted at the TV news and threw the remote. De-escalated by switching to Irish folk + dimming the lights. Took 25 minutes to settle.',
+     true, null),
+    (uuid_generate_v5('a1000000-0000-0000-0000-000000000000'::uuid, 'i-8'),
+     v_henry_id, v_marcus_id, now() - interval '20 hours',
+     'refusal', 2, 'Henry declined morning levothyroxine. Reattempted 30 minutes later — accepted with applesauce.',
+     false, now() - interval '19 hours')
+  on conflict (id) do nothing;
+
+  -- Extra administrations (12 across the last 3 days, varied actors +
+  -- statuses so the meds tab + activity feed show realism).
+  insert into public.medication_administrations
+    (id, medication_id, scheduled_for, administered_at, administered_by, status, notes)
+  values
+    -- 3 days ago morning
+    (uuid_generate_v5('a2000000-0000-0000-0000-000000000000'::uuid, 'adm-1'),
+     v_med_done, now() - interval '3 days' + interval '08:00',
+     now() - interval '3 days' + interval '08:05', v_anna_id, 'given', null),
+    (uuid_generate_v5('a2000000-0000-0000-0000-000000000000'::uuid, 'adm-2'),
+     v_med_mema, now() - interval '3 days' + interval '08:00',
+     now() - interval '3 days' + interval '08:08', v_priya_id, 'given',
+     'Crushed in applesauce.'),
+    (uuid_generate_v5('a2000000-0000-0000-0000-000000000000'::uuid, 'adm-3'),
+     v_med_levo, now() - interval '3 days' + interval '07:00',
+     now() - interval '3 days' + interval '07:04', v_priya_id, 'given', null),
+    -- 2 days ago evening
+    (uuid_generate_v5('a2000000-0000-0000-0000-000000000000'::uuid, 'adm-4'),
+     v_med_quet, now() - interval '2 days' + interval '20:00',
+     now() - interval '2 days' + interval '20:11', v_priya_id, 'given',
+     'Held in the cheek — confirmed swallowed by 20:14.'),
+    (uuid_generate_v5('a2000000-0000-0000-0000-000000000000'::uuid, 'adm-5'),
+     v_med_atorv, now() - interval '2 days' + interval '20:00',
+     now() - interval '2 days' + interval '20:09', v_anna_id, 'given', null),
+    (uuid_generate_v5('a2000000-0000-0000-0000-000000000000'::uuid, 'adm-6'),
+     v_med_para, null,
+     now() - interval '2 days' + interval '14:10', v_marcus_id, 'given',
+     'PRN dose for joint pain — settled within 30 min.'),
+    -- yesterday
+    (uuid_generate_v5('a2000000-0000-0000-0000-000000000000'::uuid, 'adm-7'),
+     v_med_done, now() - interval '1 day' + interval '08:00',
+     null, v_anna_id, 'refused',
+     'Eve refused — offered crossword first; will retry at 09:00.'),
+    (uuid_generate_v5('a2000000-0000-0000-0000-000000000000'::uuid, 'adm-8'),
+     v_med_done, now() - interval '1 day' + interval '09:00',
+     now() - interval '1 day' + interval '09:08', v_anna_id, 'given',
+     'Retry after morning crossword — accepted without complaint.'),
+    (uuid_generate_v5('a2000000-0000-0000-0000-000000000000'::uuid, 'adm-9'),
+     v_med_mema, now() - interval '1 day' + interval '20:00',
+     now() - interval '1 day' + interval '20:12', v_priya_id, 'given', null),
+    (uuid_generate_v5('a2000000-0000-0000-0000-000000000000'::uuid, 'adm-10'),
+     v_med_levo, now() - interval '1 day' + interval '07:00',
+     null, v_marcus_id, 'missed',
+     'Henry was already eating breakfast — empty-stomach window missed. Withhold today, resume tomorrow per care plan.'),
+    -- today extra
+    (uuid_generate_v5('a2000000-0000-0000-0000-000000000000'::uuid, 'adm-11'),
+     v_med_atorv, date_trunc('day', now()) + interval '20:00',
+     null, v_admin_id, 'skipped',
+     'Patient asleep at scheduled time — clinical agreement to skip rather than wake.'),
+    (uuid_generate_v5('a2000000-0000-0000-0000-000000000000'::uuid, 'adm-12'),
+     v_med_para, null,
+     now() - interval '3 hours', v_anna_id, 'given',
+     'PRN — Eve mentioned shoulder discomfort post-walk.')
+  on conflict (id) do nothing;
+
+  -- Extra notes (8 across 5 days, varied authors).
+  insert into public.patient_notes
+    (id, patient_id, author_caregiver_id, body, created_at)
+  values
+    (uuid_generate_v5('a3000000-0000-0000-0000-000000000000'::uuid, 'n-1'),
+     v_eve_id, v_anna_id,
+     'Eve had a particularly bright morning — completed the crossword in 12 minutes (usual: 18-20). Ate full breakfast.',
+     now() - interval '5 days' + interval '10:30'),
+    (uuid_generate_v5('a3000000-0000-0000-0000-000000000000'::uuid, 'n-2'),
+     v_frank_id, v_priya_id,
+     'Family visit went well. Frank recognised his daughter Maeve immediately. They walked the courtyard together for 25 minutes.',
+     now() - interval '4 days' + interval '15:00'),
+    (uuid_generate_v5('a3000000-0000-0000-0000-000000000000'::uuid, 'n-3'),
+     v_grace_id, v_anna_id,
+     'Grace asked if she could move the armchair closer to the window. Done — she spent 2 hours quietly reading after.',
+     now() - interval '4 days' + interval '11:00'),
+    (uuid_generate_v5('a3000000-0000-0000-0000-000000000000'::uuid, 'n-4'),
+     v_henry_id, v_marcus_id,
+     'Henry''s walker has a loose left wheel — flagged maintenance. Replacement walker delivered same day from stores.',
+     now() - interval '3 days' + interval '14:30'),
+    (uuid_generate_v5('a3000000-0000-0000-0000-000000000000'::uuid, 'n-5'),
+     v_frank_id, v_anna_id,
+     'Frank refused dinner around 19:00 — picked at the protein but ate the dessert. Followed up with a banana at 21:00.',
+     now() - interval '2 days' + interval '21:30'),
+    (uuid_generate_v5('a3000000-0000-0000-0000-000000000000'::uuid, 'n-6'),
+     v_eve_id, v_priya_id,
+     'Eve mentioned shoulder pain on her right side after the morning walk. Range of motion looks normal. Para PRN given. Will reassess in the morning.',
+     now() - interval '1 day' + interval '12:00'),
+    (uuid_generate_v5('a3000000-0000-0000-0000-000000000000'::uuid, 'n-7'),
+     v_henry_id, v_priya_id,
+     'Henry slept through the night without waking — first uninterrupted night since he arrived. Mood bright at breakfast.',
+     now() - interval '1 day' + interval '07:30'),
+    (uuid_generate_v5('a3000000-0000-0000-0000-000000000000'::uuid, 'n-8'),
+     v_grace_id, v_marcus_id,
+     'Grace pairing scheduled for tomorrow at 10:00. Family briefed; they''ll bring her favourite framed photo to put on the wearable charging dock.',
+     now() - interval '6 hours')
+  on conflict (id) do nothing;
+
+  raise notice 'Activity: 8 incidents + 12 administrations + 8 notes seeded across the team.';
+end
+$more_activity$;
+
