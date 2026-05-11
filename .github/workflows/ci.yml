@@ -96,12 +96,17 @@ jobs:
           # `supabase status -o env` emits KEY=VALUE pairs (DB_URL,
           # API_URL, SERVICE_ROLE_KEY, ANON_KEY, ...). Feed the relevant
           # ones into GITHUB_ENV under the names the tests + seed expect.
+          # VITE_SUPABASE_* are required for apps/web/src/lib/supabase.ts
+          # which throws at import if either is missing — that import
+          # gets pulled in transitively by several component tests.
           eval "$(supabase status -o env)"
           {
             echo "SB_URL=$API_URL"
             echo "SB_ANON_KEY=$ANON_KEY"
             echo "SB_SERVICE_KEY=$SERVICE_ROLE_KEY"
             echo "RUN_RLS_TESTS=1"
+            echo "VITE_SUPABASE_URL=$API_URL"
+            echo "VITE_SUPABASE_ANON_KEY=$ANON_KEY"
           } >> "$GITHUB_ENV"
 
       - name: Test (all workspaces)
