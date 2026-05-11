@@ -174,13 +174,115 @@ export function ProfilePage() {
               <Button type="submit" disabled={updateMutation.isPending}>
                 {updateMutation.isPending ? 'Saving…' : 'Save changes'}
               </Button>
-              <Button type="button" variant="outline" onClick={() => navigate('/patients')}>
+              <Button type="button" variant="outline" onClick={() => navigate('/dashboard')}>
                 Cancel
               </Button>
             </div>
           </form>
         </CardContent>
       </Card>
+
+      <PasswordSection />
     </main>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Password change — supabase.auth.updateUser({ password }) on the current
+// session. Lives below the profile form so demo accounts can rotate the
+// shared demo1234! after first login.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const passwordSchema = z
+  .object({
+    new_password: z.string().min(8, 'At least 8 characters'),
+    confirm_password: z.string().min(8, 'At least 8 characters'),
+  })
+  .refine((v) => v.new_password === v.confirm_password, {
+    message: 'Passwords do not match',
+    path: ['confirm_password'],
+  });
+type PasswordFormValues = z.infer<typeof passwordSchema>;
+
+function PasswordSection() {
+  const form = useForm<PasswordFormValues>({
+    resolver: zodResolver(passwordSchema),
+    defaultValues: { new_password: '', confirm_password: '' },
+  });
+
+  const mutation = useMutation({
+    mutationFn: async (values: PasswordFormValues) => {
+      const { error } = await supabase.auth.updateUser({ password: values.new_password });
+      if (error) throw error;
+    },
+    onSuccess: () => form.reset({ new_password: '', confirm_password: '' }),
+  });
+
+  return (
+    <Card className="mt-6">
+      <CardHeader>
+        <CardTitle>Password</CardTitle>
+        <CardDescription>
+          Update the password you use to sign in. Minimum 8 characters.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form
+          onSubmit={form.handleSubmit((values) => mutation.mutate(values))}
+          className="space-y-4"
+          noValidate
+        >
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="new_password">New password</Label>
+              <Input
+                id="new_password"
+                type="password"
+                autoComplete="new-password"
+                {...form.register('new_password')}
+                aria-invalid={form.formState.errors.new_password ? true : undefined}
+              />
+              {form.formState.errors.new_password && (
+                <p className="text-sm text-destructive">
+                  {form.formState.errors.new_password.message}
+                </p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="confirm_password">Confirm new password</Label>
+              <Input
+                id="confirm_password"
+                type="password"
+                autoComplete="new-password"
+                {...form.register('confirm_password')}
+                aria-invalid={form.formState.errors.confirm_password ? true : undefined}
+              />
+              {form.formState.errors.confirm_password && (
+                <p className="text-sm text-destructive">
+                  {form.formState.errors.confirm_password.message}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {mutation.isError && (
+            <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {(mutation.error as Error).message}
+            </p>
+          )}
+          {mutation.isSuccess && (
+            <p className="rounded-md bg-accent/10 px-3 py-2 text-sm text-foreground/80">
+              Password updated. You'll stay signed in on this device.
+            </p>
+          )}
+
+          <div className="pt-2">
+            <Button type="submit" disabled={mutation.isPending}>
+              {mutation.isPending ? 'Updating…' : 'Update password'}
+            </Button>
+          </div>
+        </form>
+      </CardContent>
+    </Card>
   );
 }

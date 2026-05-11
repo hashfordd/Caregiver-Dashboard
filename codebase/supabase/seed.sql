@@ -1416,18 +1416,17 @@ $unpaired$;
 -- Project peers — group-member demo accounts
 -- ============================================================================
 --
--- All four peers join Acme Care Co. Olivia + Mohamed are admins so they
--- can exercise the admin-only surfaces (Audit log tab, Members tab role
--- promotions, medication list edits). Noor + Hongting are members
--- allocated to a subset of patients so the access-scoping is visible
--- when they sign in.
+-- All four peers join Acme Care Co as admins so each can exercise every
+-- feature (Audit log tab, Members tab role promotions, medication list
+-- edits, full patient roster). Member-tier behaviour is still
+-- demonstrable via the Anna / Priya seeded accounts above.
 --
---   Olivia    103642997@student.swin.edu.au   admin   sees everyone
---   Mohamed   104341981@student.swin.edu.au   admin   sees everyone
---   Noor      104171926@student.swin.edu.au   member  Eve + Henry
---   Hongting  105961089@student.swin.edu.au   member  Frank + Grace
+--   Olivia    103642997@student.swin.edu.au   admin
+--   Mohamed   104341981@student.swin.edu.au   admin
+--   Noor      104171926@student.swin.edu.au   admin
+--   Hongting  105961089@student.swin.edu.au   admin
 --
--- Password for all four: demo1234!
+-- Password for all four: demo1234!  (change via /profile after first login)
 -- ============================================================================
 do $peers$
 declare
@@ -1518,25 +1517,25 @@ begin
 
   update public.caregivers
      set care_provider_id = v_provider_id,
-         provider_role    = case when id in (v_olivia_id, v_mohamed_id)
-                                  then 'admin'::public.caregiver_provider_role
-                                 else 'member'::public.caregiver_provider_role end,
+         provider_role    = 'admin'::public.caregiver_provider_role,
          company_name     = coalesce(company_name, 'Acme Care Co')
    where id in (v_olivia_id, v_mohamed_id, v_noor_id, v_hongting_id);
 
-  -- Allocations: admins onto every patient (so the per-patient
-  -- Caregivers tab lists them), members onto a subset so allocation
-  -- scoping is visible when they sign in.
+  -- Every peer is allocated to every patient — admin scope already
+  -- grants them visibility, but explicit caregiver_patient rows make
+  -- them appear on each patient's Caregivers tab too.
   insert into public.caregiver_patient (caregiver_id, patient_id) values
-    (v_olivia_id,  v_eve_id),    (v_olivia_id,  v_frank_id),
-    (v_olivia_id,  v_grace_id),  (v_olivia_id,  v_henry_id),
-    (v_mohamed_id, v_eve_id),    (v_mohamed_id, v_frank_id),
-    (v_mohamed_id, v_grace_id),  (v_mohamed_id, v_henry_id),
-    (v_noor_id,    v_eve_id),    (v_noor_id,    v_henry_id),
-    (v_hongting_id, v_frank_id), (v_hongting_id, v_grace_id)
+    (v_olivia_id,  v_eve_id),     (v_olivia_id,  v_frank_id),
+    (v_olivia_id,  v_grace_id),   (v_olivia_id,  v_henry_id),
+    (v_mohamed_id, v_eve_id),     (v_mohamed_id, v_frank_id),
+    (v_mohamed_id, v_grace_id),   (v_mohamed_id, v_henry_id),
+    (v_noor_id,    v_eve_id),     (v_noor_id,    v_frank_id),
+    (v_noor_id,    v_grace_id),   (v_noor_id,    v_henry_id),
+    (v_hongting_id, v_eve_id),    (v_hongting_id, v_frank_id),
+    (v_hongting_id, v_grace_id),  (v_hongting_id, v_henry_id)
   on conflict (caregiver_id, patient_id) do nothing;
 
-  raise notice 'Peers: Olivia/Mohamed (admin) + Noor/Hongting (member) seeded (password demo1234!).';
+  raise notice 'Peers: Olivia / Mohamed / Noor / Hongting all admin in Acme Care Co (password demo1234!).';
 end
 $peers$;
 

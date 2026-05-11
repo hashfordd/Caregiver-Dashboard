@@ -4,10 +4,9 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 // ─────────────────────────────────────────────────────────────────────────────
 // Multi-user e2e against the hosted Supabase project.
 //
-// Drives the four project-peer demo accounts seeded by supabase/seed.sql.
-// Verifies the load-bearing multi-user properties: RLS access scoping,
-// role-gated writes, idempotent acknowledge_alert under concurrent
-// callers, and audit-log + activity-feed attribution across actors.
+// Drives the four project-peer demo accounts (all admins) plus Anna
+// (seeded as a member by supabase/seed.sql) so the suite still proves
+// the member-tier denial paths.
 //
 // Gated behind RUN_MULTI_USER_TESTS=1 so the default `npm run test`
 // loop stays hermetic. To run locally against the hosted project:
@@ -18,7 +17,8 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 //   SB_ANON_KEY="$VITE_SUPABASE_ANON_KEY" \
 //   npm run test --workspace @alzcare/web -- src/test/multi-user.test.ts
 //
-// Requires the demo accounts to be present (run seed.sql via Studio first).
+// Requires the demo accounts to be present (run seed.sql via Studio +
+// the latest peer-promotion migration via `supabase db push --linked`).
 // ─────────────────────────────────────────────────────────────────────────────
 
 const enabled = process.env.RUN_MULTI_USER_TESTS === '1';
@@ -32,17 +32,20 @@ const FRANK = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb2';
 const GRACE = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb3';
 const HENRY = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb4';
 
-interface Peer {
+interface SignedInUser {
   name: string;
   email: string;
   expectedRole: 'admin' | 'member';
-  /** Patient ids this peer should see. Admins see all four. */
+  /** Patient ids this peer should see. */
   visiblePatients: string[];
   client: SupabaseClient;
   userId?: string;
 }
 
-const PEERS: Omit<Peer, 'client'>[] = [
+// All four project peers are admins of Acme Care Co with full
+// allocation. Anna is a seeded member, allocated to Eve + Grace — kept
+// in the suite to exercise the member-denial paths.
+const ACCOUNTS: Omit<SignedInUser, 'client' | 'userId'>[] = [
   {
     name: 'Olivia',
     email: '103642997@student.swin.edu.au',
@@ -58,14 +61,20 @@ const PEERS: Omit<Peer, 'client'>[] = [
   {
     name: 'Noor',
     email: '104171926@student.swin.edu.au',
-    expectedRole: 'member',
-    visiblePatients: [EVE, HENRY],
+    expectedRole: 'admin',
+    visiblePatients: [EVE, FRANK, GRACE, HENRY],
   },
   {
     name: 'Hongting',
     email: '105961089@student.swin.edu.au',
+    expectedRole: 'admin',
+    visiblePatients: [EVE, FRANK, GRACE, HENRY],
+  },
+  {
+    name: 'Anna',
+    email: 'anna+demo@bizzieapp.com',
     expectedRole: 'member',
-    visiblePatients: [FRANK, GRACE],
+    visiblePatients: [EVE, GRACE],
   },
 ];
 
@@ -80,16 +89,14 @@ function makeClient(): SupabaseClient {
 const RUN_MARKER = `multi-user-test-${Date.now()}`;
 
 describe.skipIf(!enabled)('Multi-user · same-tenant access scoping + role gating', () => {
-  const peers = new Map<string, Peer>();
+  const users = new Map<string, SignedInUser>();
 
   beforeAll(async () => {
     if (!SB_URL || !SB_ANON_KEY) {
       throw new Error('SB_URL and SB_ANON_KEY must be set when RUN_MULTI_USER_TESTS=1');
     }
 
-    // Sign each demo peer in. If any sign-in fails we surface a clear
-    // message — the suite needs the seed to have been applied first.
-    for (const cfg of PEERS) {
+    for (const cfg of ACCOUNTS) {
       const client = makeClient();
       const { data, error } = await client.auth.signInWithPassword({
         email: cfg.email,
@@ -97,20 +104,17 @@ describe.skipIf(!enabled)('Multi-user · same-tenant access scoping + role gatin
       });
       if (error || !data.user) {
         throw new Error(
-          `Could not sign in ${cfg.name} (${cfg.email}). Run supabase/seed.sql in the Studio first. Underlying: ${error?.message ?? 'no user'}`,
+          `Could not sign in ${cfg.name} (${cfg.email}). Run supabase/seed.sql in the Studio + supabase db push --linked first. Underlying: ${error?.message ?? 'no user'}`,
         );
       }
-      peers.set(cfg.name, { ...cfg, client, userId: data.user.id });
+      users.set(cfg.name, { ...cfg, client, userId: data.user.id });
     }
   }, 60_000);
 
   afterAll(async () => {
-    // Best-effort cleanup of test-marker rows. Each peer cleans up its
-    // own writes (RLS enforces author-scope on the writeable tables we
-    // touch — incidents.logged_by = auth.uid()).
-    for (const peer of peers.values()) {
-      await peer.client.from('incidents').delete().like('description', `%${RUN_MARKER}%`);
-      await peer.client.auth.signOut();
+    for (const u of users.values()) {
+      await u.client.from('incidents').delete().like('description', `%${RUN_MARKER}%`);
+      await u.client.auth.signOut();
     }
   }, 30_000);
 
@@ -118,10 +122,10 @@ describe.skipIf(!enabled)('Multi-user · same-tenant access scoping + role gatin
   // Section 1 — access scoping via get_situation_overview
   // ──────────────────────────────────────────────────────────────────────
 
-  for (const cfg of PEERS) {
+  for (const cfg of ACCOUNTS) {
     it(`${cfg.name} (${cfg.expectedRole}) sees exactly ${cfg.visiblePatients.length} patient(s) on the dashboard RPC`, async () => {
-      const peer = peers.get(cfg.name)!;
-      const { data, error } = await peer.client.rpc('get_situation_overview');
+      const u = users.get(cfg.name)!;
+      const { data, error } = await u.client.rpc('get_situation_overview');
       expect(error).toBeNull();
       const rows = (data ?? []) as Array<{ patient_id: string }>;
       const ids = rows.map((r) => r.patient_id).sort();
@@ -129,9 +133,9 @@ describe.skipIf(!enabled)('Multi-user · same-tenant access scoping + role gatin
     });
   }
 
-  it('Noor (member) cannot read Frank patient row directly via PostgREST', async () => {
-    const noor = peers.get('Noor')!;
-    const { data, error } = await noor.client
+  it('Anna (member) cannot read Frank patient row directly via PostgREST', async () => {
+    const anna = users.get('Anna')!;
+    const { data, error } = await anna.client
       .from('patients')
       .select('id, full_name')
       .eq('id', FRANK);
@@ -139,17 +143,19 @@ describe.skipIf(!enabled)('Multi-user · same-tenant access scoping + role gatin
     expect(data).toEqual([]); // RLS filters silently — no row, no error.
   });
 
-  it('Hongting (member) cannot read Henry patient row directly', async () => {
-    const h = peers.get('Hongting')!;
-    const { data, error } = await h.client.from('patients').select('id, full_name').eq('id', HENRY);
+  it('Anna (member) cannot read Henry patient row directly', async () => {
+    const anna = users.get('Anna')!;
+    const { data, error } = await anna.client
+      .from('patients')
+      .select('id, full_name')
+      .eq('id', HENRY);
     expect(error).toBeNull();
     expect(data).toEqual([]);
   });
 
   it('Member UPDATE on a non-allocated patient affects 0 rows', async () => {
-    const noor = peers.get('Noor')!;
-    // Read Frank's current name via admin to anchor the comparison.
-    const olivia = peers.get('Olivia')!;
+    const anna = users.get('Anna')!;
+    const olivia = users.get('Olivia')!;
     const before = await olivia.client
       .from('patients')
       .select('full_name')
@@ -158,13 +164,11 @@ describe.skipIf(!enabled)('Multi-user · same-tenant access scoping + role gatin
     expect(before.error).toBeNull();
     const original = before.data?.full_name;
 
-    // Noor tries to repaint Frank's name.
-    await noor.client
+    await anna.client
       .from('patients')
       .update({ full_name: `Hijacked-${RUN_MARKER}` })
       .eq('id', FRANK);
 
-    // Confirm via Olivia that nothing changed.
     const after = await olivia.client.from('patients').select('full_name').eq('id', FRANK).single();
     expect(after.data?.full_name).toBe(original);
   });
@@ -173,24 +177,21 @@ describe.skipIf(!enabled)('Multi-user · same-tenant access scoping + role gatin
   // Section 2 — role-gated writes on medications (admin-only INSERT/UPDATE)
   // ──────────────────────────────────────────────────────────────────────
 
-  it('Member cannot INSERT a medication (admin-only RLS)', async () => {
-    const noor = peers.get('Noor')!;
-    const { error } = await noor.client.from('medications').insert({
+  it('Anna (member) cannot INSERT a medication (admin-only RLS)', async () => {
+    const anna = users.get('Anna')!;
+    const { error } = await anna.client.from('medications').insert({
       patient_id: EVE,
       name: `multi-user-test-med-${RUN_MARKER}`,
       dose: '5mg',
       prn: false,
       active: true,
     });
-    // RLS INSERT denial — supabase-js returns an error with code 42501
-    // (insufficient_privilege) or PostgREST's translated "new row
-    // violates row-level security policy" message.
     expect(error).not.toBeNull();
     expect((error?.message ?? '').toLowerCase()).toMatch(/row-level security|policy|denied|42501/);
   });
 
-  it('Admin CAN INSERT a medication on the same patient', async () => {
-    const olivia = peers.get('Olivia')!;
+  it('Olivia (admin) CAN INSERT a medication on the same patient', async () => {
+    const olivia = users.get('Olivia')!;
     const testName = `multi-user-test-med-${RUN_MARKER}`;
     const { data, error } = await olivia.client
       .from('medications')
@@ -206,7 +207,6 @@ describe.skipIf(!enabled)('Multi-user · same-tenant access scoping + role gatin
     expect(error).toBeNull();
     expect(data?.id).toBeTruthy();
 
-    // Cleanup — admin can also delete.
     if (data?.id) {
       await olivia.client.from('medications').delete().eq('id', data.id);
     }
@@ -216,36 +216,40 @@ describe.skipIf(!enabled)('Multi-user · same-tenant access scoping + role gatin
   // Section 3 — incidents author scope + activity-feed propagation
   // ──────────────────────────────────────────────────────────────────────
 
-  it('Noor logs an incident on her allocated patient (Eve)', async () => {
-    const noor = peers.get('Noor')!;
+  it('Noor (peer admin) logs an incident on Eve', async () => {
+    const noor = users.get('Noor')!;
     const { error } = await noor.client.from('incidents').insert({
       patient_id: EVE,
       logged_by: noor.userId!,
       occurred_at: new Date().toISOString(),
       type: 'other',
       severity: 1,
-      description: `${RUN_MARKER}: Noor multi-user write — should appear in Olivia's activity feed.`,
+      description: `${RUN_MARKER}: Noor multi-user write — should appear in every peer's activity feed.`,
       follow_up_required: false,
     });
     expect(error).toBeNull();
   });
 
-  it('Olivia (admin) sees Noor’s incident in get_recent_activity', async () => {
-    const olivia = peers.get('Olivia')!;
-    const { data, error } = await olivia.client.rpc('get_recent_activity');
+  it('Mohamed sees Noor’s incident in get_recent_activity', async () => {
+    const mohamed = users.get('Mohamed')!;
+    const { data, error } = await mohamed.client.rpc('get_recent_activity');
     expect(error).toBeNull();
     const rows = (data ?? []) as Array<{ summary: string; kind: string }>;
     const found = rows.find((r) => r.kind === 'incident' && r.summary.includes(RUN_MARKER));
     expect(found).toBeDefined();
   });
 
-  it('Hongting cannot see Noor’s incident on Eve (cross-allocation hidden)', async () => {
-    const h = peers.get('Hongting')!;
-    const { data, error } = await h.client.rpc('get_recent_activity');
+  it('Anna (member, not allocated to Frank/Henry but allocated to Eve) DOES see Noor’s incident on Eve', async () => {
+    // Anna is allocated to Eve, so she sees the incident. This confirms
+    // the activity feed honours allocation rather than role — a peer
+    // admin's write on a member's allocated patient is visible to that
+    // member.
+    const anna = users.get('Anna')!;
+    const { data, error } = await anna.client.rpc('get_recent_activity');
     expect(error).toBeNull();
     const rows = (data ?? []) as Array<{ summary: string }>;
     const found = rows.find((r) => r.summary.includes(RUN_MARKER));
-    expect(found).toBeUndefined();
+    expect(found).toBeDefined();
   });
 
   // ──────────────────────────────────────────────────────────────────────
@@ -253,11 +257,9 @@ describe.skipIf(!enabled)('Multi-user · same-tenant access scoping + role gatin
   // ──────────────────────────────────────────────────────────────────────
 
   it('Two admins ack the same alert concurrently — both succeed, single ack persisted', async () => {
-    const olivia = peers.get('Olivia')!;
-    const mohamed = peers.get('Mohamed')!;
+    const olivia = users.get('Olivia')!;
+    const mohamed = users.get('Mohamed')!;
 
-    // Find an unacked alert visible to both admins. We accept any open
-    // alert in the tenant — the seed leaves a few unacked rows.
     const { data: unacked } = await olivia.client
       .from('alerts')
       .select('id, patient_id, severity, fired_at, acknowledged_at')
@@ -265,13 +267,10 @@ describe.skipIf(!enabled)('Multi-user · same-tenant access scoping + role gatin
       .limit(1);
     const target = (unacked ?? [])[0] as { id: string } | undefined;
     if (!target) {
-      // No open alerts — log and skip rather than fail. Re-run after a
-      // fresh seed or after manually creating an alert.
       console.warn('No open alerts found — skipping concurrent-ack assertion.');
       return;
     }
 
-    // Fire both acks in parallel.
     const [a, b] = await Promise.all([
       olivia.client.rpc('acknowledge_alert', { p_alert_id: target.id }),
       mohamed.client.rpc('acknowledge_alert', { p_alert_id: target.id }),
@@ -279,9 +278,6 @@ describe.skipIf(!enabled)('Multi-user · same-tenant access scoping + role gatin
     expect(a.error).toBeNull();
     expect(b.error).toBeNull();
 
-    // Confirm the row has exactly one ack — both responses return the
-    // same acknowledged_at + ack_by_caregiver_id (the first writer
-    // committed, the second is the idempotent path).
     const aRow =
       (a.data as { acknowledged_at: string | null; ack_by_caregiver_id: string | null } | null) ??
       null;
@@ -297,20 +293,20 @@ describe.skipIf(!enabled)('Multi-user · same-tenant access scoping + role gatin
   // Section 5 — provider audit log honours admin-only gate
   // ──────────────────────────────────────────────────────────────────────
 
-  it('Admin can read get_provider_audit_log; member gets empty', async () => {
-    const olivia = peers.get('Olivia')!;
-    const noor = peers.get('Noor')!;
+  it('Peer admins all see audit log; Anna (member) gets empty', async () => {
+    const olivia = users.get('Olivia')!;
+    const hongting = users.get('Hongting')!;
+    const anna = users.get('Anna')!;
 
     const adm = await olivia.client.rpc('get_provider_audit_log', { p_limit: 5 });
-    const mem = await noor.client.rpc('get_provider_audit_log', { p_limit: 5 });
+    const peerAdm = await hongting.client.rpc('get_provider_audit_log', { p_limit: 5 });
+    const mem = await anna.client.rpc('get_provider_audit_log', { p_limit: 5 });
 
     expect(adm.error).toBeNull();
+    expect(peerAdm.error).toBeNull();
     expect(mem.error).toBeNull();
-    expect(Array.isArray(adm.data)).toBe(true);
-    // Admin should see at least one entry (the seed itself generates
-    // audit rows via the audit_log_record trigger on every write).
     expect((adm.data as unknown[]).length).toBeGreaterThan(0);
-    // Member is filtered to zero by the RPC's provider_role guard.
+    expect((peerAdm.data as unknown[]).length).toBeGreaterThan(0);
     expect((mem.data as unknown[]).length).toBe(0);
   });
 
@@ -318,15 +314,20 @@ describe.skipIf(!enabled)('Multi-user · same-tenant access scoping + role gatin
   // Section 6 — provider overview surfaces tenant-level rollups
   // ──────────────────────────────────────────────────────────────────────
 
-  it('get_provider_overview reports a non-trivial caregiver_count', async () => {
-    const olivia = peers.get('Olivia')!;
+  it('get_provider_overview reports an admin_count that includes every peer', async () => {
+    const olivia = users.get('Olivia')!;
     const { data, error } = await olivia.client.rpc('get_provider_overview');
     expect(error).toBeNull();
-    const row = (data as Array<{ caregiver_count: number; patient_count: number }> | null)?.[0];
+    const row = (
+      data as Array<{
+        caregiver_count: number;
+        patient_count: number;
+        admin_count: number;
+      }> | null
+    )?.[0];
     expect(row).toBeDefined();
-    // 1 (you) + 3 (Anna/Priya/Marcus) + 4 (Olivia/Mohamed/Noor/Hongting) = 8
-    // Conservative lower bound — exact count varies if you've added more.
-    expect(row!.caregiver_count).toBeGreaterThanOrEqual(4);
+    // You + Marcus + 4 peers = at least 6 admins.
+    expect(row!.admin_count).toBeGreaterThanOrEqual(6);
     expect(row!.patient_count).toBeGreaterThanOrEqual(4);
   });
 });
