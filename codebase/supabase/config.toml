@@ -12,6 +12,14 @@ port = 54322
 shadow_port = 54320
 major_version = 15
 
+# Demo seed (supabase/seed.sql) only makes sense after the admin
+# auth.users row is created via /signup. Disabled here so `supabase
+# start` in CI (and any fresh local stack) boots cleanly without
+# tripping the admin-presence guard. To seed manually, paste the file
+# into the hosted Studio SQL editor.
+[db.seed]
+enabled = false
+
 [db.pooler]
 enabled = false
 
