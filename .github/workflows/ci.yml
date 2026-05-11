@@ -51,23 +51,25 @@ jobs:
 
       - name: Service-role guard (no SERVICE_ROLE in apps/web/)
         run: |
-          # The two excluded test files legitimately reference SERVICE_ROLE:
-          # rls.test.ts uses the key to drive admin-API calls against a local
-          # Supabase; ci-grep.test.ts mirrors this CI rule as a unit test.
-          # multi-user.test.ts references SB_SERVICE_KEY only as an env name.
-          if grep -rn "SERVICE_ROLE" apps/web/ \
-              --exclude-dir=node_modules \
-              --exclude-dir=dist \
-              --exclude='rls.test.ts' \
-              --exclude='ci-grep.test.ts' \
-              --exclude='multi-user.test.ts' \
-              --include='*.ts' \
-              --include='*.tsx' \
-              --include='*.js' \
-              --include='*.jsx' \
-              --include='*.json' \
-              --include='*.html'; then
+          # Three test files legitimately reference SERVICE_ROLE:
+          #   rls.test.ts          — admin-API calls against local Supabase
+          #   ci-grep.test.ts      — unit mirror of this CI rule
+          #   multi-user.test.ts   — references SB_SERVICE_KEY env name only
+          # GNU grep's --exclude isn't reliable across versions for these
+          # exact filenames, so we post-filter with grep -v instead.
+          LEAKS=$(grep -rn "SERVICE_ROLE" apps/web/ \
+            --exclude-dir=node_modules \
+            --exclude-dir=dist \
+            --include='*.ts' \
+            --include='*.tsx' \
+            --include='*.js' \
+            --include='*.jsx' \
+            --include='*.json' \
+            --include='*.html' \
+            | grep -vE '(rls\.test\.ts|ci-grep\.test\.ts|multi-user\.test\.ts):' || true)
+          if [ -n "$LEAKS" ]; then
             echo "::error::SERVICE_ROLE must never appear in apps/web/"
+            echo "$LEAKS"
             exit 1
           fi
 
