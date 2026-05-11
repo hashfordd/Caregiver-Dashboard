@@ -52,9 +52,13 @@ begin
   -- ──────────────────────────────────────────────────────────────────────
   select id into v_admin_id from auth.users where email = v_admin_email;
   if v_admin_id is null then
-    raise exception
-      'Seed: no auth user for %. Sign up via /signup with that email first, then re-run this seed.',
+    -- Soft-skip rather than raise — supabase start in CI applies seed.sql
+    -- against a fresh local DB where the admin user doesn't exist yet.
+    -- Raising here would fail every CI run with `supabase start`.
+    raise notice
+      'Seed: no auth user for %. Sign up via /signup with that email first, then re-run this seed. Skipping.',
       v_admin_email;
+    return;
   end if;
 
   -- ──────────────────────────────────────────────────────────────────────
