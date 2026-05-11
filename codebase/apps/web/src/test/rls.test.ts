@@ -406,14 +406,27 @@ describe.skipIf(!enabled)('RLS denial — F1 caregiver write surface', () => {
   // ──────────────────────────────────────────────────────────────────────
 
   it('Phase-I.A: member cannot self-promote provider_role', async () => {
-    // Bob is a member of his own tenant. The trigger should refuse a
-    // direct UPDATE that touches provider_role.
-    const { error } = await bob.client
+    // Need a true member to exercise this. Bob is admin of his own
+    // tenant (bootstrapProvider set him as admin), so UPDATE
+    // provider_role=admin would be a no-op and the distinct-check in
+    // the trigger correctly skips. Create a fresh member user inside
+    // Alice's tenant via admin-bypass + service-role.
+    const memberUser = await createUser(admin, 'self-promo', 'Self Promo Test');
+    await admin
+      .from('caregivers')
+      .update({ care_provider_id: aliceProviderId, provider_role: 'member' })
+      .eq('id', memberUser.id);
+
+    const { error } = await memberUser.client
       .from('caregivers')
       .update({ provider_role: 'admin' })
-      .eq('id', bob.id);
+      .eq('id', memberUser.id);
     expect(error).not.toBeNull();
     expect((error?.message ?? '').toLowerCase()).toMatch(/set_caregiver_role/);
+
+    // Cleanup
+    await admin.from('caregivers').update({ care_provider_id: null }).eq('id', memberUser.id);
+    await admin.auth.admin.deleteUser(memberUser.id);
   });
 
   it('Phase-I.A: member cannot rebind care_provider_id on themselves', async () => {
