@@ -10,6 +10,13 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# After the 0cdbd92 restructure the workspace lives under codebase/.
+# `defaults.run.working-directory` makes every `run:` step execute
+# from there, so npm + grep + supabase commands resolve correctly.
+defaults:
+  run:
+    working-directory: codebase
+
 jobs:
   verify:
     name: Lint · Typecheck · Test · Build
@@ -24,6 +31,8 @@ jobs:
         with:
           node-version: 20
           cache: 'npm'
+          # Node caching needs the lockfile path from the repo root.
+          cache-dependency-path: codebase/package-lock.json
 
       - name: Set up Deno (for edge function typecheck)
         uses: denoland/setup-deno@v1
@@ -45,11 +54,13 @@ jobs:
           # The two excluded test files legitimately reference SERVICE_ROLE:
           # rls.test.ts uses the key to drive admin-API calls against a local
           # Supabase; ci-grep.test.ts mirrors this CI rule as a unit test.
+          # multi-user.test.ts references SB_SERVICE_KEY only as an env name.
           if grep -rn "SERVICE_ROLE" apps/web/ \
               --exclude-dir=node_modules \
               --exclude-dir=dist \
               --exclude='rls.test.ts' \
               --exclude='ci-grep.test.ts' \
+              --exclude='multi-user.test.ts' \
               --include='*.ts' \
               --include='*.tsx' \
               --include='*.js' \
