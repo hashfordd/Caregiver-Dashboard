@@ -7,6 +7,12 @@ import type { PositionEstimateRow } from '@/lib/usePatientStream';
 
 const TRAIL_WINDOW_MS = 30 * 60 * 1000;
 
+// Stable empty-array reference. Zustand's selector uses
+// useSyncExternalStore, which bails out on === equality of the snapshot.
+// A fresh `[]` literal in the selector each render is a different
+// reference → React keeps re-rendering → "Maximum update depth exceeded".
+const EMPTY_TRAIL: PositionEstimateRow[] = [];
+
 /** Fetches the last 30 min of outdoor position estimates from the DB and
  *  hydrates the Zustand trail. Subscribes to the realtime stream and
  *  appends each new outdoor estimate. Returns the live trail (sorted
@@ -22,7 +28,7 @@ export function useOutdoorTrail(): {
   isError: boolean;
 } {
   const { patientId, onPositionEstimate } = usePatientStreamContext();
-  const trail = useOutdoorTrailStore((s) => s.byPatient[patientId] ?? []);
+  const trail = useOutdoorTrailStore((s) => s.byPatient[patientId] ?? EMPTY_TRAIL);
 
   const initialQuery = useQuery({
     queryKey: ['position_estimates', 'outdoor-trail', patientId],

@@ -30,6 +30,9 @@ const PATIENT: Patient = {
   known_triggers: [],
   care_plan_summary: null,
   preferences: {},
+  care_setting_lat: null,
+  care_setting_lng: null,
+  care_setting_label: null,
 };
 
 function renderDialog(onOpenChange = vi.fn(), patient: Patient = PATIENT) {

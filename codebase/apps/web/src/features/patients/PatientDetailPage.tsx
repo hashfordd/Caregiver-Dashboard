@@ -13,7 +13,8 @@ import { PatientTabs } from './PatientTabs';
 // CarePlanTab + risk badge fall back to defaults.
 const PATIENT_COLUMNS =
   'id, full_name, dob, description, care_provider_id, created_at, ' +
-  'dementia_stage, wandering_risk, known_triggers, care_plan_summary, preferences';
+  'dementia_stage, wandering_risk, known_triggers, care_plan_summary, preferences, ' +
+  'care_setting_lat, care_setting_lng, care_setting_label';
 
 async function fetchPatient(id: string): Promise<Patient | null> {
   const { data, error } = await supabase

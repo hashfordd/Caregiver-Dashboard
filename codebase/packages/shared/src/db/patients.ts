@@ -19,8 +19,26 @@ export const Patient = z.object({
   known_triggers: z.array(z.string()),
   care_plan_summary: z.string().nullable(),
   preferences: z.record(z.string(), z.unknown()),
+  // F9 care-setting (home base). Numerics come back as numbers via
+  // PostgREST. Both lat and lng are NULL or both are set — enforced by
+  // a DB-side check constraint (patients_care_setting_paired).
+  care_setting_lat: z.number().nullable(),
+  care_setting_lng: z.number().nullable(),
+  care_setting_label: z.string().nullable(),
 });
 export type Patient = z.infer<typeof Patient>;
+
+export const CareSettingInput = z
+  .object({
+    care_setting_lat: z.number().min(-90).max(90).nullable(),
+    care_setting_lng: z.number().min(-180).max(180).nullable(),
+    care_setting_label: z.string().trim().max(120).nullable(),
+  })
+  .refine((v) => (v.care_setting_lat == null) === (v.care_setting_lng == null), {
+    message: 'Latitude and longitude must both be set or both be cleared.',
+    path: ['care_setting_lat'],
+  });
+export type CareSettingInput = z.infer<typeof CareSettingInput>;
 
 export const CarePlanInput = z.object({
   dementia_stage: DementiaStage,

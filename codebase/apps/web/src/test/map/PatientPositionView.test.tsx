@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, act } from '@testing-library/react';
+import { render, screen, act, fireEvent, waitFor } from '@testing-library/react';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import type { PositionEstimateRow } from '@/lib/usePatientStream';
@@ -18,39 +19,19 @@ vi.mock('@/features/patients/PatientStreamContext', () => ({
   PatientStreamProvider: ({ children }: { children: ReactNode }) => children,
 }));
 
-// Stub usePositionMarker so the test can drive estimates without
-// dragging the realtime subscription wiring along.
 vi.mock('@/features/floor-plan/usePositionMarker', () => ({
   usePositionMarker: () => latestEstimateRef.current,
 }));
 
-// Stub the indoor view — we only care which view PatientPositionView picks.
 vi.mock('@/features/floor-plan/LivePositionView', () => ({
   LivePositionView: () => <div data-testid="indoor-view" />,
 }));
 
-// Stub the lazy outdoor view to a synchronous module so Suspense
-// resolves immediately in the test.
 vi.mock('@/features/map/OutdoorMapView', () => ({
   OutdoorMapView: () => <div data-testid="outdoor-view" />,
 }));
 
 import { PatientPositionView } from '@/features/floor-plan/PatientPositionView';
-
-function indoor(): PositionEstimateRow {
-  return {
-    id: 'pe-indoor',
-    patient_id: PATIENT_ID,
-    recorded_at: '2026-05-06T10:00:00Z',
-    mode: 'indoor',
-    x_canvas: 100,
-    y_canvas: 100,
-    lat: null,
-    lng: null,
-    confidence: 0.8,
-    created_at: '2026-05-06T10:00:00Z',
-  };
-}
 
 function outdoor(): PositionEstimateRow {
   return {
@@ -87,54 +68,78 @@ beforeEach(() => {
   };
 });
 
-async function renderView() {
+async function renderView(initialUrl = '/') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   let utils: ReturnType<typeof render> | undefined;
   await act(async () => {
     utils = render(
       <QueryClientProvider client={qc}>
-        <PatientPositionView patientId={PATIENT_ID} />
+        <MemoryRouter initialEntries={[initialUrl]}>
+          <Routes>
+            <Route path="*" element={<PatientPositionView patientId={PATIENT_ID} />} />
+          </Routes>
+        </MemoryRouter>
       </QueryClientProvider>,
     );
   });
   return utils!;
 }
 
-describe('PatientPositionView mode-router', () => {
-  it('renders the indoor floor plan when no estimate has arrived', async () => {
+describe('PatientPositionView toggle', () => {
+  it('defaults to the indoor floor plan when no URL param is set', async () => {
     await renderView();
     expect(screen.getByTestId('indoor-view')).toBeTruthy();
     expect(screen.queryByTestId('outdoor-view')).toBeNull();
   });
 
-  it('renders the indoor view when the latest estimate is indoor', async () => {
-    latestEstimateRef.current = indoor();
-    await renderView();
-    expect(screen.getByTestId('indoor-view')).toBeTruthy();
-  });
-
-  it('renders the outdoor map when the latest estimate is outdoor', async () => {
-    latestEstimateRef.current = outdoor();
-    await renderView();
+  it('renders the outdoor map when ?livePos=outdoor', async () => {
+    await renderView('/?livePos=outdoor');
     expect(screen.getByTestId('outdoor-view')).toBeTruthy();
     expect(screen.queryByTestId('indoor-view')).toBeNull();
   });
 
-  it('switches view when the mode changes between renders', async () => {
-    latestEstimateRef.current = indoor();
-    const { rerender } = await renderView();
+  it('renders the indoor view when ?livePos=indoor', async () => {
+    await renderView('/?livePos=indoor');
+    expect(screen.getByTestId('indoor-view')).toBeTruthy();
+  });
+
+  it('falls back to indoor when the URL param value is unknown', async () => {
+    await renderView('/?livePos=bogus');
+    expect(screen.getByTestId('indoor-view')).toBeTruthy();
+  });
+
+  it('ignores the detected mode — outdoor estimate does NOT auto-switch the view', async () => {
+    // POS-08 auto-switch was removed in favour of a manual toggle. The
+    // ModeIndicator inside OutdoorMapView still reports the detected
+    // mode for information, but the view selection is user-driven.
+    latestEstimateRef.current = outdoor();
+    await renderView();
+    expect(screen.getByTestId('indoor-view')).toBeTruthy();
+    expect(screen.queryByTestId('outdoor-view')).toBeNull();
+  });
+
+  // Radix Tabs.Trigger commits the new value on mousedown (left button)
+  // rather than click, so fireEvent.click is a silent no-op — we have
+  // to dispatch mousedown with button:0 to drive the switch.
+  it('switches view when the user clicks the outdoor tab', async () => {
+    await renderView();
     expect(screen.getByTestId('indoor-view')).toBeTruthy();
 
-    latestEstimateRef.current = outdoor();
-    await act(async () => {
-      rerender(
-        <QueryClientProvider
-          client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
-        >
-          <PatientPositionView patientId={PATIENT_ID} />
-        </QueryClientProvider>,
-      );
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /outdoor map/i }), { button: 0 });
+    await waitFor(() => {
+      expect(screen.getByTestId('outdoor-view')).toBeTruthy();
     });
+    expect(screen.queryByTestId('indoor-view')).toBeNull();
+  });
+
+  it('switches back when the user clicks the indoor tab', async () => {
+    await renderView('/?livePos=outdoor');
     expect(screen.getByTestId('outdoor-view')).toBeTruthy();
+
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /floor plan/i }), { button: 0 });
+    await waitFor(() => {
+      expect(screen.getByTestId('indoor-view')).toBeTruthy();
+    });
+    expect(screen.queryByTestId('outdoor-view')).toBeNull();
   });
 });
