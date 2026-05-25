@@ -29,7 +29,18 @@ export function AlertBell() {
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="icon" className="relative" aria-label="Alerts">
-          <Bell className="h-5 w-5" />
+          <Bell className={cn('h-5 w-5', hasCritical && 'animate-pulse')} />
+          {unackedCount > 0 && (
+            // Expanding ring behind the badge — draws the eye when an
+            // unacked alert is waiting; red for critical, amber otherwise.
+            <span
+              aria-hidden
+              className={cn(
+                'pointer-events-none absolute -top-0.5 -right-0.5 inline-flex h-4 w-4 animate-ping rounded-full opacity-75',
+                hasCritical ? 'bg-red-700' : 'bg-amber-500',
+              )}
+            />
+          )}
           {unackedCount > 0 && (
             <span
               className={cn(

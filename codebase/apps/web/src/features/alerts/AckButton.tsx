@@ -1,3 +1,4 @@
+import type { ComponentProps } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Check, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -10,6 +11,11 @@ interface AckButtonProps {
    *  the row from a local list (e.g. the bell popover). The mutation
    *  also patches every React Query cache that holds the alert. */
   onAcked?: () => void;
+  /** Button styling overrides — defaults to the compact outline used in
+   *  lists; the pop-up dialog passes a prominent primary button. */
+  variant?: ComponentProps<typeof Button>['variant'];
+  size?: ComponentProps<typeof Button>['size'];
+  className?: string;
 }
 
 /** Calls the public.acknowledge_alert RPC. Idempotent per the SQL
@@ -17,7 +23,13 @@ interface AckButtonProps {
  *  caches so the bell badge / per-patient feed flip immediately;
  *  rolls back if the RPC errors (anything other than the "already
  *  acked" silent path). */
-export function AckButton({ alert, onAcked }: AckButtonProps) {
+export function AckButton({
+  alert,
+  onAcked,
+  variant = 'outline',
+  size = 'sm',
+  className,
+}: AckButtonProps) {
   const qc = useQueryClient();
   const mutation = useMutation({
     mutationFn: async () => {
@@ -59,8 +71,9 @@ export function AckButton({ alert, onAcked }: AckButtonProps) {
   }
   return (
     <Button
-      size="sm"
-      variant="outline"
+      size={size}
+      variant={variant}
+      className={className}
       disabled={mutation.isPending}
       onClick={() => mutation.mutate()}
     >
