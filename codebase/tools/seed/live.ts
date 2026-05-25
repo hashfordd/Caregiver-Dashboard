@@ -66,16 +66,12 @@ const admin: SupabaseClient = createClient(URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
-// Minimal starter room: outer rectangle, so the floor-plan view renders.
-const ROOM_CANVAS = {
-  version: '1.0',
-  objects: [
-    { type: 'wall', x1: 40, y1: 40, x2: 760, y2: 40 },
-    { type: 'wall', x1: 760, y1: 40, x2: 760, y2: 520 },
-    { type: 'wall', x1: 760, y1: 520, x2: 40, y2: 520 },
-    { type: 'wall', x1: 40, y1: 520, x2: 40, y2: 40 },
-  ],
-};
+// Blank starter canvas (same shape as `npm run seed`). The room is delineated
+// by the four corner beacons; draw walls in-app via Place → Walls if wanted.
+// This MUST be a Fabric-valid document — `{ type: 'wall' }` objects have no
+// registered Fabric class, so loadFromJSON throws and the canvas renders
+// nothing ("No class registered for wall").
+const ROOM_CANVAS = { version: '7.3.1', objects: [], background: 'transparent' };
 
 async function resolveAdmin(): Promise<{ adminId: string; providerId: string }> {
   const list = await admin.auth.admin.listUsers();
