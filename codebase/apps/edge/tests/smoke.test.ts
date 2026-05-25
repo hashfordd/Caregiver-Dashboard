@@ -15,12 +15,18 @@ describe('shared schemas reachable from edge workspace', () => {
     expect(result.success).toBe(true);
   });
 
-  it('parses a telemetry topic correctly', () => {
+  it('parses a patient-keyed telemetry topic correctly', () => {
     const topic = parseTopic('device/00000000-0000-0000-0000-000000000000/telemetry');
     expect(topic).toEqual({
       patient_id: '00000000-0000-0000-0000-000000000000',
+      mac: null,
       kind: 'telemetry',
     });
+  });
+
+  it('parses a device-MAC-keyed topic to a mac (bridge resolves the patient)', () => {
+    const topic = parseTopic('device/AA:BB:CC:DD:EE:FF/signals');
+    expect(topic).toEqual({ patient_id: null, mac: 'aa:bb:cc:dd:ee:ff', kind: 'signals' });
   });
 
   it('rejects a malformed topic', () => {

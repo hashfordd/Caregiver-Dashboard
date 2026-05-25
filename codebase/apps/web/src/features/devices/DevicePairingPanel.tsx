@@ -58,11 +58,20 @@ export function DevicePairingPanel({ patientId }: DevicePairingPanelProps) {
           <ul className="divide-y" aria-label="Paired devices">
             {query.data.map((d) => (
               <li key={d.id} className="flex items-center justify-between py-2">
-                <div>
+                <div className="min-w-0">
                   <div className="font-mono text-sm">{d.mac_address}</div>
                   {d.label && <div className="text-xs text-muted-foreground">{d.label}</div>}
                   <div className="text-xs text-muted-foreground">
                     Last seen: {relativeTime(d.last_seen_at)}
+                  </div>
+                  {/* Connection details for wiring firmware / the protocol-shim:
+                      the device publishes to device/{patient}/telemetry with this
+                      device_id. Click a value to select it for copying. */}
+                  <div className="mt-1 select-all break-all font-mono text-[10px] text-muted-foreground">
+                    device_id: {d.id}
+                  </div>
+                  <div className="select-all break-all font-mono text-[10px] text-muted-foreground">
+                    topic: device/{patientId}/telemetry
                   </div>
                 </div>
                 <UnpairButton deviceId={d.id} patientId={patientId} />

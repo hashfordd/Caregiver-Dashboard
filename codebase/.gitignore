@@ -13,7 +13,11 @@ coverage/
 .env
 .env.local
 .env.*.local
+.env.live
 !.env.example
+
+# Per-function Deno lockfiles (the workspace lock is codebase/deno.lock)
+apps/edge/functions/*/deno.lock
 
 # Editor
 .DS_Store

@@ -32,6 +32,7 @@ import { createClient } from '@supabase/supabase-js';
 import mqtt from 'mqtt';
 import { buildTopic, type TelemetryMessage } from '@alzcare/shared';
 import type { SignalsMessage } from '@alzcare/shared/mqtt';
+import { LIVE_TEST_BEACONS } from '@alzcare/shared/fixtures';
 
 const { values } = parseArgs({
   options: {
@@ -148,8 +149,10 @@ function nextReading(): TelemetryMessage {
 
 // Stable set of mock MACs so a long-running session looks like a fixed
 // installation (3 beacons in fixed rooms) rather than churning random
-// MACs every tick. RSSI jitters within a realistic range.
-const MOCK_BLE_MACS = ['AA:BB:CC:DD:EE:01', 'AA:BB:CC:DD:EE:02', 'AA:BB:CC:DD:EE:03'];
+// MACs every tick. RSSI jitters within a realistic range. Sourced from the
+// shared live-test fixture so the MACs match the beacons `seed:live` registers
+// — otherwise position_estimator has no placed beacons to trilaterate against.
+const MOCK_BLE_MACS = LIVE_TEST_BEACONS.map((b) => b.mac);
 
 function nextSignalsMessage(): SignalsMessage {
   return {

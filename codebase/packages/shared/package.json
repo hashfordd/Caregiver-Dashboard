@@ -8,6 +8,8 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./fixtures": "./src/fixtures/index.ts",
+    "./fixtures/*": "./src/fixtures/*.ts",
     "./mqtt": "./src/mqtt/index.ts",
     "./mqtt/*": "./src/mqtt/*.ts",
     "./positioning": "./src/positioning/index.ts",

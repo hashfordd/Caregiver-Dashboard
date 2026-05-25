@@ -10,10 +10,11 @@ import type { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
 export type ProcessOutcome =
   | { kind: 'telemetry'; persisted: true; rowId: string }
   | { kind: 'telemetry'; persisted: false; error: 'validation' | 'persistence'; details: string }
+  | { kind: 'signals'; persisted: false; reason: 'broadcast'; signals: SignalsMessage }
   | {
       kind: 'signals';
       persisted: false;
-      reason: 'broadcast' | 'broadcast-failed' | 'validation';
+      reason: 'broadcast-failed' | 'validation';
       details?: string;
     }
   | { kind: 'events'; persisted: true; rowId: string }
@@ -23,7 +24,7 @@ export type ProcessOutcome =
       error: 'validation' | 'persistence';
       details: string;
     }
-  | { kind: 'unknown'; persisted: false; error: 'topic'; details: string };
+  | { kind: 'unknown'; persisted: false; error: 'topic' | 'device'; details: string };
 
 /** Bridge-side env passed in (rather than read directly) so tests can
  *  drive the position-estimator POST without setting Deno env vars. */
@@ -79,8 +80,45 @@ export async function processMessage(
     };
   }
 
+  // MAC-keyed topic (`device/{mac}/…`): the device only knows its own MAC.
+  // Resolve it to its paired patient + device UUID and inject both, so the
+  // rest of the pipeline is identical to a patient-keyed message. Pairing is
+  // done in the dashboard (`pair_device`); an unknown/unpaired MAC is dropped.
+  let payload = message;
+  if (parsed.mac) {
+    const { data: device, error } = await supabase
+      .from('devices')
+      .select('id, paired_patient_id')
+      .eq('mac_address', parsed.mac)
+      .maybeSingle();
+    if (error) {
+      return { kind: 'unknown', persisted: false, error: 'device', details: error.message };
+    }
+    if (!device) {
+      return {
+        kind: 'unknown',
+        persisted: false,
+        error: 'device',
+        details: `no device paired with mac ${parsed.mac} — pair it in the dashboard first`,
+      };
+    }
+    if (!device.paired_patient_id) {
+      return {
+        kind: 'unknown',
+        persisted: false,
+        error: 'device',
+        details: `device ${parsed.mac} is not paired to a patient`,
+      };
+    }
+    payload = {
+      ...(typeof message === 'object' && message !== null ? message : {}),
+      patient_id: device.paired_patient_id,
+      device_id: device.id,
+    };
+  }
+
   if (parsed.kind === 'telemetry') {
-    const validation = TelemetryMessage.safeParse(message);
+    const validation = TelemetryMessage.safeParse(payload);
     if (!validation.success) {
       return {
         kind: 'telemetry',
@@ -132,7 +170,7 @@ export async function processMessage(
   }
 
   if (parsed.kind === 'signals') {
-    const validation = SignalsMessage.safeParse(message);
+    const validation = SignalsMessage.safeParse(payload);
     if (!validation.success) {
       return {
         kind: 'signals',
@@ -174,11 +212,11 @@ export async function processMessage(
     if (env != null) {
       await invokePositionEstimator(env, m);
     }
-    return { kind: 'signals', persisted: false, reason: 'broadcast' };
+    return { kind: 'signals', persisted: false, reason: 'broadcast', signals: m };
   }
 
   if (parsed.kind === 'events') {
-    const validation = EventMessage.safeParse(message);
+    const validation = EventMessage.safeParse(payload);
     if (!validation.success) {
       return {
         kind: 'events',
@@ -188,29 +226,45 @@ export async function processMessage(
       };
     }
     const m = validation.data;
-    // Phase G item 65: idempotent insert. The bridge can re-receive
-    // an event (MQTT retry / replay-signals second pass / webhook
-    // redelivery) and a naive INSERT would create a duplicate fall
-    // alert. The partial unique index on (device_id, occurred_at,
-    // type) — added by 20260507500000_edge_correctness.sql — gives us
-    // a clean ON CONFLICT path. ignoreDuplicates: false means the
-    // duplicate row gets re-set with the same values (no-op) and the
-    // returning select hands back the existing id.
+    // Phase G item 65: idempotent insert. The bridge can re-receive an event
+    // (MQTT retry / replay-signals second pass / webhook redelivery) and a
+    // naive INSERT would create a duplicate fall alert. Dedup is enforced by
+    // the unique index events_idempotency_uidx (20260508120000), which is an
+    // EXPRESSION index over coalesce(device_id, …), occurred_at, type,
+    // coalesce(payload->>'idempotency_key', ''). PostgREST's onConflict only
+    // accepts plain column names, so it cannot target an expression index —
+    // we INSERT and treat a unique-violation (23505) as an idempotent hit,
+    // re-fetching the existing row's id.
     const { data, error } = await supabase
       .from('events')
-      .upsert(
-        {
-          patient_id: m.patient_id,
-          device_id: m.device_id,
-          occurred_at: m.occurred_at,
-          type: m.type,
-          payload: m.payload ?? {},
-        },
-        { onConflict: 'device_id,occurred_at,type' },
-      )
+      .insert({
+        patient_id: m.patient_id,
+        device_id: m.device_id,
+        occurred_at: m.occurred_at,
+        type: m.type,
+        payload: m.payload ?? {},
+      })
       .select('id')
       .single();
     if (error || !data) {
+      if (error?.code === '23505') {
+        // Already persisted by an earlier delivery — the original insert's
+        // webhook already fired rules_engine, so do NOT re-fire. Report the
+        // existing row so a retry isn't surfaced as a false error.
+        let dedupQuery = supabase
+          .from('events')
+          .select('id')
+          .eq('occurred_at', m.occurred_at)
+          .eq('type', m.type);
+        dedupQuery =
+          m.device_id == null
+            ? dedupQuery.is('device_id', null)
+            : dedupQuery.eq('device_id', m.device_id);
+        const existing = await dedupQuery.limit(1).maybeSingle();
+        if (existing.data) {
+          return { kind: 'events', persisted: true, rowId: (existing.data as { id: string }).id };
+        }
+      }
       return {
         kind: 'events',
         persisted: false,

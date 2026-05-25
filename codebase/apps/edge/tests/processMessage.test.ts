@@ -8,10 +8,12 @@ const DEVICE_ID = '22222222-2222-2222-2222-222222222222';
 interface SupabaseMock extends SupabaseClient {
   __sensorInsertMock: ReturnType<typeof vi.fn>;
   __sensorSingleMock: ReturnType<typeof vi.fn>;
-  __eventsUpsertMock: ReturnType<typeof vi.fn>;
+  __eventsInsertMock: ReturnType<typeof vi.fn>;
   __eventsSingleMock: ReturnType<typeof vi.fn>;
+  __eventsMaybeSingleMock: ReturnType<typeof vi.fn>;
   __devicesUpdateMock: ReturnType<typeof vi.fn>;
   __devicesEqMock: ReturnType<typeof vi.fn>;
+  __devicesMaybeSingleMock: ReturnType<typeof vi.fn>;
   __fromMock: ReturnType<typeof vi.fn>;
   __channelMock: ReturnType<typeof vi.fn>;
   __sendMock: ReturnType<typeof vi.fn>;
@@ -23,19 +25,38 @@ function buildSupabase(): SupabaseMock {
   const sensorInsertMock = vi.fn(() => ({
     select: vi.fn(() => ({ single: sensorSingleMock })),
   }));
-  // Phase G item 65: events branch now uses upsert with onConflict for
-  // idempotency. Default to success; individual tests override
-  // __eventsSingleMock to drive the error path.
+  // Phase G item 65: events branch INSERTs and treats a 23505 unique-violation
+  // (the events_idempotency_uidx expression index) as an idempotent hit.
+  // Default to insert success; individual tests override __eventsSingleMock to
+  // drive the error / dedup paths. __eventsMaybeSingleMock backs the dedup
+  // re-fetch that runs only on 23505.
   const eventsSingleMock = vi.fn().mockResolvedValue({ data: { id: 'ev-1' }, error: null });
-  const eventsUpsertMock = vi.fn(() => ({
+  const eventsInsertMock = vi.fn(() => ({
     select: vi.fn(() => ({ single: eventsSingleMock })),
   }));
+  const eventsMaybeSingleMock = vi
+    .fn()
+    .mockResolvedValue({ data: { id: 'ev-existing' }, error: null });
+  const eventsSelectChain: Record<string, unknown> = {
+    eq: vi.fn(() => eventsSelectChain),
+    is: vi.fn(() => eventsSelectChain),
+    limit: vi.fn(() => ({ maybeSingle: eventsMaybeSingleMock })),
+  };
+  const eventsSelectMock = vi.fn(() => eventsSelectChain);
   const devicesEqMock = vi.fn().mockResolvedValue({ error: null });
   const devicesUpdateMock = vi.fn(() => ({ eq: devicesEqMock }));
+  // MAC resolution: devices.select('…').eq('mac_address', mac).maybeSingle().
+  // Defaults to a paired device; tests override for unknown/unpaired MACs.
+  const devicesMaybeSingleMock = vi
+    .fn()
+    .mockResolvedValue({ data: { id: 'dev-uuid-1', paired_patient_id: PATIENT_ID }, error: null });
+  const devicesSelectMock = vi.fn(() => ({
+    eq: vi.fn(() => ({ maybeSingle: devicesMaybeSingleMock })),
+  }));
   const fromMock = vi.fn((table: string) => {
     if (table === 'sensor_readings') return { insert: sensorInsertMock };
-    if (table === 'events') return { upsert: eventsUpsertMock };
-    if (table === 'devices') return { update: devicesUpdateMock };
+    if (table === 'events') return { insert: eventsInsertMock, select: eventsSelectMock };
+    if (table === 'devices') return { update: devicesUpdateMock, select: devicesSelectMock };
     return {};
   });
   // Channel mock: signals broadcast goes through .channel(name).send(...).
@@ -49,10 +70,12 @@ function buildSupabase(): SupabaseMock {
     channel: channelMock,
     __sensorInsertMock: sensorInsertMock,
     __sensorSingleMock: sensorSingleMock,
-    __eventsUpsertMock: eventsUpsertMock,
+    __eventsInsertMock: eventsInsertMock,
     __eventsSingleMock: eventsSingleMock,
+    __eventsMaybeSingleMock: eventsMaybeSingleMock,
     __devicesUpdateMock: devicesUpdateMock,
     __devicesEqMock: devicesEqMock,
+    __devicesMaybeSingleMock: devicesMaybeSingleMock,
     __fromMock: fromMock,
     __channelMock: channelMock,
     __sendMock: sendMock,
@@ -334,10 +357,10 @@ describe('processMessage', () => {
 
     expect(outcome).toEqual({ kind: 'events', persisted: true, rowId: 'ev-1' });
     expect(supabase.__fromMock).toHaveBeenCalledWith('events');
-    expect(supabase.__eventsUpsertMock).toHaveBeenCalledTimes(1);
-    // Phase G item 65: idempotent upsert with onConflict on the
-    // partial unique index covering (device_id, occurred_at, type).
-    expect(supabase.__eventsUpsertMock).toHaveBeenCalledWith(
+    expect(supabase.__eventsInsertMock).toHaveBeenCalledTimes(1);
+    // Phase G item 65: plain INSERT (dedup is enforced by the
+    // events_idempotency_uidx expression index, not an onConflict target).
+    expect(supabase.__eventsInsertMock).toHaveBeenCalledWith(
       expect.objectContaining({
         patient_id: PATIENT_ID,
         device_id: DEVICE_ID,
@@ -345,9 +368,28 @@ describe('processMessage', () => {
         type: 'fall',
         payload: { reason: 'impact' },
       }),
-      expect.objectContaining({ onConflict: 'device_id,occurred_at,type' }),
     );
     expect(supabase.__sensorInsertMock).not.toHaveBeenCalled();
+  });
+
+  it('treats a 23505 unique-violation as an idempotent hit and returns the existing rowId', async () => {
+    supabase.__eventsSingleMock.mockResolvedValue({
+      data: null,
+      error: { code: '23505', message: 'duplicate key value violates unique constraint' },
+    });
+    const outcome = await processMessage(
+      `device/${PATIENT_ID}/events`,
+      {
+        v: 1,
+        patient_id: PATIENT_ID,
+        device_id: DEVICE_ID,
+        occurred_at: '2026-05-04T12:00:00.000Z',
+        type: 'fall',
+      },
+      supabase,
+    );
+    expect(outcome).toEqual({ kind: 'events', persisted: true, rowId: 'ev-existing' });
+    expect(supabase.__eventsMaybeSingleMock).toHaveBeenCalledTimes(1);
   });
 
   it('returns a persistence error when the events insert fails', async () => {
@@ -378,5 +420,50 @@ describe('processMessage', () => {
     const outcome = await processMessage('not/a/topic', VALID_TELEMETRY, supabase);
     expect(outcome).toMatchObject({ kind: 'unknown', persisted: false, error: 'topic' });
     expect(supabase.__sensorInsertMock).not.toHaveBeenCalled();
+  });
+
+  describe('MAC-keyed topics (device/{mac}/…)', () => {
+    const MAC = 'aa:bb:cc:dd:ee:ff';
+
+    it('resolves the MAC to its paired patient + device and injects them', async () => {
+      supabase.__sensorSingleMock.mockResolvedValue({ data: { id: 'sr-1' }, error: null });
+      // Payload carries NO patient_id/device_id — firmware only knows its MAC.
+      const outcome = await processMessage(
+        `device/${MAC}/telemetry`,
+        { v: 1, recorded_at: '2026-05-04T12:00:00.000Z', hr_bpm: 80 },
+        supabase,
+      );
+      expect(outcome).toEqual({ kind: 'telemetry', persisted: true, rowId: 'sr-1' });
+      expect(supabase.__devicesMaybeSingleMock).toHaveBeenCalledTimes(1);
+      // Inserted with the RESOLVED ids, not anything from the payload.
+      expect(supabase.__sensorInsertMock).toHaveBeenCalledWith(
+        expect.objectContaining({ patient_id: PATIENT_ID, device_id: 'dev-uuid-1', hr_bpm: 80 }),
+      );
+    });
+
+    it('drops a reading from an unknown MAC (no device)', async () => {
+      supabase.__devicesMaybeSingleMock.mockResolvedValue({ data: null, error: null });
+      const outcome = await processMessage(
+        `device/${MAC}/telemetry`,
+        { v: 1, recorded_at: '2026-05-04T12:00:00.000Z', hr_bpm: 80 },
+        supabase,
+      );
+      expect(outcome).toMatchObject({ kind: 'unknown', persisted: false, error: 'device' });
+      expect(supabase.__sensorInsertMock).not.toHaveBeenCalled();
+    });
+
+    it('drops a reading from a MAC that is not paired to a patient', async () => {
+      supabase.__devicesMaybeSingleMock.mockResolvedValue({
+        data: { id: 'dev-uuid-1', paired_patient_id: null },
+        error: null,
+      });
+      const outcome = await processMessage(
+        `device/${MAC}/telemetry`,
+        { v: 1, recorded_at: '2026-05-04T12:00:00.000Z', hr_bpm: 80 },
+        supabase,
+      );
+      expect(outcome).toMatchObject({ kind: 'unknown', persisted: false, error: 'device' });
+      expect(supabase.__sensorInsertMock).not.toHaveBeenCalled();
+    });
   });
 });
