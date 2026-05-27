@@ -9,6 +9,7 @@ import {
 } from '@/lib/usePatientStream';
 import { useDiscoveredBeaconsStore } from '@/lib/stores/discoveredBeaconsStore';
 import { useLiveSensorStore } from '@/lib/stores/liveSensorStore';
+import { useBrokerTelemetry } from '@/lib/broker/useBrokerTelemetry';
 
 type Listener<T> = (row: T) => void;
 type Unsubscribe = () => void;
@@ -39,6 +40,10 @@ export function PatientStreamProvider({
   const positionListeners = useRef<Set<Listener<PositionEstimateRow>>>(new Set());
   const alertListeners = useRef<Set<Listener<AlertRow>>>(new Set());
   const signalsListeners = useRef<Set<Listener<SignalsMessage>>>(new Set());
+
+  // Low-latency vitals straight from the broker (supplements the Supabase
+  // realtime path below, which stays as the persistence-backed fallback).
+  useBrokerTelemetry(patientId);
 
   const handle = usePatientStream(patientId, {
     onSensorReading: (row) => {

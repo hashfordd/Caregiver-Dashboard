@@ -15,6 +15,7 @@ import '@fontsource-variable/fraunces/full-italic.css';
 import { App } from './App';
 import { RootErrorBoundary } from './components/RootErrorBoundary';
 import { queryClient } from './lib/queryClient';
+import { BrokerProvider } from './lib/broker/BrokerProvider';
 import './styles/globals.css';
 
 const rootEl = document.getElementById('root');
@@ -24,7 +25,9 @@ createRoot(rootEl).render(
   <StrictMode>
     <RootErrorBoundary>
       <QueryClientProvider client={queryClient}>
-        <App />
+        <BrokerProvider>
+          <App />
+        </BrokerProvider>
         <Toaster richColors closeButton position="top-right" />
       </QueryClientProvider>
     </RootErrorBoundary>

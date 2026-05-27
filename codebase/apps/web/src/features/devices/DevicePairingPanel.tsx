@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Plus } from 'lucide-react';
+import { Plus, Wifi } from 'lucide-react';
 import type { Device } from '@alzcare/shared';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { relativeTime } from '@/lib/time';
 import { PairDeviceDialog } from './PairDeviceDialog';
+import { HardwareSetupWizard } from './HardwareSetupWizard';
 import { UnpairButton } from './UnpairButton';
 
 interface DevicePairingPanelProps {
@@ -26,6 +27,7 @@ async function fetchDevices(patientId: string): Promise<Device[]> {
 
 export function DevicePairingPanel({ patientId }: DevicePairingPanelProps) {
   const [open, setOpen] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
   const query = useQuery({
     queryKey: ['devices', patientId],
     queryFn: () => fetchDevices(patientId),
@@ -36,10 +38,16 @@ export function DevicePairingPanel({ patientId }: DevicePairingPanelProps) {
     <Card>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
         <CardTitle className="text-base">Devices</CardTitle>
-        <Button size="sm" onClick={() => setOpen(true)}>
-          <Plus className="mr-1 h-4 w-4" />
-          Pair device
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+            <Plus className="mr-1 h-4 w-4" />
+            Pair device
+          </Button>
+          <Button size="sm" onClick={() => setWizardOpen(true)}>
+            <Wifi className="mr-1 h-4 w-4" />
+            Set up hardware
+          </Button>
+        </div>
       </CardHeader>
       <CardContent>
         {query.isLoading && <Skeleton className="h-12 w-full" />}
@@ -81,6 +89,7 @@ export function DevicePairingPanel({ patientId }: DevicePairingPanelProps) {
         )}
       </CardContent>
       <PairDeviceDialog open={open} onOpenChange={setOpen} patientId={patientId} />
+      <HardwareSetupWizard open={wizardOpen} onOpenChange={setWizardOpen} patientId={patientId} />
     </Card>
   );
 }

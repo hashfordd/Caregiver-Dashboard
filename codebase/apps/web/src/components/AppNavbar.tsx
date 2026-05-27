@@ -6,6 +6,7 @@ import { Brand } from '@/components/Brand';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { AlertBell } from '@/features/alerts/AlertBell';
 import { IngestStatusPill } from '@/components/IngestStatusPill';
+import { BrokerStatusPill } from '@/components/BrokerStatusPill';
 import { useCurrentCaregiver } from '@/features/provider/providerQueries';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
@@ -87,6 +88,7 @@ export function AppNavbar() {
               {profile.company_name}
             </span>
           )}
+          <BrokerStatusPill />
           <IngestStatusPill />
           <AlertBell />
           <ThemeToggle />
