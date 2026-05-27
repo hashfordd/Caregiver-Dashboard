@@ -13,12 +13,11 @@ proceeding.
 - [ ] Prod URL loads without a network error (`https://<prod-domain>/`).
 - [ ] Hosted Supabase project is reachable: open the Supabase Studio URL and confirm
       the `sensor_readings` table has rows inserted within the last 10 minutes.
-- [ ] Mosquitto broker is online, **or** the mock generator is producing seeded data
-      into the hosted DB at the expected rate.
-  - If the broker / generator is unavailable: confirm the demo patient has at least
+- [ ] HiveMQ Cloud broker is reachable and the local ingest server (`npm run stack:up`) is running, **or** the mock generator is producing seeded data into the hosted DB at the expected rate.
+  - If the ingest server / generator is unavailable: confirm the demo patient has at least
     1 h of pre-seeded `position_estimates` and `sensor_readings` so the live-feed
     beat can still run off recent rows. Mark this item as "using seeded data —
-    broker offline" rather than failing the dry run.
+    ingest server offline" rather than failing the dry run.
 - [ ] Rules engine edge function is deployed and the Vault secrets
       `edge_functions_base_url` and `edge_functions_service_role_key` are set on the
       hosted project (see `BACKLOG.md` — F11 webhooks).

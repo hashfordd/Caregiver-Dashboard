@@ -202,7 +202,7 @@ group by 1, 2;
 ## 9. Logging + observability
 
 - **Edge function logs**: Supabase logs (`supabase functions logs <name>`); structured JSON via `console.log(JSON.stringify({ level, msg, context }))`.
-- **Broker logs**: Mosquitto's log file under `mqtt/log/`; useful for ACL violations and connection issues.
+- **Broker logs**: HiveMQ Cloud metrics dashboard; useful for ACL violations and connection issues.
 - **Client errors**: console in development. For prototype demo, a simple `window.onerror` handler that POSTs to a `client_errors` Edge Function table is enough. Not in the original task list — add to BACKLOG.
 - **Realtime channel status**: surfaced in UI as a status pill (Cross-cutting §7).
 - **Audit log**: see `audit_log` table (BE-11). Triggers fire on device pairing, beacon placement, rule changes, acknowledgement actions. Read by admins (RLS deferred until role system lands).

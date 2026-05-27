@@ -31,7 +31,7 @@ The next thing to land is the **mock telemetry generator** — a small TS script
 
 What shipped: F1 (signup/profile, RLS write surface), F2 (roster, create-with-allocation RPC), F3 (detail shell, single-mount realtime context, tabs), F4 (live sensor cards, Zustand store, sparkline, processMessage SSOT, mock-telemetry generator), F10 (pair_device RPC, write policies, label column, pairing panel, heartbeat).
 
-Phase 1 closure additions: long-running Deno bridge (`apps/edge/functions/mqtt_bridge/longRunning.ts`) subscribed to `device/+/+`; Mosquitto auth (`backend-bridge` account + ACL pattern; one-time `npm run broker:creds`); mqtt mode on the mock generator (`--mode mqtt` publishes via mqtt.js to the broker). Verified end-to-end: 9 telemetry messages over 6 s travelled mock → broker → bridge → DB; `devices.last_seen_at` advanced.
+Phase 1 closure additions: long-running Deno bridge (`apps/edge/functions/mqtt_bridge/longRunning.ts`) subscribed to `device/+/+`; HiveMQ Cloud broker with `alzcare` credentials; mqtt mode on the mock generator (`--mode mqtt` publishes via mqtt.js to the broker). Verified end-to-end: 9 telemetry messages over 6 s travelled mock → broker → bridge → DB; `devices.last_seen_at` advanced.
 
 What's deferred from Phase 1: bridge Dockerfile + docker-compose service entry (production hardening — bridge runs as `npm run bridge:start` for now); structured latency instrumentation (dev console only). See [BACKLOG.md](../BACKLOG.md).
 
@@ -45,7 +45,7 @@ The original Phase 1 plan, retained below for reference.
 
 - Phase 0 verification gate passed (already true).
 - Mock telemetry generator at `tools/mock-telemetry/` (described below) is operational — can publish well-formed `device/{patient_id}/telemetry` messages on a configurable interval.
-- Supabase running locally (`supabase start`); MQTT broker running locally (`npm run broker:up`).
+- Supabase running (local or hosted); MQTT broker: HiveMQ Cloud (creds in `apps/edge/.env`).
 - A real caregiver account seeded (the `admin@bizzieapp.com` test user we created during foundation verify, or one created via the F1 signup flow).
 
 **Critical path**

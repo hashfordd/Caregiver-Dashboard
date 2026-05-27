@@ -1,74 +1,53 @@
 #!/usr/bin/env bash
 # ============================================================================
-# One-command local stack for the AlzCare MQTT demo.
+# Start the AlzCare ingest server — bridge + shim — against HiveMQ + hosted
+# Supabase. This is the whole runtime stack: the broker is HiveMQ Cloud
+# (always-on) and the database + dashboard are hosted, so nothing runs in
+# Docker and there is no local Supabase. Both services run in ONE terminal with
+# prefixed output; Ctrl-C stops them.
 #
-# Brings up everything in order, idempotently (safe to re-run):
-#   1. Docker Desktop (started if not running)
-#   2. Mosquitto broker
-#   3. Supabase (DB + edge runtime)
-#   4. Seed: admin/provider + the fixed "Live Feed Test" patient
-#   5. Vault secrets for the alert/position webhooks
-#   6. The long-running services — bridge, edge functions, shim, dashboard —
-#      in ONE terminal with prefixed output. Ctrl-C stops them all.
-#
+# Config comes from apps/edge/.env (copy apps/edge/.env.example).
 # Usage:  npm run stack:up      (or double-click ../start-stack.command)
 # ============================================================================
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." # → codebase/
 
-say() { printf '\n\033[1;36m▶ %s\033[0m\n' "$1"; }
-warn() { printf '\033[1;33m⚠ %s\033[0m\n' "$1"; }
-
-# --- 1. Docker daemon -------------------------------------------------------
-if ! docker info >/dev/null 2>&1; then
-  say 'Starting Docker Desktop…'
-  open -a Docker || true
-  for _ in $(seq 1 60); do
-    docker info >/dev/null 2>&1 && break
-    sleep 2
-  done
-  docker info >/dev/null 2>&1 || {
-    echo 'Docker did not start — open Docker Desktop manually and re-run.'
-    exit 1
-  }
-fi
-
-# --- 2. Mosquitto broker (clear any stale container first) ------------------
-say 'Starting MQTT broker…'
-docker rm -f alzcare-mosquitto >/dev/null 2>&1 || true
-npm run broker:up
-
-# --- 3. Supabase (no-op if already running) ---------------------------------
-say 'Starting Supabase…'
-supabase start
-
-SB_SERVICE_KEY="$(supabase status -o env | awk -F= '/SERVICE_ROLE_KEY/{print $2}' | tr -d '"')"
-export SB_SERVICE_KEY
-if [ -z "$SB_SERVICE_KEY" ]; then
-  echo 'Could not read the Supabase service-role key — is Supabase running?'
+ENV_FILE='apps/edge/.env'
+if [ ! -f "$ENV_FILE" ]; then
+  echo "Missing $ENV_FILE — copy apps/edge/.env.example to it and fill in your hosted Supabase + HiveMQ values."
   exit 1
 fi
 
-# Sanity: the local stack needs local URLs in the env files.
-grep -q '127.0.0.1' apps/edge/.env 2>/dev/null ||
-  warn 'apps/edge/.env may not point at local Supabase (expected 127.0.0.1:54321).'
-grep -q '127.0.0.1' apps/web/.env.local 2>/dev/null ||
-  warn 'apps/web/.env.local may not point at local Supabase (login will fail against hosted).'
+# Load config for the shim (the bridge reads $ENV_FILE via --env-file).
+set -a
+# shellcheck disable=SC1090
+. "$ENV_FILE"
+set +a
 
-# --- 4. Seed admin/provider + the fixed live-test patient (idempotent) ------
-say 'Seeding admin + Live Feed Test patient…'
-npm run seed
-npm run seed:live
+missing=''
+[ -z "${SUPABASE_URL:-}" ] && missing="$missing SUPABASE_URL"
+[ -z "${SUPABASE_SERVICE_ROLE_KEY:-}" ] && missing="$missing SUPABASE_SERVICE_ROLE_KEY"
+[ -z "${MQTT_BROKER_URL:-}" ] && missing="$missing MQTT_BROKER_URL"
+[ -z "${MQTT_USERNAME:-}" ] && missing="$missing MQTT_USERNAME"
+[ -z "${MQTT_PASSWORD:-}" ] && missing="$missing MQTT_PASSWORD"
+if [ -n "$missing" ]; then
+  echo "$ENV_FILE is missing:$missing"
+  exit 1
+fi
 
-# --- 5. Long-running services (one terminal; Ctrl-C stops all) --------------
-# The bridge computes positioning + rules + inactivity in-process, so there's
-# no edge-function server or Vault webhook wiring to run locally.
-say 'Starting bridge + shim + dashboard…  (Ctrl-C to stop all)'
-export MQTT_BRIDGE_PASSWORD="${MQTT_BRIDGE_PASSWORD:-bridgepass}"
+printf '\n\033[1;36m▶ Ingest server → %s\033[0m\n' "$SUPABASE_URL"
+printf '  broker: %s\n' "$MQTT_BROKER_URL"
 
+# The shim ensures its device + reads placed beacons from the hosted project.
+# Pass the broker + Supabase config to it explicitly (flags win over env); the
+# password also rides on MQTT_BRIDGE_PASSWORD.
+export SB_SERVICE_KEY="$SUPABASE_SERVICE_ROLE_KEY"
+export MQTT_BRIDGE_PASSWORD="$MQTT_PASSWORD"
+export ALLOW_NON_LOCAL=1
+
+printf '\033[1;36m▶ Starting bridge + shim (Ctrl-C stops both)\033[0m\n'
 npx concurrently \
-  --names 'bridge,shim,web' \
-  --prefix-colors 'blue,green,cyan' \
+  --names 'bridge,shim' \
+  --prefix-colors 'blue,green' \
   'npm run bridge:start' \
-  'npm run shim:start' \
-  'npm run dev'
+  "npm run shim:start -- --url $SUPABASE_URL --allow-non-local --mqtt-broker-url $MQTT_BROKER_URL --mqtt-username $MQTT_USERNAME"

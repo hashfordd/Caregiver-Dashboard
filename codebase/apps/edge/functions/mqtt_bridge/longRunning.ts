@@ -26,8 +26,8 @@ import { handlePositionEstimateRequest } from '../position_estimator/handler.ts'
 import { handleRulesEngineRequest } from '../rules_engine/handler.ts';
 import { handleInactivityScan } from '../inactivity_scan/handler.ts';
 
-const BROKER_URL = Deno.env.get('MQTT_BROKER_URL') ?? 'mqtt://127.0.0.1:1883';
-const MQTT_USERNAME = Deno.env.get('MQTT_USERNAME') ?? 'backend-bridge';
+const BROKER_URL = Deno.env.get('MQTT_BROKER_URL') ?? '';
+const MQTT_USERNAME = Deno.env.get('MQTT_USERNAME') ?? '';
 const MQTT_PASSWORD = Deno.env.get('MQTT_PASSWORD') ?? '';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
@@ -45,6 +45,11 @@ function log(level: 'info' | 'warn' | 'error', msg: string, extra: Record<string
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   log('error', 'mqtt_bridge: missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY; refusing to start');
+  Deno.exit(2);
+}
+
+if (!BROKER_URL) {
+  log('error', 'mqtt_bridge: missing MQTT_BROKER_URL (HiveMQ mqtts://…:8883); refusing to start');
   Deno.exit(2);
 }
 

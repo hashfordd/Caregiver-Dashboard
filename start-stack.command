@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Double-click in Finder to bring up the whole local AlzCare stack.
-# (Opens this in Terminal; Ctrl-C in that window stops the live services.)
+# Double-click in Finder to start the AlzCare ingest server (bridge + shim)
+# against HiveMQ + hosted Supabase. (Opens in Terminal; Ctrl-C stops it.)
 cd "$(cd "$(dirname "$0")" && pwd)/codebase" || exit 1
 exec npm run stack:up

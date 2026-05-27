@@ -13,9 +13,9 @@ and Phase 2 dependency for F6 (signals discovery / pairing).
   endpoint. `supabase functions serve mqtt_bridge` must be running.
   Exercises the full `payload → bridge → DB | broadcast → realtime →
 dashboard` path via the `processMessage` SSOT.
-- **mqtt** — Publish via the broker. `npm run broker:up` plus
-  `npm run bridge:start` for the long-running subscriber. Exercises the
-  full Phase 1/2 spine: firmware → broker → bridge → DB | broadcast →
+- **mqtt** — Publish via HiveMQ Cloud. `npm run bridge:start` for the
+  long-running subscriber (creds in `apps/edge/.env`). Exercises the full
+  Phase 1/2 spine: firmware → broker → bridge → DB | broadcast →
   realtime → dashboard.
 
 ## Kinds (message shape)

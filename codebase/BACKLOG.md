@@ -24,9 +24,9 @@ Format: `- **<area>** — what + why deferred + reference (feature ID / task ID)
 
 - **Seed demo data** — `supabase/seed.sql` is an empty placeholder. Demo patient + 4 placed beacons + sample alert rules + 24h synthetic history are TODO. (BE-12)
 
-- **Per-device Mosquitto credentials** — `../mqtt-infra/passwd.example` documents the pattern but no automation exists for generating per-device entries during firmware enrollment. (MQ-04 / MQ-05 / FW-19)
+- **Per-device HiveMQ credentials** — No automation exists for provisioning per-device credentials or ACL rules on HiveMQ Cloud during firmware enrollment. Manual creation via the HiveMQ console for now. (MQ-04 / MQ-05 / FW-19)
 
-- **Mosquitto monitoring + retention** — broker has a healthcheck in docker-compose; no log retention or device-count dashboard yet. (MQ-08)
+- **Broker monitoring + retention** — HiveMQ Cloud provides a metrics dashboard; no log retention or device-count panel in the AlzCare UI yet. (MQ-08)
 
 - **Front-end libs not yet installed** — _none_. (Recharts landed with F13 at `2.15.4`. Mapbox GL JS landed with F9. Fabric landed with F5.)
 
@@ -66,11 +66,9 @@ Format: `- **<area>** — what + why deferred + reference (feature ID / task ID)
   until multi-caregiver allocation lands as a feature; V1 has one caregiver
   per patient. (F3 / UI-05)
 
-- **Bridge Dockerfile + docker-compose service entry** — Phase 1 closure
-  shipped the long-running Deno bridge (run via `npm run bridge:start`),
-  Mosquitto auth (`npm run broker:creds`), and the `mqtt` mode in the
-  mock generator. Containerising the bridge so `npm run broker:up`
-  brings both up together (and so it deploys to Fly.io as a single image)
+- **Bridge Dockerfile** — Phase 1 closure shipped the long-running Deno bridge
+  (run via `npm run bridge:start`) and the `mqtt` mode in the mock generator.
+  Containerising the bridge so it deploys to Fly.io as a single image
   is production hardening — defer to before any non-team deployment.
 
 - **°F unit toggle on sensor cards** — F4 displays temperature in °C only.

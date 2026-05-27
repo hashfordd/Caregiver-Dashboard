@@ -1,6 +1,6 @@
 // Mock telemetry publisher for the F4 spine smoke test. Publishes simulated
-// telemetry on a configurable interval against a local Supabase + Mosquitto
-// stack.
+// telemetry on a configurable interval against hosted Supabase + the HiveMQ
+// Cloud broker.
 //
 // Modes (transport):
 //   --mode direct  (default) — service-role insert into sensor_readings.
@@ -11,9 +11,9 @@
 //                  (`supabase functions serve mqtt_bridge` must be running).
 //                  Exercises the bridge's processMessage SSOT over HTTP.
 //   --mode mqtt    — Publish via the broker on `device/{patient_id}/<kind>`
-//                  (`npm run broker:up && npm run bridge:start`). Exercises
-//                  the full Phase 1/2 spine: firmware → broker → bridge →
-//                  DB or realtime → dashboard.
+//                  (needs `npm run bridge:start` running against the same
+//                  HiveMQ broker). Exercises the full Phase 1/2 spine:
+//                  firmware → broker → bridge → DB or realtime → dashboard.
 //
 // Kinds (message shape, orthogonal to mode):
 //   --kind telemetry  (default) — TelemetryMessage with hr/spo2/temp.
@@ -43,8 +43,8 @@ const { values } = parseArgs({
     url: { type: 'string', default: 'http://127.0.0.1:54321' },
     'service-key': { type: 'string' },
     'bridge-url': { type: 'string' },
-    'mqtt-broker-url': { type: 'string', default: 'mqtt://127.0.0.1:1883' },
-    'mqtt-username': { type: 'string', default: 'backend-bridge' },
+    'mqtt-broker-url': { type: 'string' },
+    'mqtt-username': { type: 'string' },
     'mqtt-password': { type: 'string' },
     'no-ensure-device': { type: 'boolean', default: false },
     kind: { type: 'string', default: 'telemetry' },
@@ -69,13 +69,21 @@ const KIND = ((): 'telemetry' | 'signals' => {
 const URL = values.url ?? 'http://127.0.0.1:54321';
 const SERVICE_KEY = values['service-key'] ?? process.env.SB_SERVICE_KEY;
 const BRIDGE_URL = values['bridge-url'] ?? `${URL}/functions/v1/mqtt_bridge`;
-const MQTT_BROKER_URL = values['mqtt-broker-url'] ?? 'mqtt://127.0.0.1:1883';
-const MQTT_USERNAME = values['mqtt-username'] ?? 'backend-bridge';
-const MQTT_PASSWORD = values['mqtt-password'] ?? process.env.MQTT_BRIDGE_PASSWORD ?? null;
+const MQTT_BROKER_URL = values['mqtt-broker-url'] ?? process.env.MQTT_BROKER_URL ?? '';
+const MQTT_USERNAME = values['mqtt-username'] ?? process.env.MQTT_USERNAME ?? '';
+const MQTT_PASSWORD =
+  values['mqtt-password'] ?? process.env.MQTT_BRIDGE_PASSWORD ?? process.env.MQTT_PASSWORD ?? null;
 
 function fail(message: string): never {
   console.error(`mock-telemetry: ${message}`);
   process.exit(2);
+}
+
+if (MODE === 'mqtt' && !MQTT_BROKER_URL) {
+  fail(
+    'mqtt mode needs a broker URL — pass --mqtt-broker-url or set MQTT_BROKER_URL ' +
+      '(HiveMQ: mqtts://<cluster>.s1.eu.hivemq.cloud:8883)',
+  );
 }
 
 /** Phase H item 70: non-local-target guard. The mock-telemetry CLI

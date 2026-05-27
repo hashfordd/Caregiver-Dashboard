@@ -32,6 +32,12 @@ export function freshState(): ShimState {
 export const MOVEMENT_HIGH = 2.0;
 export const MOVEMENT_RESET = 1.2;
 
+// The combined `.../total` device reports linear acceleration in m/s²; the
+// canonical accel vector and the fall latch both work in g (baseline ~1.0).
+// Skipping this conversion would make every reading magnitude ~9.8 g and trip
+// the fall latch on the first packet.
+export const G_MPS2 = 9.80665;
+
 function num(v: unknown): number {
   return Number(v);
 }
@@ -263,4 +269,152 @@ export function ingestLocation(
     return { signals: null, error: parsed.error.issues[0]?.message };
   }
   return { signals: parsed.data };
+}
+
+/** Round to 3 dp — keeps forwarded vectors readable without losing precision. */
+function round3(v: number): number {
+  return Math.round(v * 1000) / 1000;
+}
+
+/** Fan-out result for one combined `.../total` message. */
+export interface TotalResult {
+  state: ShimState;
+  telemetry: TelemetryMessage | null;
+  fall: EventMessage | null;
+  signals: SignalsMessage | null;
+  /** Non-fatal validation messages, one per canonical message we couldn't build. */
+  errors: string[];
+}
+
+/**
+ * Ingest the real hardware's combined `alzcare/{site}/patient{n}/total` payload
+ * — a single JSON object carrying heart-rate, IMU, GPS and a BLE scan list — and
+ * fan it out into the canonical telemetry / events / signals messages. Unlike the
+ * per-kind `raw/*` path this device emits everything at once and reports MEASURED
+ * BLE RSSI, so no walk synthesis is needed.
+ *
+ * Field mapping (device → canonical):
+ *  - avg_bpm / bpm        → telemetry.hr_bpm  (only when heart_rate_status VALID
+ *                                              and finger DETECTED)
+ *  - acc_{x,y,z}_mps2     → telemetry.accel   (converted m/s² → g) + fall latch
+ *  - gyro_{x,y,z}_dps     → telemetry.gyro    (deg/s, forwarded as-is)
+ *  - ble_devices[]        → signals.ble[]     ({mac_address,rssi} pass-through)
+ *  - latitude/longitude   → signals.gps       (only when gps_status VALID)
+ *
+ * Each source is gated on its own `*_status` flag, so a packet with only a valid
+ * IMU still forwards accel/gyro while HR and GPS are dropped.
+ */
+export function ingestTotal(
+  map: Mapping,
+  state: ShimState,
+  payload: Record<string, unknown>,
+  nowIso: string,
+): TotalResult {
+  const errors: string[] = [];
+  const next: ShimState = { ...state };
+
+  // ---- IMU (m/s² → g) ------------------------------------------------------
+  const imuValid = String(payload.imu_status ?? '') === 'VALID';
+  const axG = num(payload.acc_x_mps2) / G_MPS2;
+  const ayG = num(payload.acc_y_mps2) / G_MPS2;
+  const azG = num(payload.acc_z_mps2) / G_MPS2;
+  const haveAccel = imuValid && [axG, ayG, azG].every(Number.isFinite);
+  if (haveAccel) next.accel = { x: round3(axG), y: round3(ayG), z: round3(azG) };
+
+  const gx = num(payload.gyro_x_dps);
+  const gy = num(payload.gyro_y_dps);
+  const gz = num(payload.gyro_z_dps);
+  const haveGyro = imuValid && [gx, gy, gz].every(Number.isFinite);
+
+  // ---- Telemetry -----------------------------------------------------------
+  const hrValid =
+    String(payload.heart_rate_status ?? '') === 'VALID' &&
+    String(payload.finger_status ?? '') === 'DETECTED';
+  const avg = num(payload.avg_bpm);
+  const inst = num(payload.bpm);
+  // avg_bpm is the steadier reading once the pulse sensor spins up; it sits at 0
+  // until then, so fall back to the instantaneous bpm.
+  const hr = Number.isFinite(avg) && avg > 0 ? avg : inst;
+  const haveHr = hrValid && Number.isFinite(hr);
+
+  let telemetry: TelemetryMessage | null = null;
+  if (haveHr || haveAccel || haveGyro) {
+    const candidate = {
+      v: 1 as const,
+      patient_id: map.patient_id,
+      device_id: map.device_id,
+      recorded_at: nowIso,
+      ...(haveHr ? { hr_bpm: round3(hr) } : {}),
+      ...(haveAccel ? { accel: next.accel } : {}),
+      ...(haveGyro ? { gyro: { x: round3(gx), y: round3(gy), z: round3(gz) } } : {}),
+      fw_version: 'shim-1.0.0',
+    };
+    const parsed = TelemetryMessage.safeParse(candidate);
+    if (parsed.success) telemetry = parsed.data;
+    else errors.push(`telemetry: ${parsed.error.issues[0]?.message}`);
+  }
+
+  // ---- Fall latch (rising edge on accel magnitude in g) --------------------
+  let fall: EventMessage | null = null;
+  if (haveAccel) {
+    const movement = Math.hypot(axG, ayG, azG); // ~1.0 at rest, spikes on impact
+    if (movement > MOVEMENT_HIGH && !next.fallActive) {
+      next.fallActive = true;
+      const candidate = {
+        v: 1 as const,
+        patient_id: map.patient_id,
+        device_id: map.device_id,
+        occurred_at: nowIso,
+        type: 'fall' as const,
+        payload: { movement_rate: round3(movement), tilt: round3(Math.hypot(axG, ayG)) },
+      };
+      const parsed = EventMessage.safeParse(candidate);
+      if (parsed.success) fall = parsed.data;
+      else errors.push(`event: ${parsed.error.issues[0]?.message}`);
+    } else if (movement <= MOVEMENT_RESET && next.fallActive) {
+      next.fallActive = false; // movement normalised — re-arm for the next fall
+    }
+  }
+
+  // ---- Signals (measured BLE + optional GPS) -------------------------------
+  let signals: SignalsMessage | null = null;
+  const ble = Array.isArray(payload.ble_devices)
+    ? (payload.ble_devices as unknown[])
+        .map((d) => {
+          const s = d as Record<string, unknown>;
+          return { mac: String(s.mac_address ?? ''), rssi: num(s.rssi) };
+        })
+        // Drop unusable samples so one bad beacon doesn't sink the whole message.
+        .filter(
+          (b) => b.mac.length > 0 && Number.isFinite(b.rssi) && b.rssi >= -127 && b.rssi <= 20,
+        )
+    : [];
+
+  const gpsValid = String(payload.gps_status ?? '') === 'VALID';
+  const lat = num(payload.latitude);
+  const lng = num(payload.longitude);
+  const haveGps =
+    gpsValid &&
+    Number.isFinite(lat) &&
+    Number.isFinite(lng) &&
+    Math.abs(lat) <= 90 &&
+    Math.abs(lng) <= 180 &&
+    !(lat === 0 && lng === 0); // 0,0 is the device's "no fix" sentinel
+
+  if (ble.length > 0 || haveGps) {
+    const candidate = {
+      v: 1 as const,
+      patient_id: map.patient_id,
+      device_id: map.device_id,
+      recorded_at: nowIso,
+      ble,
+      wifi: [],
+      ...(haveGps ? { gps: { lat, lng } } : {}),
+    };
+    const parsed = SignalsMessage.safeParse(candidate);
+    if (parsed.success) signals = parsed.data;
+    else errors.push(`signals: ${parsed.error.issues[0]?.message}`);
+  }
+
+  return { state: next, telemetry, fall, signals, errors };
 }

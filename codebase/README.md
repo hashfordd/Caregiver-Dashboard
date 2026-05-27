@@ -30,21 +30,20 @@ codebase/                  ← npm monorepo root (where you `npm install`)
 Sibling areas at the project root:
 
 ```
-../mqtt-infra/             ← Mosquitto docker-compose + ACL + cert/cred scripts
+../mqtt-infra/             ← (removed) broker is now hosted HiveMQ Cloud
 ../mqtt-firmware/          ← ESP32 / Arduino sources (separate scope)
 ../hardware/               ← PCB designs, BOMs (separate scope)
 ../planning/               ← project-level docs, diagrams, milestone plans
 ```
 
-The `npm run broker:*` scripts in this `package.json` reach across
-to `../mqtt-infra/` for the broker config; everything else stays
-within `codebase/`.
+Everything stays within `codebase/`. The MQTT broker is hosted HiveMQ Cloud;
+credentials are stored in `apps/edge/.env`.
 
 ## Prerequisites
 
 - **Node.js 20.x** — `nvm use` will pick up `.nvmrc`
 - **npm 10+**
-- **Docker Desktop** — for Mosquitto + the Supabase local stack
+- **Docker Desktop** — for the Supabase local stack (no longer needed for the broker)
 - **Supabase CLI** — `brew install supabase/tap/supabase`
 - **Deno** — for edge function typechecks; `brew install deno`
 
@@ -54,17 +53,13 @@ within `codebase/`.
 # 1. Install monorepo deps
 npm install
 
-# 2. Generate Mosquitto self-signed certs + passwd/acl (one-time)
-npm run broker:certs
-npm run broker:creds
-
-# 3. Web env vars
+# 2. Web env vars
 cp apps/web/.env.example apps/web/.env.local
 # Fill VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY (from `supabase status` after start)
 
-# 4. Bridge env vars
+# 3. Bridge env vars (HiveMQ + hosted Supabase creds)
 cp apps/edge/.env.example apps/edge/.env
-# Fill SUPABASE_SERVICE_ROLE_KEY (from `supabase status`); MQTT_PASSWORD defaults match broker:creds.
+# Fill SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, MQTT_BROKER_URL, MQTT_USERNAME, MQTT_PASSWORD
 ```
 
 ## Daily commands
@@ -74,13 +69,12 @@ cp apps/edge/.env.example apps/edge/.env
 npm run supabase:start
 npm run supabase:reset    # apply migrations / reset DB
 
-# MQTT broker
-npm run broker:up
-npm run broker:logs
-npm run broker:down
+# Full ingest stack — bridge + shim against HiveMQ Cloud + hosted Supabase (foreground; Ctrl-C stops)
+npm run stack:up
 
-# Long-running bridge (subscribes to broker, persists telemetry)
+# Or start bridge / shim individually
 npm run bridge:start      # leave running in its own terminal
+npm run shim:start        # leave running in its own terminal
 
 # Dashboard dev server (http://localhost:5173)
 npm run dev
@@ -120,7 +114,7 @@ The Mapbox token is a public `pk.*` token shipped in the client bundle. To preve
 
 ## Architecture cheat-sheet
 
-- **MQTT topics**: `device/{patient_id}/{telemetry|signals|events}`, enforced via Mosquitto ACL pattern.
+- **MQTT topics**: `device/{patient_id}/{telemetry|signals|events}`, routed via HiveMQ Cloud.
 - **Type contracts**: every MQTT message validated against Zod schemas in `packages/shared`; Vite and Deno consume the same TS source via path alias / import map.
 - **Realtime**: dashboard subscribes to Supabase Realtime channels (`patient:<uuid>`); the broker is the ingestion-side scaling story (AWS IoT Core swap-in path, see MQ-09).
 - **RLS**: caregivers see patients allocated via `caregiver_patient`. Read-scoping policies are stubbed; write policies are TODO (see BACKLOG).

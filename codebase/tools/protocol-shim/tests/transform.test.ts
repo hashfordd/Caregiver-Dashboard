@@ -4,6 +4,8 @@ import {
   ingestHeartRate,
   ingestImu,
   ingestLocation,
+  ingestTotal,
+  G_MPS2,
   MOVEMENT_HIGH,
   type Mapping,
   type SynthContext,
@@ -219,5 +221,126 @@ describe('ingestLocation', () => {
       NOW,
     );
     expect(r.signals).toBeNull();
+  });
+});
+
+// Mirrors the real device's combined `alzcare/{site}/patient{n}/total` payload
+// (acceleration in m/s², measured BLE RSSI per beacon, status-gated sources).
+const totalPayload = (over: Record<string, unknown> = {}) => ({
+  patient_id: '001',
+  gps_status: 'INVALID',
+  latitude: 0,
+  longitude: 0,
+  satellites: 0,
+  heart_rate_status: 'VALID',
+  finger_status: 'DETECTED',
+  ir_value: 102375,
+  bpm: 82.4,
+  avg_bpm: 80,
+  imu_status: 'VALID',
+  acc_x_mps2: 0.2,
+  acc_y_mps2: -0.1,
+  acc_z_mps2: 9.78, // ~1 g at rest
+  gyro_x_dps: 1.562,
+  gyro_y_dps: -7.734,
+  gyro_z_dps: -1.391,
+  ble_status: 'SCANNING',
+  ble_company_filter: '0x0505',
+  ble_device_count: 2,
+  ble_devices: [
+    { mac_address: '06:05:04:03:02:21', rssi: -72, battery_percent: 58 },
+    { mac_address: '06:05:04:03:02:31', rssi: -81, battery_percent: 68 },
+  ],
+  ...over,
+});
+
+describe('ingestTotal — combined device payload', () => {
+  it('fans one packet out into telemetry + signals (no fall at rest)', () => {
+    const r = ingestTotal(MAP, freshState(), totalPayload(), NOW);
+    expect(r.errors).toEqual([]);
+
+    // Telemetry: avg_bpm preferred, accel converted m/s² → g, gyro forwarded.
+    expect(r.telemetry).toMatchObject({ v: 1, patient_id: MAP.patient_id, hr_bpm: 80 });
+    expect(r.telemetry?.accel?.z).toBeCloseTo(9.78 / G_MPS2, 3); // ~0.997 g, not 9.78
+    expect(r.telemetry?.gyro).toEqual({ x: 1.562, y: -7.734, z: -1.391 });
+
+    // Signals: measured BLE passed straight through (no synthesis).
+    expect(r.signals?.ble).toEqual([
+      { mac: '06:05:04:03:02:21', rssi: -72 },
+      { mac: '06:05:04:03:02:31', rssi: -81 },
+    ]);
+    expect(r.signals?.gps).toBeUndefined(); // gps_status INVALID
+
+    expect(r.fall).toBeNull();
+    expect(r.state.fallActive).toBe(false);
+  });
+
+  it('does NOT trip the fall latch on a 1 g rest reading (m/s² → g guard)', () => {
+    // Regression: feeding raw m/s² (~9.8) into a g-calibrated latch would fire.
+    const r = ingestTotal(MAP, freshState(), totalPayload(), NOW);
+    expect(r.fall).toBeNull();
+  });
+
+  it('fires one fall on a movement spike, then latches', () => {
+    // ~3 g impact: magnitude sqrt(20²+20²+5²)/g ≈ 2.96 > MOVEMENT_HIGH.
+    const spike = totalPayload({ acc_x_mps2: 20, acc_y_mps2: 20, acc_z_mps2: 5 });
+    const first = ingestTotal(MAP, freshState(), spike, NOW);
+    expect(first.fall).toMatchObject({ v: 1, type: 'fall', patient_id: MAP.patient_id });
+    const mr = (first.fall?.payload as { movement_rate: number }).movement_rate;
+    expect(mr).toBeGreaterThan(MOVEMENT_HIGH);
+
+    const second = ingestTotal(MAP, first.state, spike, NOW);
+    expect(second.fall).toBeNull(); // suppressed while still down
+  });
+
+  it('falls back to instantaneous bpm when avg_bpm is 0', () => {
+    const r = ingestTotal(MAP, freshState(), totalPayload({ avg_bpm: 0, bpm: 77 }), NOW);
+    expect(r.telemetry?.hr_bpm).toBe(77);
+  });
+
+  it('omits hr_bpm when the finger is not detected, but still forwards accel', () => {
+    const r = ingestTotal(MAP, freshState(), totalPayload({ finger_status: 'LOST' }), NOW);
+    expect(r.telemetry?.hr_bpm).toBeUndefined();
+    expect(r.telemetry?.accel).toBeDefined();
+  });
+
+  it('drops the IMU entirely when imu_status is not VALID', () => {
+    const r = ingestTotal(MAP, freshState(), totalPayload({ imu_status: 'INVALID' }), NOW);
+    expect(r.telemetry?.accel).toBeUndefined();
+    expect(r.telemetry?.gyro).toBeUndefined();
+    expect(r.telemetry?.hr_bpm).toBe(80); // HR still forwarded
+    expect(r.fall).toBeNull();
+  });
+
+  it('includes gps only when gps_status is VALID', () => {
+    const r = ingestTotal(
+      MAP,
+      freshState(),
+      totalPayload({ gps_status: 'VALID', latitude: -37.8136, longitude: 144.9631 }),
+      NOW,
+    );
+    expect(r.signals?.gps).toEqual({ lat: -37.8136, lng: 144.9631 });
+  });
+
+  it('filters unusable beacons but keeps the good ones', () => {
+    const r = ingestTotal(
+      MAP,
+      freshState(),
+      totalPayload({
+        ble_devices: [
+          { mac_address: '', rssi: -60 },
+          { mac_address: '06:05:04:03:02:41', rssi: 'x' },
+          { mac_address: '06:05:04:03:02:51', rssi: -65 },
+        ],
+      }),
+      NOW,
+    );
+    expect(r.signals?.ble).toEqual([{ mac: '06:05:04:03:02:51', rssi: -65 }]);
+  });
+
+  it('emits no signals when there are no beacons and no gps fix', () => {
+    const r = ingestTotal(MAP, freshState(), totalPayload({ ble_devices: [] }), NOW);
+    expect(r.signals).toBeNull();
+    expect(r.telemetry).not.toBeNull(); // telemetry still flows
   });
 });

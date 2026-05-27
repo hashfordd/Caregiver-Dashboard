@@ -13,7 +13,6 @@ coverage/
 .env
 .env.local
 .env.*.local
-.env.live
 !.env.example
 
 # Per-function Deno lockfiles (the workspace lock is codebase/deno.lock)
@@ -29,13 +28,6 @@ apps/edge/functions/*/deno.lock
 # Logs
 *.log
 npm-debug.log*
-
-# Mosquitto runtime artifacts
-mqtt/certs/
-mqtt/data/
-mqtt/log/
-mqtt/passwd
-mqtt/acl
 
 # Supabase local
 supabase/.branches/

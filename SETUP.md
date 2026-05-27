@@ -1,11 +1,11 @@
 # AlzCare — Setup & Startup Guide
 
-How to set up and run the full local stack: the MQTT broker, Supabase
-(database + realtime), the bridge (which also computes positioning + alerts),
-the protocol shim, and the caregiver dashboard — plus how to feed it sensor
-data and pair real hardware.
+How to set up and run the stack: the ingest server (bridge + shim) against
+HiveMQ Cloud and hosted Supabase, plus the caregiver dashboard on Vercel — and
+how to feed it sensor data and pair real hardware.
 
-Everything runs **locally**; no cloud account is needed for the demo.
+The MQTT broker is **HiveMQ Cloud** (`mqtts://<cluster>.s1.eu.hivemq.cloud:8883`).
+There is no local broker.
 
 ```
 sensors / sims ─▶ MQTT broker ─▶ protocol-shim ─▶ mqtt_bridge ─▶ Supabase (DB)
@@ -24,7 +24,7 @@ Install these once:
 
 | Tool                | Why                          | Check                  |
 | ------------------- | ---------------------------- | ---------------------- |
-| **Docker Desktop**  | runs the broker + Supabase   | `docker --version`     |
+| **Docker Desktop**  | runs the local Supabase stack | `docker --version`    |
 | **Node.js ≥ 20**    | the app + tooling            | `node --version`       |
 | **Supabase CLI**    | local database + edge runtime| `supabase --version`   |
 | **Deno**            | the MQTT bridge runtime      | `deno --version`       |
@@ -51,15 +51,8 @@ npm run stack:up
 
 …or **double-click `start-stack.command`** in Finder (at the `Saas/` root).
 
-`stack:up` is idempotent (safe to re-run) and brings up, in order:
-
-1. **Docker Desktop** (started if not running)
-2. **MQTT broker** (Mosquitto)
-3. **Supabase** (database + edge runtime)
-4. **Seed** — the admin account + the fixed "Live Feed Test" patient (with its
-   device, floor plan, four corner beacons, and alert rules)
-5. **The live services** — bridge (ingest + positioning + alerts), shim, and
-   dashboard — all in one terminal with prefixed, colour-coded output:
+`stack:up` starts the ingest server (bridge + shim) against HiveMQ Cloud and
+hosted Supabase, in the foreground with prefixed, colour-coded output:
 
 ```
 [bridge]    mqtt_bridge connected …
@@ -132,11 +125,11 @@ Real hardware reports its own beacon RSSI, which flows through unchanged.
 
 ## 7. Stop everything
 
-- **Ctrl-C** the `stack:up` terminal to stop the bridge / functions / shim / dashboard.
-- Stop the containers (broker + Supabase):
+- **Ctrl-C** the `stack:up` terminal to stop the bridge / shim.
+- Stop local Supabase if you started it for development:
 
 ```bash
-npm run stack:down
+npm run supabase:stop
 ```
 
 ---
@@ -144,16 +137,12 @@ npm run stack:down
 ## 8. Manual flow (advanced / per-service)
 
 If you prefer one service per tab instead of `stack:up`, run these from
-`codebase/` (Docker must be running first):
+`codebase/` (credentials must be in `apps/edge/.env`):
 
 ```bash
-npm run broker:up                          # MQTT broker
-npm run supabase:start                     # database + edge runtime
-SB_SERVICE_KEY=$(supabase status -o env | awk -F= '/SERVICE_ROLE_KEY/{print $2}' | tr -d '"') npm run seed
-SB_SERVICE_KEY=… npm run seed:live         # the Live Feed Test patient
 npm run bridge:start                       # tab: ingest + positioning + alerts (computes in-process)
-SB_SERVICE_KEY=… MQTT_BRIDGE_PASSWORD=bridgepass npm run shim:start   # tab: protocol shim
-npm run dev                                # tab: dashboard
+npm run shim:start                         # tab: protocol shim
+npm run dev                                # tab: dashboard (local Supabase variant)
 ```
 
 > The bridge computes positioning + alerts + inactivity in-process, so there's
@@ -166,8 +155,7 @@ npm run dev                                # tab: dashboard
 | Symptom                                        | Fix |
 | ---------------------------------------------- | --- |
 | `Cannot connect to the Docker daemon`          | Start Docker Desktop and re-run. |
-| Broker won't start, "container name in use"    | `docker rm -f alzcare-mosquitto` then retry (stack:up does this automatically). |
-| Login fails ("Invalid login credentials")      | The dashboard must point at local: `apps/web/.env.local` → `VITE_SUPABASE_URL=http://127.0.0.1:54321` and the **JWT** anon key (`eyJ…`, from `supabase status`), not a `sb_publishable_…` key. Restart `npm run dev` + hard-refresh. |
+| Login fails ("Invalid login credentials")      | Confirm `apps/web/.env.local` points at the correct Supabase URL + anon key. Restart `npm run dev` + hard-refresh. |
 | Vitals/position tiles never update (data is in the DB) | Realtime not delivering — usually after a `supabase db reset`. Run `supabase stop && supabase start`. The web anon key must be the JWT form. |
 | Alerts / live position never fire              | The bridge does this compute in-process — make sure `bridge:start` (or `stack:up`) is running and a sensor is publishing. |
 | Generators error `No module named paho`        | `pip3 install "paho-mqtt<2"`. |
@@ -186,21 +174,19 @@ npm run dev                                # tab: dashboard
 
 | Command                | What it does                                      |
 | ---------------------- | ------------------------------------------------- |
-| `npm run stack:up`     | start the whole stack (one command)               |
-| `npm run stack:down`   | stop broker + Supabase                            |
+| `npm run stack:up`     | start ingest server (bridge + shim) — foreground, Ctrl-C stops |
 | `npm run sim`          | run the baseline sensor simulator                 |
 | `npm run dev`          | dashboard only                                    |
-| `npm run broker:up` / `:down` | MQTT broker                                |
-| `npm run supabase:start` / `:stop` / `:reset` | Supabase                   |
+| `npm run supabase:start` / `:stop` / `:reset` | local Supabase (dev only)    |
 | `npm run bridge:start` | ingest bridge (also computes positioning + alerts) |
 | `npm run shim:start`   | protocol shim (prototype topics → canonical)      |
 | `npm run seed` / `seed:live` | seed demo data / the fixed test patient     |
 
-**Local credentials & endpoints:**
+**Credentials & endpoints:**
 
-- Dashboard: `http://localhost:5173` — `admin@bizzieapp.com` / `DemoPass123!`
-- Supabase API: `http://127.0.0.1:54321`
-- MQTT broker: `mqtt://127.0.0.1:1883` — user `backend-bridge`, password `bridgepass`
+- Dashboard (Vercel): sign in with `admin@bizzieapp.com` / `DemoPass123!`
+- Supabase: hosted project — URL + keys in `apps/edge/.env`
+- MQTT broker: `mqtts://<cluster>.s1.eu.hivemq.cloud:8883` — creds in `apps/edge/.env`
 - Live Feed Test patient: `11110000-1111-4111-8111-000000000001`
 
 **MQTT topics:**

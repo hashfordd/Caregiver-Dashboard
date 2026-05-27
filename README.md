@@ -8,7 +8,7 @@ artefacts that aren't part of the npm monorepo.
 .
 ├── codebase/             ← npm monorepo (Vite + React + Supabase + Deno edge)
 │   └── README.md           ← daily commands live there
-├── mqtt-infra/           ← Mosquitto broker config (docker-compose, ACL, certs)
+├── mqtt-infra/           ← (removed) broker now hosted on HiveMQ Cloud
 ├── mqtt-firmware/        ← ESP32 / Arduino wearable sources
 ├── hardware/             ← PCB designs, BOMs, mechanical CAD
 ├── planning/             ← course artefacts, milestone plans, diagrams
@@ -23,7 +23,7 @@ Almost everything happens inside `codebase/`:
 cd codebase
 npm install            # one-time
 npm run dev            # web dashboard
-npm run broker:up      # starts Mosquitto from ../mqtt-infra/
+npm run stack:up       # starts ingest server (bridge + shim) against HiveMQ + hosted Supabase
 npm run typecheck
 npm run test
 ```
@@ -33,10 +33,10 @@ guide, daily commands, and architecture overview.
 
 ## Sibling areas
 
-- **`mqtt-infra/`** — Mosquitto docker-compose stack, ACL pattern,
-  certificate + credential generation scripts. Scoped to broker
-  operations only; the bridge code that connects Postgres to MQTT
-  lives in `codebase/apps/edge/functions/mqtt_bridge/`.
+- **`mqtt-infra/`** — removed. The broker is now hosted HiveMQ Cloud
+  (`mqtts://<cluster>.s1.eu.hivemq.cloud:8883`); broker credentials go in
+  `codebase/apps/edge/.env`. The bridge code lives in
+  `codebase/apps/edge/functions/mqtt_bridge/`.
 - **`mqtt-firmware/`** — wearable firmware (separate toolchain — PlatformIO
   / Arduino / ESP-IDF). Empty until the firmware track starts.
 - **`hardware/`** — PCB schematics, BOMs, mechanical drawings. Empty

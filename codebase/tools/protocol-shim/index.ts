@@ -7,7 +7,12 @@
 //     patient/{proto_id}/raw/imu         {ax, ay, az, yaw, pitch, tilt, movement_rate, ...}
 //     patient/{proto_id}/raw/location    {... BLE RSSI to beacons ...}
 //
-// This process subscribes to those topics and re-publishes on the canonical
+// The current physical device instead publishes ONE combined message per tick:
+//
+//     alzcare/{site}/patient{n}/total   {patient_id, bpm, acc_*_mps2, gyro_*_dps,
+//                                        gps_status, ble_devices:[…], …}
+//
+// This process subscribes to both dialects and re-publishes on the canonical
 // device/{patient_uuid}/{telemetry,signals,events} topics with v:1, Zod-valid
 // payloads. The existing spine (bridge → DB → position_estimator → rules_engine
 // → alerts → realtime → dashboard) then runs unchanged.
@@ -15,8 +20,9 @@
 // All mapping + fall-latch logic lives in ./lib/transform.ts (unit-tested);
 // this file is just MQTT/Supabase I/O, arg parsing, and logging.
 //
-// Same-machine assumption: the broker listens on 127.0.0.1:1883 and the sensors
-// run on this host. For sensors on the LAN, open listener 1883 to 0.0.0.0.
+// The broker is HiveMQ Cloud (mqtts://<cluster>.s1.eu.hivemq.cloud:8883). Broker
+// URL / username / password come from the --mqtt-* flags or, when those are
+// omitted, the MQTT_BROKER_URL / MQTT_USERNAME / MQTT_(BRIDGE_)PASSWORD env vars.
 
 import { parseArgs } from 'node:util';
 import { readFileSync } from 'node:fs';
@@ -37,14 +43,16 @@ import {
   ingestHeartRate,
   ingestImu,
   ingestLocation,
+  ingestTotal,
 } from './lib/transform.ts';
+import { createPairingResolver, normalizeMac, type PairingResolver } from './lib/pairing.ts';
 
 // ---- Args ------------------------------------------------------------------
 
 const { values } = parseArgs({
   options: {
-    'mqtt-broker-url': { type: 'string', default: 'mqtt://127.0.0.1:1883' },
-    'mqtt-username': { type: 'string', default: 'backend-bridge' },
+    'mqtt-broker-url': { type: 'string' },
+    'mqtt-username': { type: 'string' },
     'mqtt-password': { type: 'string' },
     'proto-id': { type: 'string', default: '001' },
     'patient-id': { type: 'string' },
@@ -57,13 +65,47 @@ const { values } = parseArgs({
   },
 });
 
-const MQTT_BROKER_URL = values['mqtt-broker-url'] ?? 'mqtt://127.0.0.1:1883';
-const MQTT_USERNAME = values['mqtt-username'] ?? 'backend-bridge';
-const MQTT_PASSWORD = values['mqtt-password'] ?? process.env.MQTT_BRIDGE_PASSWORD ?? null;
+const MQTT_BROKER_URL = values['mqtt-broker-url'] ?? process.env.MQTT_BROKER_URL ?? '';
+const MQTT_USERNAME = values['mqtt-username'] ?? process.env.MQTT_USERNAME ?? '';
+const MQTT_PASSWORD =
+  values['mqtt-password'] ?? process.env.MQTT_BRIDGE_PASSWORD ?? process.env.MQTT_PASSWORD ?? null;
+
+if (!MQTT_BROKER_URL) {
+  fail(
+    'no broker URL — pass --mqtt-broker-url or set MQTT_BROKER_URL ' +
+      '(HiveMQ: mqtts://<cluster>.s1.eu.hivemq.cloud:8883)',
+  );
+}
 const SB_URL = values.url ?? 'http://127.0.0.1:54321';
 const SERVICE_KEY = values['service-key'] ?? process.env.SB_SERVICE_KEY ?? null;
 const ENSURE_DEVICE = values['no-ensure-device'] !== true;
 const ALLOW_NON_LOCAL = values['allow-non-local'] === true || process.env.ALLOW_NON_LOCAL === '1';
+
+// One Supabase client for the process lifetime: powers device-ensure, beacon
+// reads, and (the live path) MAC→patient pairing lookups. Null when no service
+// key is given — the shim then falls back to the static flag/fixture mappings.
+const sb: SupabaseClient | null = SERVICE_KEY
+  ? createClient(SB_URL, SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  : null;
+
+// Live pairing: resolve a device's own MAC (carried in the combined payload) to
+// the patient + device it was paired to in the dashboard. The TTL cache lives in
+// lib/pairing.ts; here we just supply the DB lookup.
+const pairing: PairingResolver | null = sb
+  ? createPairingResolver(async (mac) => {
+      const { data, error } = await sb
+        .from('devices')
+        .select('id, paired_patient_id')
+        .eq('mac_address', mac)
+        .maybeSingle();
+      if (error) {
+        console.error(`protocol-shim: pairing lookup failed for ${mac} — ${error.message}`);
+        return null;
+      }
+      if (!data?.paired_patient_id) return null;
+      return { patient_id: data.paired_patient_id as string, device_id: data.id as string };
+    })
+  : null;
 
 function fail(message: string): never {
   console.error(`protocol-shim: ${message}`);
@@ -108,6 +150,13 @@ function loadMappings(): Map<string, Mapping> {
 }
 
 const MAPPINGS = loadMappings();
+
+// Whether the operator supplied an explicit mapping (--map-file or
+// --patient-id/--device-id) vs the implicit fixture default. The live
+// combined-dialect path refuses the fixture default: real devices must be paired
+// in the dashboard by MAC — no hardcoded patient/device IDs in the live flow.
+const MAPPINGS_EXPLICIT =
+  values['map-file'] != null || (values['patient-id'] != null && values['device-id'] != null);
 
 // ---- Local-target guard ----------------------------------------------------
 // ensure-device carries a service-role key; refuse to touch a non-local
@@ -160,6 +209,19 @@ function parseRawTopic(topic: string): { protoId: string; kind: string } | null 
   return { protoId: m[1], kind: m[2] };
 }
 
+// The real hardware publishes one combined message per tick on
+// `alzcare/{site}/{id}/total`. The third segment is just a routing label — the
+// device's identity comes from `device_mac` in the payload — so we accept any id
+// and only strip an optional `patient` prefix (so a hand-set `patient001` still
+// maps for the explicit-flag test path).
+const TOTAL_TOPIC_RE = /^alzcare\/[^/]+\/([^/]+)\/total$/;
+
+function parseTotalTopic(topic: string): { protoId: string } | null {
+  const m = TOTAL_TOPIC_RE.exec(topic);
+  if (!m || !m[1]) return null;
+  return { protoId: m[1].replace(/^patient/i, '') || m[1] };
+}
+
 // ---- MQTT client -----------------------------------------------------------
 
 let client: mqtt.MqttClient;
@@ -174,16 +236,47 @@ function publishCanonical(topic: string, message: object): void {
 
 let locationWarned = false;
 
+// Shared front door for both dialects: resolve the proto-id mapping and parse
+// JSON once, then hand off to the per-dialect handler.
 function onMessage(topic: string, buf: Buffer): void {
-  const parsed = parseRawTopic(topic);
-  if (!parsed) return;
-
-  const map = MAPPINGS.get(parsed.protoId);
-  if (!map) {
-    console.warn(`protocol-shim: no mapping for prototype id "${parsed.protoId}" — skipping`);
+  const raw = parseRawTopic(topic);
+  if (raw) {
+    const ctx = prepare(raw.protoId, buf, topic);
+    if (ctx) handleRaw(raw.kind, ctx.map, ctx.payload, ctx.protoId, ctx.now);
     return;
   }
+  const total = parseTotalTopic(topic);
+  if (total) void handleTotalMessage(total.protoId, buf, topic);
+}
 
+interface MessageContext {
+  map: Mapping;
+  payload: Record<string, unknown>;
+  protoId: string;
+  now: string;
+}
+
+function prepare(protoId: string, buf: Buffer, topic: string): MessageContext | null {
+  const map = MAPPINGS.get(protoId);
+  if (!map) {
+    console.warn(`protocol-shim: no mapping for prototype id "${protoId}" — skipping`);
+    return null;
+  }
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(buf.toString());
+  } catch {
+    console.error(`protocol-shim: bad JSON on ${topic}`);
+    return null;
+  }
+  return { map, payload, protoId, now: new Date().toISOString() };
+}
+
+// Combined `.../total` dialect. Resolve the device → patient mapping first
+// (live: by the MAC in the payload, via the dashboard pairing; otherwise the
+// static flag/fixture mapping), then fan one packet out into telemetry / events
+// / signals.
+async function handleTotalMessage(protoId: string, buf: Buffer, topic: string): Promise<void> {
   let payload: Record<string, unknown>;
   try {
     payload = JSON.parse(buf.toString());
@@ -192,8 +285,96 @@ function onMessage(topic: string, buf: Buffer): void {
     return;
   }
 
-  const now = new Date().toISOString();
+  const mac = normalizeMac(payload.device_mac ?? payload.mac);
+  let map: Mapping | undefined;
+  let stateKey = protoId;
 
+  if (mac && pairing) {
+    // Live path: identity is the device's own MAC, paired to a patient in the
+    // dashboard. No hardcoded IDs.
+    const resolved = await pairing.resolve(mac);
+    if (!resolved) return void warnUnpaired(mac);
+    map = resolved;
+    stateKey = mac; // latch per physical device, not per (possibly shared) topic id
+  } else if (MAPPINGS_EXPLICIT) {
+    // Test override: operator passed real UUIDs via --patient-id/--device-id or
+    // --map-file. Never used by real hardware.
+    map = MAPPINGS.get(protoId);
+    if (!map) {
+      warnOncePerMin(`map:${protoId}`, `protocol-shim: no --map entry for "${protoId}" — skipping`);
+      return;
+    }
+  } else {
+    // Real device we can't pair: say exactly what's missing rather than silently
+    // falling back to a hardcoded fixture patient.
+    warnOncePerMin(
+      `needpair:${topic}`,
+      mac == null
+        ? `protocol-shim: ${topic} carries no device_mac — firmware must publish its MAC so it can be paired in the dashboard.`
+        : `protocol-shim: no SB_SERVICE_KEY to resolve pairing for ${mac} — set a service key so the dashboard pairing can be looked up.`,
+    );
+    return;
+  }
+
+  emitTotal(map, payload, stateKey, new Date().toISOString());
+}
+
+// Throttle a warning to at most once per minute per key, so a device publishing
+// every couple of seconds doesn't flood the log.
+const warnedAt = new Map<string, number>();
+function warnOncePerMin(key: string, message: string): void {
+  const last = warnedAt.get(key) ?? 0;
+  if (Date.now() - last < 60_000) return;
+  warnedAt.set(key, Date.now());
+  console.warn(message);
+}
+
+function warnUnpaired(mac: string): void {
+  warnOncePerMin(
+    `unpaired:${mac}`,
+    `protocol-shim: device ${mac} is not paired — pair it in the dashboard (data starts flowing ` +
+      'within ~30s, no restart needed).',
+  );
+}
+
+function emitTotal(
+  map: Mapping,
+  payload: Record<string, unknown>,
+  stateKey: string,
+  now: string,
+): void {
+  const r = ingestTotal(map, stateFor(stateKey), payload, now);
+  state.set(stateKey, r.state);
+  for (const e of r.errors) console.error(`protocol-shim: ${e}`);
+
+  if (r.telemetry) {
+    publishCanonical(buildTopic(map.patient_id, 'telemetry'), r.telemetry);
+    console.log(
+      `→ telemetry ${map.patient_id} hr=${r.telemetry.hr_bpm ?? '—'}${r.telemetry.accel ? ' +accel' : ''}`,
+    );
+  }
+  if (r.fall) {
+    publishCanonical(buildTopic(map.patient_id, 'events'), r.fall);
+    const mr = (r.fall.payload as { movement_rate?: number } | undefined)?.movement_rate;
+    console.log(`→ event ${map.patient_id} FALL (movement_rate=${mr})`);
+  }
+  if (r.signals) {
+    publishCanonical(buildTopic(map.patient_id, 'signals'), r.signals);
+    console.log(
+      `→ signals ${map.patient_id} ble=${r.signals.ble.length}${r.signals.gps ? ' +gps' : ''}`,
+    );
+  }
+}
+
+// Per-kind `patient/{id}/raw/*` dialect (prototype / simulator).
+function handleRaw(
+  kind: string,
+  map: Mapping,
+  payload: Record<string, unknown>,
+  protoId: string,
+  now: string,
+): void {
+  const parsed = { protoId, kind };
   if (parsed.kind === 'heartrate') {
     const r = ingestHeartRate(map, stateFor(parsed.protoId), payload, now);
     state.set(parsed.protoId, r.state);
@@ -234,7 +415,7 @@ function onMessage(topic: string, buf: Buffer): void {
 // service key is available to read them.
 
 async function provisionAndLoadBeacons(): Promise<void> {
-  if (!CAN_ENSURE_DEVICE) {
+  if (!CAN_ENSURE_DEVICE || !sb) {
     console.warn(
       'protocol-shim: no SB_SERVICE_KEY — cannot read placed beacons; location synthesis ' +
         'falls back to the seed fixture layout. Set SB_SERVICE_KEY so the walk maps onto your ' +
@@ -242,9 +423,7 @@ async function provisionAndLoadBeacons(): Promise<void> {
     );
     return;
   }
-  const supabase: SupabaseClient = createClient(SB_URL, SERVICE_KEY as string, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
+  const supabase = sb;
   for (const [protoId, map] of MAPPINGS) {
     const { error } = await supabase.from('devices').upsert({
       id: map.device_id,
@@ -312,10 +491,13 @@ async function main(): Promise<void> {
 
   client.on('connect', () => {
     console.log(`protocol-shim: connected ${MQTT_BROKER_URL}`);
-    client.subscribe('patient/+/raw/#', { qos: 0 }, (err) => {
+    // Two dialects: the per-kind prototype/simulator feed and the real device's
+    // combined `.../total` packet.
+    const topics = ['patient/+/raw/#', 'alzcare/+/+/total'];
+    client.subscribe(topics, { qos: 0 }, (err) => {
       if (err) fail(`subscribe failed: ${err.message}`);
       console.log(
-        `protocol-shim: subscribed patient/+/raw/# — mapping ${MAPPINGS.size} patient(s): ${[...MAPPINGS.keys()].join(', ')}`,
+        `protocol-shim: subscribed ${topics.join(', ')} — mapping ${MAPPINGS.size} patient(s): ${[...MAPPINGS.keys()].join(', ')}`,
       );
     });
   });

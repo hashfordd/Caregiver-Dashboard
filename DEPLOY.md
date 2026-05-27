@@ -1,17 +1,17 @@
-# AlzCare — Going Live (hosted Supabase + Vercel, local ingest server)
+# AlzCare — Going Live (hosted Supabase + Vercel + HiveMQ Cloud)
 
-This deploys the **dashboard to Vercel** with the **database on hosted Supabase**,
-while the **MQTT broker + bridge + shim run on your machine**. The bridge
-computes positioning + alerts **in-process** and writes everything (plus a
-heartbeat) up to the hosted project — so **no edge functions are deployed** and
+This deploys the **dashboard to Vercel** with the **database on hosted Supabase**
+and the **MQTT broker on HiveMQ Cloud**. The bridge + shim run on your machine,
+compute positioning + alerts **in-process**, and write everything (plus a
+heartbeat) up to hosted Supabase — so **no edge functions are deployed** and
 hosted Supabase is just the database + realtime + auth. The live dashboard shows
-a **"Server online / offline"** indicator from the heartbeat: turn the local
-server on and data flows; turn it off and it goes stale.
+a **"Server online / offline"** indicator from the heartbeat: start the local
+ingest server and data flows; stop it and it goes stale.
 
 ```
-your machine: sensors ─▶ broker ─▶ shim ─▶ bridge ─┐  (computes position + alerts)
-                                                    ├─▶ HOSTED Supabase ─▶ realtime ─▶ Vercel dashboard
-                                       heartbeat ───┘
+your machine: sensors ─▶ HiveMQ Cloud ─▶ shim ─▶ bridge ─┐  (computes position + alerts)
+                                                           ├─▶ HOSTED Supabase ─▶ realtime ─▶ Vercel dashboard
+                                              heartbeat ───┘
 ```
 
 > The live site can't reach into your machine (NAT/firewall), so the local
@@ -101,22 +101,25 @@ Open the deployed URL and sign in (`admin@bizzieapp.com` / `DemoPass123!`).
 
 ## 3. Turn ON the local ingest server
 
-One-time config:
+One-time config — fill `apps/edge/.env` (copy from `apps/edge/.env.example`):
 
-```bash
-cp apps/edge/.env.live.example apps/edge/.env.live
-# edit apps/edge/.env.live → set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY (hosted)
+```
+SUPABASE_URL=https://lchalkfkqftpxglgzkct.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=<hosted service-role key>
+MQTT_BROKER_URL=mqtts://<cluster>.s1.eu.hivemq.cloud:8883
+MQTT_USERNAME=alzcare
+MQTT_PASSWORD=<hivemq password>
 ```
 
 Then, whenever you want to feed the live dashboard:
 
 ```bash
-npm run stack:live          # broker + bridge + shim, pointed at hosted
+npm run stack:up            # bridge + shim, pointed at HiveMQ + hosted Supabase
 ```
 
 Drive a sensor in another tab (`npm run sim`, or the D1 scenarios, or real
 hardware). The deployed dashboard's header flips to **"Server online"** and the
-data flows up. **Ctrl-C** `stack:live` → the heartbeat goes stale and the
+data flows up. **Ctrl-C** `stack:up` → the heartbeat goes stale and the
 dashboard shows **"Server offline."**
 
 Pair real hardware exactly as locally: **Pair device → type the MAC**, then have
@@ -126,10 +129,11 @@ it publish to `device/{mac}/…` (see `SETUP.md`).
 
 ## 4. Before real patients (hardening)
 
-- Replace self-signed broker certs with real TLS; require per-device
-  credentials + ACL (see `mqtt-infra/`).
-- Rotate the dev secrets (`bridgepass`, the demo passwords/keys).
-- Consider a managed/cloud broker if the ingest server must run unattended.
+- Provision per-device HiveMQ credentials and enforce topic ACLs on the HiveMQ
+  Cloud console.
+- Rotate the dev secrets (demo passwords/keys).
+- Consider running the ingest server on a managed host (Fly.io / EC2) if it must
+  run unattended rather than from a developer laptop.
 - Lock down who can read `local_ingest_status` / patient data via RLS review.
 
 ---
@@ -138,8 +142,7 @@ it publish to `device/{mac}/…` (see `SETUP.md`).
 
 | Action               | Command (from `codebase/`) |
 | -------------------- | -------------------------- |
-| Local-only dev stack | `npm run stack:up`         |
-| Live ingest server   | `npm run stack:live`       |
+| Ingest server        | `npm run stack:up`         |
 | Push migrations      | `supabase db push`         |
 | Deploy dashboard     | `vercel --prod`            |
 
