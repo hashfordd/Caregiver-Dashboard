@@ -36,25 +36,38 @@ interface HardwareSetupWizardProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   patientId: string;
+  /** When set, the device is already paired — skip Connect/Pair and resume at
+   *  the Firmware step so its connection can be re-checked. */
+  resumeMac?: string;
 }
 
-export function HardwareSetupWizard({ open, onOpenChange, patientId }: HardwareSetupWizardProps) {
+export function HardwareSetupWizard({
+  open,
+  onOpenChange,
+  patientId,
+  resumeMac,
+}: HardwareSetupWizardProps) {
   const [step, setStep] = useState(0);
   const [mac, setMac] = useState<string>('');
 
-  // Reset to a clean wizard whenever it's opened.
+  // On open: resume an already-paired device at the Firmware step, otherwise
+  // start a fresh setup from Connect.
   useEffect(() => {
-    if (open) {
+    if (!open) return;
+    if (resumeMac) {
+      setMac(resumeMac);
+      setStep(2);
+    } else {
       setStep(0);
       setMac('');
     }
-  }, [open]);
+  }, [open, resumeMac]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>Set up hardware</DialogTitle>
+          <DialogTitle>{resumeMac ? 'Resume hardware setup' : 'Set up hardware'}</DialogTitle>
           <DialogDescription>
             Connect to the broker, pair the wearable, point its firmware at the right topic, then
             watch the first reading arrive.
