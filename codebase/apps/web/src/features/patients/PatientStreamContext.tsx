@@ -62,7 +62,8 @@ export function PatientStreamProvider({
       // more than just MACs (e.g. F7 calibration capture aggregating
       // RSSI windows per beacon).
       const push = useDiscoveredBeaconsStore.getState().pushSample;
-      for (const sample of msg.ble) push(patientId, sample.mac, sample.rssi);
+      for (const sample of msg.ble)
+        push(patientId, sample.mac, sample.rssi, sample.battery_pct ?? null);
       signalsListeners.current.forEach((cb) => cb(msg));
     },
   });

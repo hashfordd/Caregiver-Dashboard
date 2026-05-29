@@ -1,15 +1,19 @@
-import { useEffect, useRef, useState } from 'react';
-import { LayoutGrid } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { LayoutGrid, MapPin } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useBeacons } from '@/features/beacons/beaconQueries';
+import { useDiscoveredBeaconsStore } from '@/lib/stores/discoveredBeaconsStore';
 import { useFloorPlan } from '@/features/floor-plan/floorPlanQueries';
 import { useNow } from '@/lib/useNow';
 import { BeaconDiagnosticsPanel } from './BeaconDiagnosticsPanel';
 import { FloorPlanCanvas } from './FloorPlanCanvas';
 import { ModeIndicator } from './ModeIndicator';
 import { useRoomConnectors, useRooms } from './roomQueries';
+import { CONNECTOR_KIND_LABEL } from './roomTypes';
+import { computeLocationContext, extractFurniture } from './locationContext';
+import { cn } from '@/lib/utils';
 import { usePositionMarker } from './usePositionMarker';
 import type {
   BeaconSprite,
@@ -44,6 +48,7 @@ export function LivePositionView({ patientId }: LivePositionViewProps) {
   const roomsQuery = useRooms(planQuery.data?.id);
   const connectorsQuery = useRoomConnectors(planQuery.data?.id);
   const estimate = usePositionMarker();
+  const discovered = useDiscoveredBeaconsStore((s) => s.cards[patientId]);
   const canvasRef = useRef<FloorPlanCanvasHandle | null>(null);
   // Item 94: 5 s tick drives the stale ring transition. Cheaper than
   // a 1 Hz timer; the patient marker doesn't need sub-5 s freshness.
@@ -58,16 +63,22 @@ export function LivePositionView({ patientId }: LivePositionViewProps) {
   // helper is the same as F6 — reuse it.
   useEffect(() => {
     const beacons = beaconsQuery.data ?? [];
+    const cards = discovered ?? {};
     const sprites: BeaconSprite[] = beacons
       .filter((b) => b.x_canvas != null && b.y_canvas != null)
-      .map((b) => ({
-        id: b.id,
-        label: b.label ?? b.mac_address.slice(-5),
-        x: b.x_canvas,
-        y: b.y_canvas,
-      }));
+      .map((b) => {
+        const card = cards[b.mac_address];
+        return {
+          id: b.id,
+          label: b.label ?? b.mac_address.slice(-5),
+          x: b.x_canvas,
+          y: b.y_canvas,
+          rssi: card?.lastRssi ?? null,
+          battery: card?.lastBattery ?? null,
+        };
+      });
     canvasRef.current?.setBeacons(sprites);
-  }, [beaconsQuery.data]);
+  }, [beaconsQuery.data, discovered]);
 
   // Phase B: push rooms + connectors into the canvas overlay. Both
   // surface on Live so caregivers see "the patient is in the bedroom"
@@ -88,7 +99,7 @@ export function LivePositionView({ patientId }: LivePositionViewProps) {
     const sprites: RoomConnectorSprite[] = connectors.map((c) => ({
       id: c.id,
       kind: c.kind,
-      label: c.label,
+      label: c.label ?? CONNECTOR_KIND_LABEL[c.kind],
       start: { x: c.start_x, y: c.start_y },
       end: { x: c.end_x, y: c.end_y },
     }));
@@ -120,6 +131,36 @@ export function LivePositionView({ patientId }: LivePositionViewProps) {
     };
     canvasRef.current?.setPatientMarker(sprite);
   }, [estimate, nowMs]);
+
+  // Floor-plan intelligence: derive a human "where / doing what" context from
+  // the live indoor position vs placed furniture, rooms, and doors/windows.
+  const furniture = useMemo(
+    () => extractFurniture(planQuery.data?.canvas_json ?? null),
+    [planQuery.data?.canvas_json],
+  );
+  const locCtx = useMemo(() => {
+    if (
+      estimate == null ||
+      estimate.mode !== 'indoor' ||
+      estimate.x_canvas == null ||
+      estimate.y_canvas == null
+    ) {
+      return null;
+    }
+    return computeLocationContext(
+      { x: estimate.x_canvas, y: estimate.y_canvas },
+      roomsQuery.data ?? [],
+      connectorsQuery.data ?? [],
+      furniture,
+      planQuery.data?.scale_meters_per_pixel ?? null,
+    );
+  }, [
+    estimate,
+    roomsQuery.data,
+    connectorsQuery.data,
+    furniture,
+    planQuery.data?.scale_meters_per_pixel,
+  ]);
 
   if (planQuery.isLoading) {
     return (
@@ -159,6 +200,20 @@ export function LivePositionView({ patientId }: LivePositionViewProps) {
             <ModeIndicator estimate={estimate} />
           </div>
         </div>
+        {locCtx && (
+          <div
+            className={cn(
+              'flex items-center gap-2 rounded-md px-3 py-2 text-sm',
+              locCtx.tone === 'warn'
+                ? 'bg-amber-500/10 text-amber-700 dark:text-amber-300'
+                : 'bg-muted/50 text-foreground',
+            )}
+          >
+            <MapPin className="h-4 w-4 shrink-0" />
+            <span className="font-medium">{locCtx.text}</span>
+            {locCtx.detail && <span className="text-muted-foreground">· {locCtx.detail}</span>}
+          </div>
+        )}
         <div className="aspect-[4/3] max-h-[720px] min-h-[280px] sm:min-h-[420px] w-full overflow-hidden rounded-lg border border-border bg-card">
           {/* `initialMode="calibration"` is the F6/F7 read-only mode that
               renders placed beacons as visual context but keeps everything

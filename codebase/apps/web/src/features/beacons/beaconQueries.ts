@@ -61,6 +61,30 @@ export function useUpdateBeaconPosition(patientId: string) {
   });
 }
 
+export interface RenameBeaconInput {
+  id: string;
+  label: string;
+}
+
+/** Rename a beacon (updates the `label` column shown in the diagnostics
+ *  table, the on-canvas marker initial, and the room readout). */
+export function useRenameBeacon(patientId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: RenameBeaconInput): Promise<BeaconRow> => {
+      const { data, error } = await supabase
+        .from('beacons')
+        .update({ label: input.label })
+        .eq('id', input.id)
+        .select(BEACON_COLUMNS)
+        .single();
+      if (error) throw error;
+      return data as BeaconRow;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: beaconsKey(patientId) }),
+  });
+}
+
 export interface UpdateBeaconCalibrationInput {
   id: string;
   rssi_at_1m: number;

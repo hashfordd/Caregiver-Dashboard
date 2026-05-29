@@ -2,6 +2,7 @@ import { Suspense, lazy } from 'react';
 import { DevicePairingPanel } from '@/features/devices/DevicePairingPanel';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SensorCard } from '../live/SensorCard';
+import { MovementCard } from '../live/MovementCard';
 import { usePatientStreamContext } from '../PatientStreamContext';
 
 // PatientPositionView mode-routes between F8's indoor floor-plan view
@@ -18,10 +19,11 @@ export function LiveTab() {
   return (
     <div className="space-y-4">
       <DevicePairingPanel patientId={patientId} />
-      {/* The wearable reports heart rate only — no SpO₂ or temperature
-          sensor — so the live vitals surface is HR-only. */}
-      <div className="grid gap-4 sm:max-w-xs">
+      {/* The wearable reports heart rate + a 6-axis IMU (no SpO₂/temperature),
+          so the live vitals surface is heart rate plus a derived movement card. */}
+      <div className="grid gap-4 sm:max-w-xl sm:grid-cols-2">
         <SensorCard patientId={patientId} metric="hr" />
+        <MovementCard patientId={patientId} />
       </div>
       <Suspense
         fallback={

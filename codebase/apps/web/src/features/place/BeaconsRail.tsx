@@ -1,9 +1,12 @@
-import { Bluetooth, MapPin, Ruler, Trash2 } from 'lucide-react';
+import { useState } from 'react';
+import { Bluetooth, Check, MapPin, Pencil, Ruler, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
 import { DiscoveryList } from '@/features/beacons/DiscoveryList';
 import { isPlaced, type BeaconRow } from '@/features/beacons/types';
+import { useRenameBeacon } from '@/features/beacons/beaconQueries';
 import { publishFakeSignals } from '@/lib/devSignals';
 
 const MIN_PLACED_FOR_F8 = 3;
@@ -178,14 +181,62 @@ function BeaconCard({
 }: BeaconCardProps) {
   const placed = isPlaced(beacon);
   const calibrated = beacon.rssi_at_1m != null;
+  const rename = useRenameBeacon(beacon.patient_id);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(beacon.label ?? '');
+
+  function saveRename() {
+    const v = draft.trim();
+    setEditing(false);
+    if (v && v !== beacon.label) rename.mutate({ id: beacon.id, label: v });
+  }
+
   return (
     <Card>
       <CardContent className="flex items-center justify-between gap-4 py-4">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="truncate text-sm font-medium text-foreground">
-              {beacon.label ?? <span className="italic text-muted-foreground">Unlabelled</span>}
-            </span>
+            {editing ? (
+              <span className="flex items-center gap-1">
+                <Input
+                  autoFocus
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onBlur={saveRename}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') saveRename();
+                    if (e.key === 'Escape') {
+                      setDraft(beacon.label ?? '');
+                      setEditing(false);
+                    }
+                  }}
+                  className="h-7 w-44 text-sm"
+                  placeholder="Beacon name"
+                  aria-label="Beacon name"
+                />
+                <Button size="icon-sm" variant="ghost" onClick={saveRename} aria-label="Save name">
+                  <Check className="h-3.5 w-3.5" />
+                </Button>
+              </span>
+            ) : (
+              <span className="flex items-center gap-1">
+                <span className="truncate text-sm font-medium text-foreground">
+                  {beacon.label ?? <span className="italic text-muted-foreground">Unlabelled</span>}
+                </span>
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  onClick={() => {
+                    setDraft(beacon.label ?? '');
+                    setEditing(true);
+                  }}
+                  aria-label={`Rename beacon ${beacon.label ?? beacon.mac_address}`}
+                  title="Rename beacon"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </Button>
+              </span>
+            )}
             {!placed && (
               <Badge variant="outline" className="text-[10px]">
                 Unplaced

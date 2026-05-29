@@ -358,6 +358,10 @@ function emitTotal(
     const mr = (r.fall.payload as { movement_rate?: number } | undefined)?.movement_rate;
     console.log(`→ event ${map.patient_id} FALL (movement_rate=${mr})`);
   }
+  if (r.attention) {
+    publishCanonical(buildTopic(map.patient_id, 'events'), r.attention);
+    console.log(`→ event ${map.patient_id} ATTENTION (patient requests attention)`);
+  }
   if (r.signals) {
     publishCanonical(buildTopic(map.patient_id, 'signals'), r.signals);
     console.log(

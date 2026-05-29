@@ -3,6 +3,11 @@ import { z } from 'zod';
 export const BleSample = z.object({
   mac: z.string().min(1),
   rssi: z.number().min(-127).max(20),
+  /** Beacon battery %, when the beacon advertises it (e.g. 0x0505 manufacturer
+   *  data). Optional + back-compatible: samples without it parse unchanged. */
+  battery_pct: z.number().min(0).max(100).optional(),
+  /** Beacon battery voltage (V), when advertised. */
+  voltage: z.number().min(0).max(10).optional(),
 });
 export type BleSample = z.infer<typeof BleSample>;
 

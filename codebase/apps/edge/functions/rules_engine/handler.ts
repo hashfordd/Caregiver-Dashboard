@@ -144,6 +144,13 @@ export async function handleRulesEngineRequest(
   }
   const dataPoint = buildDataPoint(table, validated.row);
 
+  // Manual SOS — a `button_press` event always raises a critical alert: the
+  // patient physically pressed the attention button, so there is no
+  // configurable rule to gate it.
+  if (table === 'events' && validated.row.type === 'button_press') {
+    return await fireAttentionAlert(supabase, patientId, validated.row);
+  }
+
   // Fetch enabled rules for the patient that match the candidate type
   // set (one round-trip per webhook).
   const rulesRes = await supabase
@@ -259,6 +266,68 @@ export async function handleRulesEngineRequest(
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────
+
+/** Manual SOS / "patient requests attention": always raise a critical alert
+ *  (rule_id null — no configurable rule), deduped against a recent unacked
+ *  attention alert so a held button or webhook retry can't spam. */
+async function fireAttentionAlert(
+  supabase: SupabaseClient,
+  patientId: string,
+  row: Record<string, unknown>,
+): Promise<Response> {
+  const occurredAt =
+    typeof row.occurred_at === 'string' ? row.occurred_at : new Date().toISOString();
+  const payload = (row.payload ?? {}) as Record<string, unknown>;
+  const message =
+    typeof payload.message === 'string' && payload.message.trim()
+      ? payload.message.trim()
+      : 'Patient pressed the attention button.';
+  const since = new Date(Date.now() - 60_000).toISOString();
+  const recent = await supabase
+    .from('alerts')
+    .select('id')
+    .eq('patient_id', patientId)
+    .is('acknowledged_at', null)
+    .gte('fired_at', since)
+    .contains('context', { kind: 'attention' })
+    .limit(1)
+    .maybeSingle();
+  if (!recent.error && recent.data) {
+    return json(
+      { ok: true, table: 'events', outcomes: [{ decision: 'cooldown_suppressed' }] },
+      200,
+    );
+  }
+  const ins = await supabase
+    .from('alerts')
+    .insert({
+      patient_id: patientId,
+      rule_id: null,
+      severity: 'critical',
+      fired_at: new Date().toISOString(),
+      context: { kind: 'attention', message, data_point_at: occurredAt },
+    })
+    .select('id')
+    .single();
+  if (ins.error || !ins.data) {
+    console.error(
+      JSON.stringify({
+        level: 'error',
+        msg: 'rules_engine: attention alert insert failed',
+        err: ins.error?.message ?? 'no row returned',
+      }),
+    );
+    return json({ ok: false, error: 'attention_insert_failed' }, 500);
+  }
+  return json(
+    {
+      ok: true,
+      table: 'events',
+      outcomes: [{ decision: 'inserted', alert_id: (ins.data as { id: string }).id }],
+    },
+    200,
+  );
+}
 
 function buildDataPoint(table: WebhookTable, record: Record<string, unknown>): DataPoint {
   switch (table) {

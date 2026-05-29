@@ -155,6 +155,10 @@ export interface BeaconSprite {
    *  the side panel only, not on the canvas. */
   x: number | null;
   y: number | null;
+  /** Live RSSI (dBm) from the discovered-beacons store, when heard. */
+  rssi?: number | null;
+  /** Beacon battery %, when advertised. */
+  battery?: number | null;
 }
 
 /** A calibration point as the canvas needs to render it. Index is

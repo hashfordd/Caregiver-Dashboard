@@ -19,10 +19,13 @@ export interface ShimState {
   hr: number | null;
   accel: Vec3 | null;
   fallActive: boolean;
+  /** Rising-edge latch for the wearable's "patient requests attention" (SOS)
+   *  button, so one press emits one event (optional for back-compat). */
+  attentionActive?: boolean;
 }
 
 export function freshState(): ShimState {
-  return { hr: null, accel: null, fallActive: false };
+  return { hr: null, accel: null, fallActive: false, attentionActive: false };
 }
 
 // Fall-detection thresholds, ported from D2-Processor.py. movement_rate is the
@@ -223,7 +226,14 @@ export function ingestLocation(
     ? (payload.ble as unknown[])
         .map((b) => {
           const s = b as Record<string, unknown>;
-          return { mac: String(s.mac ?? ''), rssi: num(s.rssi) };
+          const bp = num(s.battery_pct);
+          const v = num(s.voltage);
+          return {
+            mac: String(s.mac ?? ''),
+            rssi: num(s.rssi),
+            ...(Number.isFinite(bp) && bp >= 0 && bp <= 100 ? { battery_pct: bp } : {}),
+            ...(Number.isFinite(v) && v >= 0 && v <= 10 ? { voltage: v } : {}),
+          };
         })
         .filter((b) => b.mac.length > 0 && Number.isFinite(b.rssi))
     : [];
@@ -282,6 +292,8 @@ export interface TotalResult {
   telemetry: TelemetryMessage | null;
   fall: EventMessage | null;
   signals: SignalsMessage | null;
+  /** Manual SOS — emitted when the payload's patient_requests_attention flips true. */
+  attention: EventMessage | null;
   /** Non-fatal validation messages, one per canonical message we couldn't build. */
   errors: string[];
 }
@@ -312,6 +324,7 @@ export function ingestTotal(
 ): TotalResult {
   const errors: string[] = [];
   const next: ShimState = { ...state };
+  let attention: EventMessage | null = null;
 
   // ---- IMU (m/s² → g) ------------------------------------------------------
   const imuValid = String(payload.imu_status ?? '') === 'VALID';
@@ -376,13 +389,43 @@ export function ingestTotal(
     }
   }
 
+  // ---- Attention / SOS (rising edge on patient_requests_attention) ---------
+  const wantsAttention = payload.patient_requests_attention === true;
+  if (wantsAttention && !next.attentionActive) {
+    next.attentionActive = true;
+    const raw = payload.alert_message;
+    const message =
+      typeof raw === 'string' && raw.trim() ? raw.trim() : 'Patient requests attention';
+    const candidate = {
+      v: 1 as const,
+      patient_id: map.patient_id,
+      device_id: map.device_id,
+      occurred_at: nowIso,
+      type: 'button_press' as const,
+      payload: { reason: 'attention', message },
+    };
+    const parsed = EventMessage.safeParse(candidate);
+    if (parsed.success) attention = parsed.data;
+    else errors.push(`attention: ${parsed.error.issues[0]?.message}`);
+  } else if (!wantsAttention && next.attentionActive) {
+    next.attentionActive = false; // re-arm for the next press
+  }
+
   // ---- Signals (measured BLE + optional GPS) -------------------------------
   let signals: SignalsMessage | null = null;
   const ble = Array.isArray(payload.ble_devices)
     ? (payload.ble_devices as unknown[])
         .map((d) => {
           const s = d as Record<string, unknown>;
-          return { mac: String(s.mac_address ?? ''), rssi: num(s.rssi) };
+          const bp = num(s.battery_percent);
+          const v = num(s.voltage);
+          return {
+            mac: String(s.mac_address ?? ''),
+            rssi: num(s.rssi),
+            // Forward beacon battery telemetry when the scan provides it.
+            ...(Number.isFinite(bp) && bp >= 0 && bp <= 100 ? { battery_pct: bp } : {}),
+            ...(Number.isFinite(v) && v >= 0 && v <= 10 ? { voltage: v } : {}),
+          };
         })
         // Drop unusable samples so one bad beacon doesn't sink the whole message.
         .filter(
@@ -416,5 +459,5 @@ export function ingestTotal(
     else errors.push(`signals: ${parsed.error.issues[0]?.message}`);
   }
 
-  return { state: next, telemetry, fall, signals, errors };
+  return { state: next, telemetry, fall, signals, attention, errors };
 }

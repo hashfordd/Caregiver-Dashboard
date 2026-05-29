@@ -952,6 +952,19 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         el.dataset.beaconId = sprite.id;
         // Inline initial — first letter of the label, falls back to dot.
         el.textContent = sprite.label.trim().charAt(0).toUpperCase() || '•';
+        // Live RSSI / battery chip beneath the marker (Live view feeds these
+        // from the discovered-beacons store; placement/calibration leave them
+        // null so no chip renders).
+        const parts: string[] = [];
+        if (sprite.rssi != null) parts.push(`${sprite.rssi} dBm`);
+        if (sprite.battery != null) parts.push(`${Math.round(sprite.battery)}%`);
+        if (parts.length > 0) {
+          const info = document.createElement('div');
+          info.className =
+            'pointer-events-none absolute left-1/2 top-[calc(100%+3px)] -translate-x-1/2 whitespace-nowrap rounded bg-background/85 px-1 py-0.5 text-[8px] font-medium leading-tight text-foreground shadow-sm';
+          info.textContent = parts.join(' · ');
+          el.appendChild(info);
+        }
         if (interactive) attachBeaconDrag(el, sprite.id);
         return el;
       }

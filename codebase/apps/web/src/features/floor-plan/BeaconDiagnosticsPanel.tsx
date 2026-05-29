@@ -63,6 +63,7 @@ export function BeaconDiagnosticsPanel({ patientId }: BeaconDiagnosticsPanelProp
           label: b.label ?? b.mac_address.slice(-5),
           mac: b.mac_address,
           rssi,
+          battery: card?.lastBattery ?? null,
           distance,
           ageMs,
           usingDefault,
@@ -98,6 +99,7 @@ export function BeaconDiagnosticsPanel({ patientId }: BeaconDiagnosticsPanelProp
             <tr>
               <th className="px-2 py-1.5 font-medium">Beacon</th>
               <th className="px-2 py-1.5 font-medium">RSSI</th>
+              <th className="px-2 py-1.5 font-medium">Battery</th>
               <th className="px-2 py-1.5 font-medium">Distance</th>
               <th className="px-2 py-1.5 font-medium">Last heard</th>
             </tr>
@@ -138,6 +140,13 @@ export function BeaconDiagnosticsPanel({ patientId }: BeaconDiagnosticsPanelProp
                     )}
                   </td>
                   <td className="px-2 py-1.5 font-mono">
+                    {r.battery != null ? (
+                      <span className={batteryColor(r.battery)}>{Math.round(r.battery)}%</span>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </td>
+                  <td className="px-2 py-1.5 font-mono">
                     {r.distance != null ? (
                       `${r.distance.toFixed(2)} m`
                     ) : (
@@ -172,6 +181,12 @@ export function BeaconDiagnosticsPanel({ patientId }: BeaconDiagnosticsPanelProp
       </p>
     </div>
   );
+}
+
+function batteryColor(pct: number): string {
+  if (pct < 20) return 'text-destructive';
+  if (pct < 50) return 'text-amber-700 dark:text-amber-300';
+  return 'text-emerald-700 dark:text-emerald-300';
 }
 
 function formatAge(ms: number): string {

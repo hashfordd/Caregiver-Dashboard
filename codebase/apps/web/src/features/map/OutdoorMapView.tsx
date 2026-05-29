@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Map, { NavigationControl, type MapRef } from 'react-map-gl/mapbox';
 import 'mapbox-gl/dist/mapbox-gl.css';
@@ -73,6 +73,9 @@ function OutdoorMapViewBody({ patientId, estimate }: OutdoorMapViewProps) {
   const [draftPolygon, setDraftPolygon] = useState<GeofencePolygon | null>(null);
   const [draftDirection, setDraftDirection] = useState<GeofenceDirection>('exit');
   const [mapRef, setMapRef] = useState<MapRef | null>(null);
+  // Set when the caregiver presses "Show my location": fly to their fix once
+  // it arrives, then clear (so manual panning isn't fought afterwards).
+  const recenterOnCaregiverRef = useRef(false);
 
   // Patient row — re-uses PatientDetailPage's cache when both are mounted.
   const patientQuery = useQuery({
@@ -132,9 +135,22 @@ function OutdoorMapViewBody({ patientId, estimate }: OutdoorMapViewProps) {
 
   useEffect(() => {
     if (!mapRef) return;
+    // While the caregiver is showing their own location, don't yank the view
+    // back to the patient on each fix; resume patient-follow once they hide it.
+    if (caregiverLocation.status === 'tracking' || caregiverLocation.status === 'requesting')
+      return;
     if (estimate?.lat == null || estimate?.lng == null) return;
     mapRef.easeTo({ center: [estimate.lng, estimate.lat], duration: 600 });
-  }, [mapRef, estimate?.lat, estimate?.lng]);
+  }, [mapRef, estimate?.lat, estimate?.lng, caregiverLocation.status]);
+
+  // Fly to the caregiver's own location when they press "Show my location".
+  useEffect(() => {
+    if (!mapRef || !recenterOnCaregiverRef.current) return;
+    const pos = caregiverLocation.position;
+    if (!pos) return;
+    mapRef.easeTo({ center: [pos.lng, pos.lat], zoom: 16, duration: 700 });
+    recenterOnCaregiverRef.current = false;
+  }, [mapRef, caregiverLocation.position]);
 
   // Distance from the patient's current fix to the care setting.
   // Recomputed cheaply — Haversine is ~10 ops.
@@ -148,6 +164,7 @@ function OutdoorMapViewBody({ patientId, estimate }: OutdoorMapViewProps) {
     if (caregiverLocation.status === 'tracking' || caregiverLocation.status === 'requesting') {
       caregiverLocation.stop();
     } else {
+      recenterOnCaregiverRef.current = true; // fly to my location once the fix lands
       caregiverLocation.start();
     }
   }

@@ -17,3 +17,11 @@ Thumbs.db
 
 # Local-only Claude config — already at .claude/ (not staged).
 .claude/
+
+# Firmware site-specific credentials (use secrets.example.h as a template)
+mqtt-firmware/**/secrets.h
+# Supabase CLI local artifacts (top-level)
+/supabase/.temp/
+/supabase/snippets/
+# Firmware build archives
+mqtt-firmware/*.zip

@@ -33,7 +33,8 @@
     "seed": "npm run start --workspace @alzcare/seed",
     "seed:live": "npm run live --workspace @alzcare/seed --",
     "replay:signals": "npm run start --workspace @alzcare/replay-signals --",
-    "prepare": "cd .. && husky"
+    "prepare": "cd .. && husky",
+    "sim:beacons": "node tools/beacon-walk-sim.mjs"
   },
   "overrides": {
     "vite": "5.4.10",

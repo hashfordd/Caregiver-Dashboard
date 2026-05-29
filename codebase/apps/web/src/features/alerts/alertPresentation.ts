@@ -37,6 +37,11 @@ export function describeAlert(alert: AlertRowT): string {
       return `Patient ${ctx.direction === 'enter' ? 'entered' : 'left'} a watched zone.`;
     case 'inactivity':
       return `No movement for ${ctx.observed_inactive_seconds ?? '?'} s (threshold ${ctx.inactive_minutes ?? '?'} min).`;
+    case 'attention':
+      return (
+        (typeof ctx.message === 'string' && ctx.message.trim() ? ctx.message.trim() : null) ??
+        'Patient requested attention (SOS button).'
+      );
     default:
       return 'Alert fired.';
   }
