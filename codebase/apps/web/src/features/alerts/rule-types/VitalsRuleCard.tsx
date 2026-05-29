@@ -94,9 +94,12 @@ export function VitalsRuleCard({
           }
           className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
         >
+          {/* HR is the only metric the wearable reports. SpO₂/temp appear
+              only for legacy rules already set on those metrics, so they
+              stay editable/deletable without being offered for new rules. */}
           <option value="hr_bpm">Heart rate (bpm)</option>
-          <option value="spo2_pct">SpO₂ (%)</option>
-          <option value="temp_c">Temperature (°C)</option>
+          {params.metric === 'spo2_pct' && <option value="spo2_pct">SpO₂ (%)</option>}
+          {params.metric === 'temp_c' && <option value="temp_c">Temperature (°C)</option>}
         </select>
       </FieldLabel>
       <div className="grid gap-3 sm:grid-cols-2">

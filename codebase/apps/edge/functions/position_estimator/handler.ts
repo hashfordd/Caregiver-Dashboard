@@ -106,12 +106,15 @@ export async function handlePositionEstimateRequest(
 
   const scaleRes = await supabase
     .from('floor_plans')
-    .select('scale_meters_per_pixel')
+    .select('scale_meters_per_pixel, path_loss_exponent')
     .eq('id', floorPlanId)
     .single();
   if (scaleRes.error) return dbError('floor_plans', scaleRes.error);
-  const scaleMetersPerPixel = (scaleRes.data as { scale_meters_per_pixel: number | null })
-    .scale_meters_per_pixel;
+  const planRow = scaleRes.data as {
+    scale_meters_per_pixel: number | null;
+    path_loss_exponent: number | null;
+  };
+  const scaleMetersPerPixel = planRow.scale_meters_per_pixel;
   if (
     scaleMetersPerPixel == null ||
     !Number.isFinite(scaleMetersPerPixel) ||
@@ -119,6 +122,16 @@ export async function handlePositionEstimateRequest(
   ) {
     return json({ ok: true, skipped: true, reason: 'no_scale' }, 200);
   }
+  // Per-floor-plan path-loss exponent (20260529 migration). Null or
+  // out-of-range falls through to the pipeline's code default (2.0). The
+  // DB check constraint enforces [1.0, 6.0] on writes, so this guard
+  // catches replayed pre-migration rows + defence in depth.
+  const pathLossExponent =
+    planRow.path_loss_exponent != null &&
+    Number.isFinite(planRow.path_loss_exponent) &&
+    planRow.path_loss_exponent > 0
+      ? planRow.path_loss_exponent
+      : undefined;
 
   const calRes = await supabase
     .from('calibration_points')
@@ -142,6 +155,7 @@ export async function handlePositionEstimateRequest(
     calibrationPoints,
     recentEstimates,
     scaleMetersPerPixel,
+    pathLossExponent,
   });
 
   if (result == null) {

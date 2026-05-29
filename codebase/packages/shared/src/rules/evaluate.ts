@@ -17,11 +17,13 @@ import type {
   AlertRule,
   DataPoint,
   DeviceSilenceRule,
+  DoorProximityRule,
   EvaluatorResult,
   HistoryWindow,
   InactivityRule,
   IndoorZoneParams,
   OutdoorZoneParams,
+  RoomTransitionRule,
   VitalsRule,
   ZoneRule,
 } from './types.ts';
@@ -52,6 +54,10 @@ export function evaluateRule(
       return evaluateInactivity(rule, dataPoint, history);
     case 'device_silence':
       return evaluateDeviceSilence(rule, dataPoint, history);
+    case 'room_transition':
+      return evaluateRoomTransition(rule, dataPoint, history);
+    case 'door_proximity':
+      return evaluateDoorProximity(rule, dataPoint, history);
   }
 }
 
@@ -344,7 +350,178 @@ function parseHHMM(s: string): number | null {
   return h * 60 + min;
 }
 
+// ─── room_transition ──────────────────────────────────────────────────
+
+/** Phase C: indoor presence rule that references a `rooms.id` instead of
+ *  embedding the polygon inline. Resolves the polygon from
+ *  `history.rooms` (caller-supplied); when the room is unknown (deleted
+ *  or not loaded) the rule silently skips rather than firing, matching
+ *  the zone rule's graceful-degradation posture on missing data. */
+function evaluateRoomTransition(
+  rule: RoomTransitionRule,
+  dp: DataPoint,
+  history: HistoryWindow,
+): EvaluatorResult {
+  if (dp.kind !== 'position_estimate') return { fire: false };
+  const row = dp.row;
+  if (row.mode !== 'indoor' || row.x_canvas == null || row.y_canvas == null) return { fire: false };
+
+  const room = history.rooms?.[rule.params.room_id];
+  if (!room) return { fire: false };
+  const polygon = room.polygon_canvas;
+  if (polygon.length < 3) return { fire: false };
+
+  const point: [number, number] = [row.x_canvas, row.y_canvas];
+  const inside = pointInPolygon(point, polygon);
+  const condition = rule.params.direction === 'enter' ? inside : !inside;
+  if (!condition) return { fire: false };
+
+  // Dwell-time gate (same shape as evaluateZone). Walk history descending
+  // by recorded_at; every prior row inside the window must satisfy the
+  // same condition, and the window must extend back at least dwellMs.
+  const dwellMs = rule.params.dwell_seconds * 1000;
+  if (dwellMs > 0) {
+    const cutoffMs = Date.parse(row.recorded_at) - dwellMs;
+    for (const prior of history.positions) {
+      if (prior.id === row.id) continue;
+      const priorMs = Date.parse(prior.recorded_at);
+      if (priorMs < cutoffMs) break;
+      if (prior.mode !== 'indoor' || prior.x_canvas == null || prior.y_canvas == null)
+        return { fire: false };
+      const priorInside = pointInPolygon([prior.x_canvas, prior.y_canvas], polygon);
+      const priorCondition = rule.params.direction === 'enter' ? priorInside : !priorInside;
+      if (!priorCondition) return { fire: false };
+    }
+    const oldestInWindow = oldestInsideWindow(history.positions, row.id, cutoffMs);
+    if (oldestInWindow == null || Date.parse(oldestInWindow.recorded_at) > cutoffMs) {
+      return { fire: false };
+    }
+  }
+
+  return {
+    fire: true,
+    severity: rule.severity,
+    context: {
+      kind: 'room_transition',
+      room_id: rule.params.room_id,
+      direction: rule.params.direction,
+      dwell_seconds: rule.params.dwell_seconds,
+      position_estimate_id: row.id,
+      x_canvas: row.x_canvas,
+      y_canvas: row.y_canvas,
+      recorded_at: row.recorded_at,
+    },
+  };
+}
+
+// ─── door_proximity ───────────────────────────────────────────────────
+
+/** Phase C: fires when the patient sits within `radius_m` of a specific
+ *  connector segment for `dwell_seconds`. Captures "approaching the
+ *  door" scenarios. The radius is metres; conversion to canvas pixels
+ *  needs the floor plan scale (supplied via history.scaleMetersPerPixel)
+ *  because positions are stored in canvas pixels. */
+function evaluateDoorProximity(
+  rule: DoorProximityRule,
+  dp: DataPoint,
+  history: HistoryWindow,
+): EvaluatorResult {
+  if (dp.kind !== 'position_estimate') return { fire: false };
+  const row = dp.row;
+  if (row.mode !== 'indoor' || row.x_canvas == null || row.y_canvas == null) return { fire: false };
+
+  const connector = history.roomConnectors?.[rule.params.connector_id];
+  if (!connector) return { fire: false };
+  const scale = history.scaleMetersPerPixel;
+  if (scale == null || !Number.isFinite(scale) || scale <= 0) return { fire: false };
+
+  const radiusPx = rule.params.radius_m / scale;
+  const within = (px: number, py: number) =>
+    pointToSegmentDistance(
+      px,
+      py,
+      connector.start_x,
+      connector.start_y,
+      connector.end_x,
+      connector.end_y,
+    ) <= radiusPx;
+  if (!within(row.x_canvas, row.y_canvas)) return { fire: false };
+
+  const dwellMs = rule.params.dwell_seconds * 1000;
+  if (dwellMs > 0) {
+    const cutoffMs = Date.parse(row.recorded_at) - dwellMs;
+    for (const prior of history.positions) {
+      if (prior.id === row.id) continue;
+      const priorMs = Date.parse(prior.recorded_at);
+      if (priorMs < cutoffMs) break;
+      if (prior.mode !== 'indoor' || prior.x_canvas == null || prior.y_canvas == null)
+        return { fire: false };
+      if (!within(prior.x_canvas, prior.y_canvas)) return { fire: false };
+    }
+    const oldestInWindow = oldestInsideWindow(history.positions, row.id, cutoffMs);
+    if (oldestInWindow == null || Date.parse(oldestInWindow.recorded_at) > cutoffMs) {
+      return { fire: false };
+    }
+  }
+
+  // Compute the distance at the trigger row so the alert context tells
+  // caregivers how close the patient actually got — useful for tuning
+  // radius_m later.
+  const distancePx = pointToSegmentDistance(
+    row.x_canvas,
+    row.y_canvas,
+    connector.start_x,
+    connector.start_y,
+    connector.end_x,
+    connector.end_y,
+  );
+
+  return {
+    fire: true,
+    severity: rule.severity,
+    context: {
+      kind: 'door_proximity',
+      connector_id: rule.params.connector_id,
+      radius_m: rule.params.radius_m,
+      distance_m: distancePx * scale,
+      dwell_seconds: rule.params.dwell_seconds,
+      position_estimate_id: row.id,
+      x_canvas: row.x_canvas,
+      y_canvas: row.y_canvas,
+      recorded_at: row.recorded_at,
+    },
+  };
+}
+
 // ─── geometry ─────────────────────────────────────────────────────────
+
+/** Shortest distance from a point to a line segment. Closed-form via
+ *  parameterised projection clamped to [0, 1]. Pure scalar math —
+ *  reusable for any pixel- or metre-space segment. */
+export function pointToSegmentDistance(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) {
+    // Degenerate segment: distance is to the single point.
+    return Math.hypot(px - ax, py - ay);
+  }
+  // Projection parameter along AB, clamped so the closest point stays
+  // on the segment (not the infinite line).
+  let t = ((px - ax) * dx + (py - ay) * dy) / lenSq;
+  if (t < 0) t = 0;
+  else if (t > 1) t = 1;
+  const cx = ax + t * dx;
+  const cy = ay + t * dy;
+  return Math.hypot(px - cx, py - cy);
+}
 
 /** Standard ray-casting point-in-polygon. The polygon is defined by an
  *  ordered list of [x, y] vertices and is treated as implicitly closed

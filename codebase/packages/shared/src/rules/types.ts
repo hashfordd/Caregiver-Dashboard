@@ -88,6 +88,36 @@ const DeviceSilenceParams = z.object({
 });
 export type DeviceSilenceParams = z.infer<typeof DeviceSilenceParams>;
 
+// Phase C: room_transition — fires when a position estimate enters or
+// leaves a specific `rooms.id` polygon. Distinct from the inline-polygon
+// `zone` rule because editing the room's shape doesn't require
+// re-saving the rule. The room is resolved by the rules engine at
+// evaluate time from the rooms table.
+export const RoomTransitionParams = z.object({
+  room_id: z.string().uuid(),
+  direction: z.enum(['enter', 'exit']),
+  /** Seconds the condition must hold continuously before firing. */
+  dwell_seconds: z.number().int().nonnegative(),
+  cooldown_seconds: z.number().int().positive().optional(),
+});
+export type RoomTransitionParams = z.infer<typeof RoomTransitionParams>;
+
+// Phase C: door_proximity — fires when a position estimate sits within
+// `radius_m` of a specific `room_connectors.id` segment for
+// `dwell_seconds`. Captures "approaching the door" semantics. The
+// evaluator converts radius to canvas pixels using the floor plan's
+// scale_meters_per_pixel passed in via HistoryWindow.
+export const DoorProximityParams = z.object({
+  connector_id: z.string().uuid(),
+  /** Real-world threshold in metres. The evaluator converts to canvas
+   *  pixels using the floor plan's scale. */
+  radius_m: z.number().positive(),
+  /** Seconds the condition must hold continuously before firing. */
+  dwell_seconds: z.number().int().nonnegative(),
+  cooldown_seconds: z.number().int().positive().optional(),
+});
+export type DoorProximityParams = z.infer<typeof DoorProximityParams>;
+
 // ─── union ────────────────────────────────────────────────────────────
 
 interface AlertRuleBase {
@@ -119,8 +149,23 @@ export interface DeviceSilenceRule extends AlertRuleBase {
   type: 'device_silence';
   params: DeviceSilenceParams;
 }
+export interface RoomTransitionRule extends AlertRuleBase {
+  type: 'room_transition';
+  params: RoomTransitionParams;
+}
+export interface DoorProximityRule extends AlertRuleBase {
+  type: 'door_proximity';
+  params: DoorProximityParams;
+}
 
-export type AlertRule = ZoneRule | VitalsRule | FallRule | InactivityRule | DeviceSilenceRule;
+export type AlertRule =
+  | ZoneRule
+  | VitalsRule
+  | FallRule
+  | InactivityRule
+  | DeviceSilenceRule
+  | RoomTransitionRule
+  | DoorProximityRule;
 export type AlertRuleType = AlertRule['type'];
 
 /** Zod parser keyed off the rule's `type` field. Used by the UI on save
@@ -132,6 +177,8 @@ export const AlertRuleParams = z.discriminatedUnion('type', [
   z.object({ type: z.literal('fall'), params: FallParams }),
   z.object({ type: z.literal('inactivity'), params: InactivityParams }),
   z.object({ type: z.literal('device_silence'), params: DeviceSilenceParams }),
+  z.object({ type: z.literal('room_transition'), params: RoomTransitionParams }),
+  z.object({ type: z.literal('door_proximity'), params: DoorProximityParams }),
 ]);
 
 // AlertSeverity is re-exported from db/alerts via the package barrel.
@@ -149,11 +196,26 @@ export type DataPoint =
 /** Caller-loaded history. Each rule type uses what it needs:
  *  - zone: `positions` for dwell-time confirmation.
  *  - inactivity: `positions` to find the last motion.
- *  - vitals/fall: history is unused — they're per-row stateless. */
+ *  - vitals/fall: history is unused — they're per-row stateless.
+ *  - room_transition: `positions` for dwell + `rooms` for the polygon.
+ *  - door_proximity: `positions` for dwell + `roomConnectors` for the
+ *    segment + `scaleMetersPerPixel` to convert the radius. */
 export interface HistoryWindow {
   positions: PositionEstimateRow[];
   sensors: SensorReadingRow[];
   events: EventRow[];
+  /** Phase C: keyed by rooms.id. The rules engine pre-fetches the
+   *  patient's active floor plan's rooms so the evaluator can resolve
+   *  `room_transition` rules without a DB call per evaluation. */
+  rooms?: Record<string, { polygon_canvas: [number, number][] }>;
+  /** Phase C: keyed by room_connectors.id. */
+  roomConnectors?: Record<
+    string,
+    { start_x: number; start_y: number; end_x: number; end_y: number }
+  >;
+  /** Phase C: floor plan scale, used to convert `door_proximity.radius_m`
+   *  into canvas pixels for the distance check. */
+  scaleMetersPerPixel?: number;
 }
 
 export type EvaluatorResult =

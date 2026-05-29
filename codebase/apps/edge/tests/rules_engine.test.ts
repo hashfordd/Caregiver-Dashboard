@@ -49,6 +49,11 @@ interface Programming {
   lastFiredByRule?: Record<string, string | null>;
   /** When set, alerts.insert returns this error instead of success. */
   insertError?: { message: string };
+  // Phase C: rooms + connectors + active floor plan for the
+  // room_transition / door_proximity dispatch path.
+  activeFloorPlan?: { data?: unknown; error?: { message: string } };
+  rooms?: { data?: unknown; error?: { message: string } };
+  connectors?: { data?: unknown; error?: { message: string } };
 }
 
 function buildSupabase(p: Programming): {
@@ -65,6 +70,15 @@ function buildSupabase(p: Programming): {
     }
     if (table === 'position_estimates') {
       return makeChain(calls, table, async () => p.positions ?? { data: [], error: null });
+    }
+    if (table === 'floor_plans') {
+      return makeChain(calls, table, async () => p.activeFloorPlan ?? { data: null, error: null });
+    }
+    if (table === 'rooms') {
+      return makeChain(calls, table, async () => p.rooms ?? { data: [], error: null });
+    }
+    if (table === 'room_connectors') {
+      return makeChain(calls, table, async () => p.connectors ?? { data: [], error: null });
     }
     if (table === 'alerts') {
       // Two flavours of chain: select+eq+...+maybeSingle → cooldown
@@ -306,6 +320,200 @@ describe('rules_engine handler — fall dispatch', () => {
     });
     await handleRulesEngineRequest(
       authed({ type: 'INSERT', table: 'events', record: eventRow }),
+      client,
+      { serviceRoleKey: SERVICE_ROLE_KEY },
+    );
+    expect(insertPayloads).toHaveLength(0);
+  });
+});
+
+// ─── Phase C: room_transition + door_proximity end-to-end ────────────
+
+const FLOOR_PLAN_ID = '55555555-5555-5555-5555-555555555555';
+const ROOM_ID = '66666666-6666-6666-6666-666666666666';
+const DOOR_ID = '77777777-7777-7777-7777-777777777777';
+
+const ROOM_TRANSITION_RULE = {
+  id: 'rule-rt',
+  patient_id: PATIENT_ID,
+  type: 'room_transition',
+  params: { room_id: ROOM_ID, direction: 'enter', dwell_seconds: 0 },
+  severity: 'warn',
+  enabled: true,
+  created_at: '2026-05-29T00:00:00Z',
+  updated_at: '2026-05-29T00:00:00Z',
+};
+
+const DOOR_PROXIMITY_RULE = {
+  id: 'rule-dp',
+  patient_id: PATIENT_ID,
+  type: 'door_proximity',
+  params: { connector_id: DOOR_ID, radius_m: 1.0, dwell_seconds: 0 },
+  severity: 'warn',
+  enabled: true,
+  created_at: '2026-05-29T00:00:00Z',
+  updated_at: '2026-05-29T00:00:00Z',
+};
+
+function positionRecord(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: '88888888-aaaa-bbbb-cccc-888888888888',
+    patient_id: PATIENT_ID,
+    recorded_at: '2026-05-29T10:00:00Z',
+    mode: 'indoor',
+    x_canvas: 50,
+    y_canvas: 50,
+    lat: null,
+    lng: null,
+    confidence: 0.8,
+    indoor_confidence: 0.8,
+    gps_strong: false,
+    created_at: '2026-05-29T10:00:00Z',
+    ...overrides,
+  };
+}
+
+describe('rules_engine handler — room_transition dispatch', () => {
+  it('fires when a position estimate lands inside the referenced room polygon', async () => {
+    const { client, insertPayloads } = buildSupabase({
+      rules: { data: [ROOM_TRANSITION_RULE], error: null },
+      activeFloorPlan: {
+        data: { id: FLOOR_PLAN_ID, scale_meters_per_pixel: 0.02 },
+        error: null,
+      },
+      rooms: {
+        data: [
+          {
+            id: ROOM_ID,
+            polygon_canvas: [
+              [0, 0],
+              [200, 0],
+              [200, 200],
+              [0, 200],
+            ],
+          },
+        ],
+        error: null,
+      },
+    });
+    const res = await handleRulesEngineRequest(
+      authed({ type: 'INSERT', table: 'position_estimates', record: positionRecord() }),
+      client,
+      { serviceRoleKey: SERVICE_ROLE_KEY },
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { outcomes: { decision: string }[] };
+    expect(json.outcomes[0]?.decision).toBe('inserted');
+    expect(insertPayloads).toHaveLength(1);
+    expect(insertPayloads[0]).toMatchObject({
+      patient_id: PATIENT_ID,
+      rule_id: ROOM_TRANSITION_RULE.id,
+      severity: 'warn',
+    });
+  });
+
+  it('does not fire when the position is outside the polygon', async () => {
+    const { client, insertPayloads } = buildSupabase({
+      rules: { data: [ROOM_TRANSITION_RULE], error: null },
+      activeFloorPlan: {
+        data: { id: FLOOR_PLAN_ID, scale_meters_per_pixel: 0.02 },
+        error: null,
+      },
+      rooms: {
+        data: [
+          {
+            id: ROOM_ID,
+            polygon_canvas: [
+              [0, 0],
+              [200, 0],
+              [200, 200],
+              [0, 200],
+            ],
+          },
+        ],
+        error: null,
+      },
+    });
+    await handleRulesEngineRequest(
+      authed({
+        type: 'INSERT',
+        table: 'position_estimates',
+        record: positionRecord({ x_canvas: 500, y_canvas: 500 }),
+      }),
+      client,
+      { serviceRoleKey: SERVICE_ROLE_KEY },
+    );
+    expect(insertPayloads).toHaveLength(0);
+  });
+
+  it('skips gracefully when the patient has no active floor plan', async () => {
+    const { client, insertPayloads } = buildSupabase({
+      rules: { data: [ROOM_TRANSITION_RULE], error: null },
+      activeFloorPlan: { data: null, error: null },
+    });
+    await handleRulesEngineRequest(
+      authed({ type: 'INSERT', table: 'position_estimates', record: positionRecord() }),
+      client,
+      { serviceRoleKey: SERVICE_ROLE_KEY },
+    );
+    // No insert — the evaluator returned fire:false because rooms map empty.
+    expect(insertPayloads).toHaveLength(0);
+  });
+});
+
+describe('rules_engine handler — door_proximity dispatch', () => {
+  it('fires when the position sits within radius_m of the referenced connector', async () => {
+    const { client, insertPayloads } = buildSupabase({
+      rules: { data: [DOOR_PROXIMITY_RULE], error: null },
+      activeFloorPlan: {
+        data: { id: FLOOR_PLAN_ID, scale_meters_per_pixel: 0.02 },
+        error: null,
+      },
+      connectors: {
+        data: [{ id: DOOR_ID, start_x: 200, start_y: 100, end_x: 220, end_y: 100 }],
+        error: null,
+      },
+    });
+    // Position sits 0 m from the door segment (on the line) → well
+    // within radius_m=1.
+    const res = await handleRulesEngineRequest(
+      authed({
+        type: 'INSERT',
+        table: 'position_estimates',
+        record: positionRecord({ x_canvas: 210, y_canvas: 100 }),
+      }),
+      client,
+      { serviceRoleKey: SERVICE_ROLE_KEY },
+    );
+    expect(res.status).toBe(200);
+    expect(insertPayloads).toHaveLength(1);
+    const payload = insertPayloads[0] as {
+      context: { kind: string; connector_id: string; distance_m: number };
+    };
+    expect(payload.context.kind).toBe('door_proximity');
+    expect(payload.context.connector_id).toBe(DOOR_ID);
+    expect(payload.context.distance_m).toBeCloseTo(0, 6);
+  });
+
+  it('does not fire when the position is outside radius_m', async () => {
+    const { client, insertPayloads } = buildSupabase({
+      rules: { data: [DOOR_PROXIMITY_RULE], error: null },
+      activeFloorPlan: {
+        data: { id: FLOOR_PLAN_ID, scale_meters_per_pixel: 0.02 },
+        error: null,
+      },
+      connectors: {
+        data: [{ id: DOOR_ID, start_x: 200, start_y: 100, end_x: 220, end_y: 100 }],
+        error: null,
+      },
+    });
+    // 100 px below the door × 0.02 m/px = 2 m → outside radius_m=1.
+    await handleRulesEngineRequest(
+      authed({
+        type: 'INSERT',
+        table: 'position_estimates',
+        record: positionRecord({ x_canvas: 210, y_canvas: 200 }),
+      }),
       client,
       { serviceRoleKey: SERVICE_ROLE_KEY },
     );

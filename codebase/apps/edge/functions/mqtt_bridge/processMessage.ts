@@ -17,7 +17,16 @@ export type ProcessOutcome =
       reason: 'broadcast-failed' | 'validation';
       details?: string;
     }
-  | { kind: 'events'; persisted: true; rowId: string }
+  | {
+      kind: 'events';
+      persisted: true;
+      rowId: string;
+      /** True when this delivery hit the idempotency index (the row already
+       *  existed). The original INSERT already fired rules; callers that
+       *  dispatch rules in-process (longRunning local-compute) MUST NOT
+       *  re-dispatch on a deduped hit or one event yields duplicate alerts. */
+      deduped?: boolean;
+    }
   | {
       kind: 'events';
       persisted: false;
@@ -262,7 +271,12 @@ export async function processMessage(
             : dedupQuery.eq('device_id', m.device_id);
         const existing = await dedupQuery.limit(1).maybeSingle();
         if (existing.data) {
-          return { kind: 'events', persisted: true, rowId: (existing.data as { id: string }).id };
+          return {
+            kind: 'events',
+            persisted: true,
+            rowId: (existing.data as { id: string }).id,
+            deduped: true,
+          };
         }
       }
       return {

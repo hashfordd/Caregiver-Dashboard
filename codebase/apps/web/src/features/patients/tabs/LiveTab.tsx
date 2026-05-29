@@ -18,10 +18,10 @@ export function LiveTab() {
   return (
     <div className="space-y-4">
       <DevicePairingPanel patientId={patientId} />
-      <div className="grid gap-4 md:grid-cols-3">
+      {/* The wearable reports heart rate only — no SpO₂ or temperature
+          sensor — so the live vitals surface is HR-only. */}
+      <div className="grid gap-4 sm:max-w-xs">
         <SensorCard patientId={patientId} metric="hr" />
-        <SensorCard patientId={patientId} metric="spo2" />
-        <SensorCard patientId={patientId} metric="temp" />
       </div>
       <Suspense
         fallback={

@@ -22,7 +22,9 @@ V1 prototype scope per the build spec. V2 items (ML-driven thresholds, SLAM mapp
 - **Phase 2 — Place**: ✅ Complete (F5, F6, F7).
 - **Phase 3 — Locate**: ✅ Complete (F8, F9, POS-08 hysteresis, in-app beacon calibration).
 - **Phase 4 — Alert**: ✅ Complete (F11, F12 — shared evaluator + parity canary, rules_engine + inactivity_scan + cron, settings UI with 4 rule cards + 24 h preview, global bell + per-patient feed + ack RPC + critical cues).
-- **Phase 5 — Polish**: not started.
+- **Phase 5 — Polish**: in progress. F13 (history tab: vitals charts, position replay scrubber, CSV export, date-range + alert filters) ✅ built, wired, tested. Accessibility: Place workspace on full WAI-ARIA tabs (keyboard nav) ✅. Demo script refreshed to the current build (2 Place bundles, HR-only vitals, click-to-place doors/windows) ✅. Real-hardware acceptance: turnkey runbook at `docs/test-plans/HW-01-hardware-acceptance.md` ✅ — the run itself needs physical ESP32 + beacons (manual). Remaining (require people/hardware, not code): execute HW-01 on real devices + the two demo dry-run sign-offs.
+- **Place tab** (post-Phase-3 UX): consolidated into one `features/place/PlaceWorkspace` — a single persistent canvas with two bundles (Floor plan & rooms / Beacons & calibration); doors/windows are placed by clicking on the canvas (Door/Window tools). Vitals degraded to HR-only (firmware emits no SpO₂/temp).
+- **Live integration verified** (2026-05-29, sim → HiveMQ → shim → bridge → DB): HR→vitals alert and fall→critical alert proven end-to-end against hosted Supabase; one fall event ⇒ exactly one critical alert after the bridge dedup fix. Indoor positioning pipeline produces estimates on varied RSSI (3,675 historical rows); real-hardware acceptance is the remaining manual step.
 
 ## Conventions
 

@@ -349,6 +349,55 @@ describe('position_estimator handler', () => {
     expect(args.p_confidence).toEqual(expect.any(Number));
   });
 
+  it('honours the floor_plan path_loss_exponent override (changes the recovered position)', async () => {
+    // Same beacons + same observed RSSI; different `n` → different
+    // implied distances → different trilaterated position. Run once
+    // with the default (path_loss_exponent: null → 2.0) and once with
+    // n=4.0 (concrete-walls regime) and assert the canvas coords
+    // diverge. This pins the new floor_plans column to an observable
+    // effect on the pipeline output.
+    const beaconData = [
+      placedBeacon('b-1', 'AA:01', 0, 0),
+      placedBeacon('b-2', 'AA:02', 250, 0),
+      placedBeacon('b-3', 'AA:03', 125, 220),
+    ];
+    const baseline = buildSupabase({
+      beacons: { data: beaconData, error: null },
+      scale: { data: { scale_meters_per_pixel: 0.02, path_loss_exponent: null }, error: null },
+      calibrations: { data: [], error: null },
+      recentEstimates: { data: [], error: null },
+    });
+    const baselineRes = await handlePositionEstimateRequest(
+      authedRequest(VALID_SIGNALS),
+      baseline.client,
+      { serviceRoleKey: SERVICE_ROLE_KEY },
+    );
+    expect(baselineRes.status).toBe(200);
+    const baselineArgs = baseline.rpcCalls[0]!.args as Record<string, number>;
+
+    const overridden = buildSupabase({
+      beacons: { data: beaconData, error: null },
+      scale: { data: { scale_meters_per_pixel: 0.02, path_loss_exponent: 4.0 }, error: null },
+      calibrations: { data: [], error: null },
+      recentEstimates: { data: [], error: null },
+    });
+    const overriddenRes = await handlePositionEstimateRequest(
+      authedRequest(VALID_SIGNALS),
+      overridden.client,
+      { serviceRoleKey: SERVICE_ROLE_KEY },
+    );
+    expect(overriddenRes.status).toBe(200);
+    const overriddenArgs = overridden.rpcCalls[0]!.args as Record<string, number>;
+
+    // The recovered position must differ in at least one axis — a higher
+    // exponent shrinks every implied distance by the same proportion in
+    // dB-space, but trilateration over three differently-placed beacons
+    // does not preserve the centroid.
+    const dx = Math.abs(baselineArgs.p_x_canvas - overriddenArgs.p_x_canvas);
+    const dy = Math.abs(baselineArgs.p_y_canvas - overriddenArgs.p_y_canvas);
+    expect(dx + dy).toBeGreaterThan(0);
+  });
+
   it('returns 500 db_error (sanitised — no details on the wire) when the locked insert fails', async () => {
     const { client } = buildSupabase({
       beacons: {

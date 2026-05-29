@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, act } from '@testing-library/react';
+import { render, screen, act, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { forwardRef, useImperativeHandle } from 'react';
 import type { ReactNode } from 'react';
@@ -48,6 +48,15 @@ vi.mock('@/features/beacons/beaconQueries', () => ({
   useDeleteBeacon: vi.fn(),
 }));
 
+vi.mock('@/features/floor-plan/roomQueries', () => ({
+  useRooms: () => ({ data: [], isLoading: false, isError: false }),
+  useRoomConnectors: () => ({ data: [], isLoading: false, isError: false }),
+  useUpsertRoom: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useDeleteRoom: () => ({ mutate: vi.fn(), isPending: false }),
+  useUpsertRoomConnector: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useDeleteRoomConnector: () => ({ mutate: vi.fn(), isPending: false }),
+}));
+
 vi.mock('@/features/patients/PatientStreamContext', () => ({
   usePatientStreamContext: () => patientStreamContext.current,
   PatientStreamProvider: ({ children }: { children: ReactNode }) => children,
@@ -78,6 +87,9 @@ vi.mock('@/features/floor-plan/FloorPlanCanvas', async () => {
         setPatientMarker: (sprite: PatientMarkerSprite | null) =>
           capturedHandle.setPatientMarker(sprite),
         setReplayDots: () => {},
+        setRooms: () => {},
+        setRoomConnectors: () => {},
+        getSelectedPolygonVertices: () => null,
       }));
       return <div data-testid="floor-plan-canvas-stub" />;
     },
@@ -87,6 +99,7 @@ vi.mock('@/features/floor-plan/FloorPlanCanvas', async () => {
 
 import { LivePositionView } from '@/features/floor-plan/LivePositionView';
 import { usePositionMarkerStore } from '@/lib/stores/positionMarkerStore';
+import { useDiscoveredBeaconsStore } from '@/lib/stores/discoveredBeaconsStore';
 
 const PLAN: FloorPlanRow = {
   id: '22222222-2222-2222-2222-222222222222',
@@ -94,6 +107,7 @@ const PLAN: FloorPlanRow = {
   name: 'Floor plan',
   canvas_json: { objects: [] },
   scale_meters_per_pixel: 0.014,
+  path_loss_exponent: null,
   created_at: '2026-05-05T00:00:00Z',
   updated_at: '2026-05-05T00:00:00Z',
   is_active: true,
@@ -147,6 +161,9 @@ beforeEach(() => {
   while ((usePositionMarkerStore.getState().refcountByPatient[PATIENT_ID] ?? 0) > 0) {
     usePositionMarkerStore.getState().release(PATIENT_ID);
   }
+  // Reset the discovered-beacons store — diagnostics tests seed it and
+  // would otherwise bleed RSSI samples into unrelated tests.
+  useDiscoveredBeaconsStore.getState().reset(PATIENT_ID);
 
   patientStreamContext.current = {
     patientId: PATIENT_ID,
@@ -207,6 +224,44 @@ describe('LivePositionView', () => {
     expect(lastCall).toMatchObject({ x: 250, y: 300, confidence: 0.72 });
     expect(lastCall.recorded_at).toBe(indoor.recorded_at);
     expect(screen.getByText(/indoor/i)).toBeTruthy();
+  });
+
+  it('hides the diagnostics panel by default and reveals it on toggle, with the live RSSI + derived distance', () => {
+    useBeaconsMock.mockReturnValue({
+      data: [
+        beacon({
+          id: 'b-1',
+          mac_address: 'AA:01',
+          x_canvas: 100,
+          y_canvas: 200,
+          label: 'Hallway',
+          rssi_at_1m: -59,
+        }),
+      ],
+      isLoading: false,
+      isError: false,
+    });
+    // Seed the discovery store as if a signals broadcast arrived with
+    // an RSSI of -65 dBm for the placed beacon.
+    act(() => {
+      useDiscoveredBeaconsStore.getState().pushSample(PATIENT_ID, 'AA:01', -65);
+    });
+    renderView();
+
+    // Hidden until toggled.
+    expect(screen.queryByText(/beacon diagnostics/i)).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /^diagnostics$/i }));
+
+    // Panel is now visible with the seeded RSSI rendered verbatim.
+    expect(screen.getByText(/beacon diagnostics/i)).toBeTruthy();
+    expect(screen.getByText(/-65 dBm/)).toBeTruthy();
+    // path-loss with n=2 (PLAN.path_loss_exponent is null → default),
+    // rssi_at_1m=-59, rssi=-65: distance = 10^((-59-(-65))/(20)) = 10^0.3 ≈ 1.995 m
+    expect(screen.getByText(/2\.00 m|1\.99 m/)).toBeTruthy();
+    // The header shows the effective exponent — verifies the path-loss
+    // override is plumbed end-to-end into the diagnostics readout.
+    expect(screen.getByText(/n = 2\.0/)).toBeTruthy();
   });
 
   it('on an outdoor estimate: clears the marker and surfaces the outdoor banner', () => {

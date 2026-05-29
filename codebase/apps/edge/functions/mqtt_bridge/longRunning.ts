@@ -161,7 +161,10 @@ client.on('message', async (topic, payload) => {
   try {
     if (outcome.kind === 'telemetry' && outcome.persisted) {
       await dispatchRules('sensor_readings', outcome.rowId);
-    } else if (outcome.kind === 'events' && outcome.persisted) {
+    } else if (outcome.kind === 'events' && outcome.persisted && !outcome.deduped) {
+      // Skip a deduped idempotency hit — the original INSERT already
+      // dispatched the fall rule; re-dispatching here is what produced
+      // duplicate critical alerts for one event.
       await dispatchRules('events', outcome.rowId);
     } else if (outcome.kind === 'signals' && outcome.reason === 'broadcast') {
       await computePosition(outcome.signals);

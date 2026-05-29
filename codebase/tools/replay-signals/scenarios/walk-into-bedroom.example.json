@@ -1,0 +1,20 @@
+{
+  "$comment": "Phase D: example scenario. Replace ruleIds with real ones (from the Alerts → Settings panel) before running. The fixture path is resolved relative to this JSON file.",
+  "fixture": "../fixtures/walk-1.jsonl",
+  "patientId": "11110000-1111-4111-8111-000000000001",
+  "drainMs": 3000,
+  "expectations": [
+    {
+      "name": "Entered bedroom fires",
+      "rule_id": "REPLACE_WITH_ROOM_TRANSITION_RULE_ID",
+      "must_fire": true,
+      "min_count": 1,
+      "severity": "warn"
+    },
+    {
+      "name": "Door proximity does NOT fire (patient stays in the room)",
+      "rule_id": "REPLACE_WITH_DOOR_PROXIMITY_RULE_ID",
+      "must_fire": false
+    }
+  ]
+}

@@ -3,7 +3,7 @@ import { supabase } from '@/lib/supabase';
 import type { FloorPlanRow, UpsertFloorPlanInput } from './types';
 
 const FLOOR_PLAN_COLUMNS =
-  'id, patient_id, name, canvas_json, scale_meters_per_pixel, created_at, updated_at, is_active';
+  'id, patient_id, name, canvas_json, scale_meters_per_pixel, path_loss_exponent, created_at, updated_at, is_active';
 
 /** Phase F item 49: scope reads to the active row.
  *
@@ -40,6 +40,7 @@ export function useUpsertFloorPlan(patientId: string) {
       const payload = {
         canvas_json: input.canvas_json,
         scale_meters_per_pixel: input.scale_meters_per_pixel,
+        path_loss_exponent: input.path_loss_exponent,
         name: input.name ?? 'Floor plan',
       };
 

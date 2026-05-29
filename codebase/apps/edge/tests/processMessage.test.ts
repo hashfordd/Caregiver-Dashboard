@@ -372,7 +372,7 @@ describe('processMessage', () => {
     expect(supabase.__sensorInsertMock).not.toHaveBeenCalled();
   });
 
-  it('treats a 23505 unique-violation as an idempotent hit and returns the existing rowId', async () => {
+  it('treats a 23505 unique-violation as an idempotent hit, flagging it deduped so callers do not re-fire rules', async () => {
     supabase.__eventsSingleMock.mockResolvedValue({
       data: null,
       error: { code: '23505', message: 'duplicate key value violates unique constraint' },
@@ -388,7 +388,14 @@ describe('processMessage', () => {
       },
       supabase,
     );
-    expect(outcome).toEqual({ kind: 'events', persisted: true, rowId: 'ev-existing' });
+    // deduped:true is what stops the local-compute bridge from re-dispatching
+    // rules_engine for an already-persisted event (the duplicate-alert fix).
+    expect(outcome).toEqual({
+      kind: 'events',
+      persisted: true,
+      rowId: 'ev-existing',
+      deduped: true,
+    });
     expect(supabase.__eventsMaybeSingleMock).toHaveBeenCalledTimes(1);
   });
 

@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { computeScale, formatScale, isCanvasJson } from '@/features/floor-plan/canvasState';
+import {
+  computeScale,
+  computeScaleFromBeacons,
+  formatScale,
+  isCanvasJson,
+} from '@/features/floor-plan/canvasState';
 
 describe('computeScale', () => {
   it('divides metres by pixel length', () => {
@@ -21,6 +26,27 @@ describe('computeScale', () => {
     expect(() => computeScale(Number.NaN, 5)).toThrow();
     expect(() => computeScale(Number.POSITIVE_INFINITY, 5)).toThrow();
     expect(() => computeScale(100, Number.NaN)).toThrow();
+  });
+});
+
+describe('computeScaleFromBeacons', () => {
+  it('back-solves scale from the measured distance between two placed beacons', () => {
+    // 100 px apart on the x-axis, 5 m measured → 0.05 m/px
+    expect(computeScaleFromBeacons({ x: 0, y: 0 }, { x: 100, y: 0 }, 5)).toBeCloseTo(0.05, 6);
+    // Pythagorean: 3-4-5 triangle → 5 px / 1 m = 0.2 m/px
+    expect(computeScaleFromBeacons({ x: 0, y: 0 }, { x: 3, y: 4 }, 1)).toBeCloseTo(0.2, 6);
+  });
+
+  it('rejects coincident beacons — degenerate input would zero-divide', () => {
+    expect(() => computeScaleFromBeacons({ x: 1, y: 2 }, { x: 1, y: 2 }, 5)).toThrow();
+  });
+
+  it('rejects non-finite coordinates', () => {
+    expect(() => computeScaleFromBeacons({ x: Number.NaN, y: 0 }, { x: 10, y: 0 }, 5)).toThrow();
+  });
+
+  it('propagates the metres-validation error from computeScale', () => {
+    expect(() => computeScaleFromBeacons({ x: 0, y: 0 }, { x: 10, y: 0 }, 0)).toThrow();
   });
 });
 

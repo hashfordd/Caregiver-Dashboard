@@ -1,97 +1,30 @@
 import { Suspense, lazy } from 'react';
-import { useSearchParams } from 'react-router-dom';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { usePatientStreamContext } from '../PatientStreamContext';
 
-// Lazy-load each sub-tab so Fabric.js doesn't ship until the caregiver
-// opens Floor plan, and the (eventual) BLE realtime wiring doesn't ship
-// until they open Beacons. CROSS_CUTTING §16.
-const FloorPlanEditor = lazy(() =>
-  import('@/features/floor-plan/FloorPlanEditor').then((m) => ({
-    default: m.FloorPlanEditor,
+// Lazy-load the workspace so Fabric.js (and the BLE realtime wiring) only
+// ship once the caregiver opens the Place tab. CROSS_CUTTING §16.
+const PlaceWorkspace = lazy(() =>
+  import('@/features/place/PlaceWorkspace').then((m) => ({
+    default: m.PlaceWorkspace,
   })),
 );
 
-const BeaconsPanel = lazy(() =>
-  import('@/features/beacons/BeaconsPanel').then((m) => ({
-    default: m.BeaconsPanel,
-  })),
-);
-
-const CalibrationPanel = lazy(() =>
-  import('@/features/calibration/CalibrationPanel').then((m) => ({
-    default: m.CalibrationPanel,
-  })),
-);
-
-const PLACE_SUB_TABS = ['floor-plan', 'beacons', 'calibration'] as const;
-type PlaceSubTab = (typeof PLACE_SUB_TABS)[number];
-
-function isPlaceSubTab(value: string): value is PlaceSubTab {
-  return (PLACE_SUB_TABS as readonly string[]).includes(value);
-}
-
+/** Place tab: a single workspace that unifies floor-plan drawing, beacon
+ *  placement, room/door definition, and calibration capture over one
+ *  persistent canvas — no sub-tab switching, no canvas remounts. */
 export function PlaceTab() {
   const { patientId } = usePatientStreamContext();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const subTabParam = searchParams.get('placeTab') ?? 'floor-plan';
-  const value: PlaceSubTab = isPlaceSubTab(subTabParam) ? subTabParam : 'floor-plan';
-
-  function setValue(next: string) {
-    setSearchParams(
-      (prev) => {
-        const updated = new URLSearchParams(prev);
-        updated.set('placeTab', next);
-        return updated;
-      },
-      { replace: true },
-    );
-  }
-
   return (
-    <Tabs value={value} onValueChange={setValue} className="space-y-3">
-      <TabsList>
-        <TabsTrigger value="floor-plan">Floor plan</TabsTrigger>
-        <TabsTrigger value="beacons">Beacons</TabsTrigger>
-        <TabsTrigger value="calibration">Calibration</TabsTrigger>
-      </TabsList>
-      <TabsContent value="floor-plan">
-        <Suspense
-          fallback={
-            <div className="space-y-3">
-              <Skeleton className="h-12 w-full" />
-              <Skeleton className="h-[min(82vh,960px)] min-h-[640px] w-full" />
-            </div>
-          }
-        >
-          <FloorPlanEditor patientId={patientId} />
-        </Suspense>
-      </TabsContent>
-      <TabsContent value="beacons">
-        <Suspense
-          fallback={
-            <div className="space-y-2">
-              <Skeleton className="h-20 w-full" />
-              <Skeleton className="h-20 w-full" />
-            </div>
-          }
-        >
-          <BeaconsPanel patientId={patientId} />
-        </Suspense>
-      </TabsContent>
-      <TabsContent value="calibration">
-        <Suspense
-          fallback={
-            <div className="space-y-3">
-              <Skeleton className="h-12 w-full" />
-              <Skeleton className="h-[min(60vh,720px)] min-h-[480px] w-full" />
-            </div>
-          }
-        >
-          <CalibrationPanel patientId={patientId} />
-        </Suspense>
-      </TabsContent>
-    </Tabs>
+    <Suspense
+      fallback={
+        <div className="space-y-3">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-[min(82vh,960px)] min-h-[640px] w-full" />
+        </div>
+      }
+    >
+      <PlaceWorkspace patientId={patientId} />
+    </Suspense>
   );
 }

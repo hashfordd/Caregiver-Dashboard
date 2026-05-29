@@ -34,8 +34,9 @@ I'll click through to the one with live data."
 **Click-path**: Click the demo patient's row in the roster table.
 
 **Expected result**: Patient detail page loads. The tab strip shows Live / Place /
-Beacons / Calibration / Alerts / History / Settings. The Live tab is active by default.
-Connection status indicator shows green (device online).
+History / Alerts / … / Settings. (Beacons and calibration live _inside_ the Place
+tab now, not as top-level tabs.) The Live tab is active by default. Connection status
+indicator shows green (device online).
 
 **Fallback**: If the tab strip does not render, hard-refresh. If the connection status
 is red, confirm the mock generator is running (or that seeded data is fresh within the
@@ -46,12 +47,13 @@ Mention this to the audience as designed behaviour.
 
 ## Beat 3 — Live tab: vitals + position + hysteresis (1:00 – 2:30)
 
-**Speaker line**: "The Live tab shows real-time HR, SpO2, and temperature arriving
-from the wearable roughly once per second. Each card carries a sparkline of the
-last five minutes."
+**Speaker line**: "The Live tab shows the real-time heart rate arriving from the
+wearable roughly once per second, with a sparkline of the last five minutes. This
+wearable senses heart rate only — SpO₂ and temperature aren't on the device, so we
+don't show empty cards for them."
 
-**Click-path**: Point to the three sensor cards (HR, SpO2, temp). Let them update
-once on screen so the audience sees the number change.
+**Click-path**: Point to the heart-rate card. Let it update once on screen so the
+audience sees the number change.
 
 **Speaker line**: "Below the vitals, the patient's current position is marked on the
 floor plan in real time. Indoor confidence drives which view is shown."
@@ -67,7 +69,7 @@ threshold for five ticks in a row."
 **Click-path**: No interaction needed; point at the mode indicator text (Indoor /
 Outdoor). If a mode flip is in progress, let it complete and narrate it.
 
-**Expected result**: Sensor card values increment without blank frames. The patient
+**Expected result**: The heart-rate value increments without blank frames. The patient
 marker moves on the floor plan. The mode indicator reads 'Indoor' and does not flip
 unless the patient genuinely exits the calibrated space.
 
@@ -77,21 +79,26 @@ history"), skip to Beat 8 (History tab), and return here at the end if time perm
 
 ---
 
-## Beat 4 — Place tab: floor plan + reset/undo (2:30 – 3:00)
+## Beat 4 — Place tab: one workspace (floor plan + rooms) (2:30 – 3:00)
 
-**Speaker line**: "The Place tab shows the saved floor plan. Caregivers draw rooms
-and furniture to scale using the editor."
+**Speaker line**: "The Place tab is a single workspace for the whole space. The
+top switch has two bundles — 'Floor plan & rooms' and 'Beacons & calibration' — over
+one canvas, so you never lose your zoom or position switching context."
 
-**Click-path**: Click the Place tab. The floor plan canvas renders.
+**Click-path**: Click the Place tab. The 'Floor plan & rooms' bundle is active; the
+floor plan canvas renders. In view mode you can drag to pan and scroll to zoom; nothing
+on the plan is grabbable until you click Edit.
 
-**Speaker line**: "Every edit can be undone with Ctrl+Z, and the whole canvas can
-be reset to its last saved state using the Reset button."
+**Speaker line**: "In edit mode caregivers draw walls, outline rooms, and click-to-place
+doors and windows directly on the plan. Each wall shows its length — type a real
+length right on the wall to scale the whole room."
 
-**Click-path**: Point to the Reset and Undo affordances in the toolbar. Do not click
-Reset — it would discard unsaved changes and there are none.
+**Click-path**: Click Edit. Point to the Door/Window tools and the editable length
+labels on the walls. Point to Reset and Undo in the toolbar (don't click Reset). Click
+Discard or Save to leave edit mode cleanly.
 
-**Expected result**: The floor plan canvas shows the saved layout with at least
-four rooms. The toolbar is visible with Reset and Undo controls.
+**Expected result**: The canvas shows the saved layout with at least four rooms, doors
+and windows. The toolbar exposes Wall/Room/Polygon/Door/Window tools plus Reset/Undo.
 
 **Fallback**: If the canvas is blank, the `floor_plans` row is missing. Navigate to
 the [dry-run checklist](./dry-run-checklist.md#data) and note the prerequisite aloud.
@@ -99,25 +106,21 @@ Skip this beat and continue.
 
 ---
 
-## Beat 5 — Beacons + Calibration tabs (3:00 – 3:45)
+## Beat 5 — Place tab: beacons + calibration bundle (3:00 – 3:45)
 
-**Speaker line**: "The Beacons tab lists the BLE beacons paired and placed on the
-canvas. Each beacon shows its canvas coordinates and calibration constants."
+**Speaker line**: "The same Place tab holds the devices. The 'Beacons & calibration'
+bundle lists the BLE beacons paired and placed on the plan, and the calibration
+fingerprints captured during the site walk."
 
-**Click-path**: Click the Beacons tab. Confirm at least four beacons are listed.
+**Click-path**: In the Place tab, click the 'Beacons & calibration' bundle. The sub-
+toggle defaults to 'Place beacons' — confirm at least four beacons are listed with
+their positions. Click 'Calibrate' to show the captured fingerprint points.
 
-**Speaker line**: "The Calibration tab shows the fingerprint points captured during
-the site walk. Coverage is measured by the number of points relative to the
-room area."
+**Expected result**: Beacons view: ≥ 4 beacon rows with positions + status, all
+rendered on the shared canvas. Calibrate view: the captured points list (each showing
+its `ble_signature` sample count) and the capture coverage notice.
 
-**Click-path**: Click the Calibration tab. Point to the calibration coverage
-summary and the list of captured points (at least five should be visible).
-
-**Expected result**: Beacons tab: ≥ 4 beacon rows with `x_canvas`, `y_canvas`, and
-status. Calibration tab: ≥ 5 calibration points, each showing the `ble_signature`
-sample count.
-
-**Fallback**: If either tab is empty, the seed data is missing. State the expected
+**Fallback**: If the lists are empty, the seed data is missing. State the expected
 state aloud ("in a live deployment, beacons would appear here") and continue.
 
 ---
@@ -198,15 +201,16 @@ in the chosen window. Widen the window or switch to the Vitals sub-tab.
 
 ### 8b — Vitals chart
 
-**Speaker line**: "The Vitals sub-tab charts HR, SpO2, and temperature over a
-selectable range."
+**Speaker line**: "The Vitals sub-tab charts heart rate over a selectable range.
+SpO₂ and temperature series exist in the chart for future sensors, but this wearable
+reports heart rate only, so those lines stay empty."
 
 **Click-path**: Click the Vitals sub-tab. The chart renders with the default 1-hour
 window. Click the 6 h preset, then 24 h, then back to 1 h.
 
-**Expected result**: Three line series render (HR, SpO2, temperature). Switching
-presets re-fetches and re-renders within 2 s. Null readings appear as gaps in the
-line, not as zero values.
+**Expected result**: The HR line series renders with data; SpO₂/temperature series are
+empty (no sensor). Switching presets re-fetches and re-renders within 2 s. Null
+readings appear as gaps in the line, not as zero values.
 
 **Fallback**: If the chart is blank, the patient has no `sensor_readings` in the
 window. Switch to a wider range.
@@ -232,7 +236,9 @@ will be used for V2 ML training data."
 
 **Expected result**: A CSV file downloads. Open it in a spreadsheet (pre-open the
 file manager or Finder for speed). Confirm the header reads
-`recorded_at,hr_bpm,spo2_pct,temp_c` and that numeric cells are unquoted.
+`recorded_at,hr_bpm,spo2_pct,temp_c` and that numeric cells are unquoted. (The
+`spo2_pct` / `temp_c` columns are present for format stability but empty — this
+wearable senses heart rate only.)
 
 **Fallback**: If the download does not trigger, the fetch may have failed. Open
 DevTools Network briefly to show the request, then note the expected behaviour.
@@ -273,18 +279,18 @@ in `BACKLOG.md` and are out of scope for V1."
 
 ## Timing summary
 
-| Beat | Topic                 | Target end |
-| ---- | --------------------- | ---------- |
-| 1    | Sign in               | 0:30       |
-| 2    | Roster → patient      | 1:00       |
-| 3    | Live tab              | 2:30       |
-| 4    | Place tab             | 3:00       |
-| 5    | Beacons + Calibration | 3:45       |
-| 6    | Alerts                | 4:30       |
-| 7    | Settings              | 5:15       |
-| 8    | History (F13)         | 6:45       |
-| 9    | Outdoor (optional)    | 7:15       |
-| 10   | Closing               | 7:45       |
+| Beat | Topic                        | Target end |
+| ---- | ---------------------------- | ---------- |
+| 1    | Sign in                      | 0:30       |
+| 2    | Roster → patient             | 1:00       |
+| 3    | Live tab                     | 2:30       |
+| 4    | Place: floor plan & rooms    | 3:00       |
+| 5    | Place: beacons & calibration | 3:45       |
+| 6    | Alerts                       | 4:30       |
+| 7    | Settings                     | 5:15       |
+| 8    | History (F13)                | 6:45       |
+| 9    | Outdoor (optional)           | 7:15       |
+| 10   | Closing                      | 7:45       |
 
 If the session is running long after Beat 7, skip Beat 9 entirely. Beat 8 is
 not skippable — it is the primary Phase 5 deliverable.

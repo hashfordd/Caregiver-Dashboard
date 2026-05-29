@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { LayoutGrid } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -6,10 +6,18 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useBeacons } from '@/features/beacons/beaconQueries';
 import { useFloorPlan } from '@/features/floor-plan/floorPlanQueries';
 import { useNow } from '@/lib/useNow';
+import { BeaconDiagnosticsPanel } from './BeaconDiagnosticsPanel';
 import { FloorPlanCanvas } from './FloorPlanCanvas';
 import { ModeIndicator } from './ModeIndicator';
+import { useRoomConnectors, useRooms } from './roomQueries';
 import { usePositionMarker } from './usePositionMarker';
-import type { BeaconSprite, FloorPlanCanvasHandle, PatientMarkerSprite } from './types';
+import type {
+  BeaconSprite,
+  FloorPlanCanvasHandle,
+  PatientMarkerSprite,
+  RoomConnectorSprite,
+  RoomSprite,
+} from './types';
 
 // Item 94: indoor patient marker stale ring threshold. Mirrors the
 // outdoor PatientPin's 30 s amber ring (apps/web/src/features/map/
@@ -33,11 +41,17 @@ interface LivePositionViewProps {
 export function LivePositionView({ patientId }: LivePositionViewProps) {
   const planQuery = useFloorPlan(patientId);
   const beaconsQuery = useBeacons(patientId);
+  const roomsQuery = useRooms(planQuery.data?.id);
+  const connectorsQuery = useRoomConnectors(planQuery.data?.id);
   const estimate = usePositionMarker();
   const canvasRef = useRef<FloorPlanCanvasHandle | null>(null);
   // Item 94: 5 s tick drives the stale ring transition. Cheaper than
   // a 1 Hz timer; the patient marker doesn't need sub-5 s freshness.
   const nowMs = useNow(5_000);
+  // Diagnostics panel is off by default — caregivers don't need the
+  // per-beacon RSSI/distance numbers. Engineers/installers can flip it
+  // on to debug placement and calibration.
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
 
   // Mirror placed beacons into the canvas as visual context. The Live
   // view doesn't care about beacon-placement mode but the overlay
@@ -54,6 +68,32 @@ export function LivePositionView({ patientId }: LivePositionViewProps) {
       }));
     canvasRef.current?.setBeacons(sprites);
   }, [beaconsQuery.data]);
+
+  // Phase B: push rooms + connectors into the canvas overlay. Both
+  // surface on Live so caregivers see "the patient is in the bedroom"
+  // without flipping to Place. Polygon vertices are stored as [x, y]
+  // tuples; connectors as start/end coords.
+  useEffect(() => {
+    const rooms = roomsQuery.data ?? [];
+    const sprites: RoomSprite[] = rooms.map((r) => ({
+      id: r.id,
+      name: r.name,
+      roomType: r.room_type,
+      polygon: r.polygon_canvas,
+    }));
+    canvasRef.current?.setRooms(sprites);
+  }, [roomsQuery.data]);
+  useEffect(() => {
+    const connectors = connectorsQuery.data ?? [];
+    const sprites: RoomConnectorSprite[] = connectors.map((c) => ({
+      id: c.id,
+      kind: c.kind,
+      label: c.label,
+      start: { x: c.start_x, y: c.start_y },
+      end: { x: c.end_x, y: c.end_y },
+    }));
+    canvasRef.current?.setRoomConnectors(sprites);
+  }, [connectorsQuery.data]);
 
   // Push the latest estimate into the canvas marker. Outdoor mode and
   // null canvas coords both clear the marker (no useful indoor position
@@ -106,7 +146,18 @@ export function LivePositionView({ patientId }: LivePositionViewProps) {
       <CardContent className="space-y-3 pt-4">
         <div className="flex items-center justify-between gap-2">
           <h3 className="text-sm font-semibold text-foreground">Live position</h3>
-          <ModeIndicator estimate={estimate} />
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setShowDiagnostics((v) => !v)}
+              aria-expanded={showDiagnostics}
+              aria-controls="beacon-diagnostics"
+              className="text-[10px] uppercase tracking-wide text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            >
+              {showDiagnostics ? 'Hide diagnostics' : 'Diagnostics'}
+            </button>
+            <ModeIndicator estimate={estimate} />
+          </div>
         </div>
         <div className="aspect-[4/3] max-h-[720px] min-h-[280px] sm:min-h-[420px] w-full overflow-hidden rounded-lg border border-border bg-card">
           {/* `initialMode="calibration"` is the F6/F7 read-only mode that
@@ -132,6 +183,11 @@ export function LivePositionView({ patientId }: LivePositionViewProps) {
           <p className="rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
             Patient is outdoors — switch to map view (Phase 4) to see the GPS position.
           </p>
+        )}
+        {showDiagnostics && (
+          <div id="beacon-diagnostics" className="border-t border-border pt-3">
+            <BeaconDiagnosticsPanel patientId={patientId} />
+          </div>
         )}
       </CardContent>
     </Card>

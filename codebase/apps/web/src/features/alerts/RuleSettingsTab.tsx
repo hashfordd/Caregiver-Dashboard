@@ -5,8 +5,10 @@ import { Skeleton } from '@/components/ui/skeleton';
 import type {
   AlertRule,
   DeviceSilenceRule,
+  DoorProximityRule,
   FallRule,
   InactivityRule,
+  RoomTransitionRule,
   VitalsRule,
   ZoneRule,
 } from '@alzcare/shared';
@@ -16,6 +18,7 @@ import { FallRuleCard } from './rule-types/FallRuleCard';
 import { InactivityRuleCard } from './rule-types/InactivityRuleCard';
 import { VitalsRuleCard } from './rule-types/VitalsRuleCard';
 import { ZoneRuleCard } from './rule-types/ZoneRuleCard';
+import { RoomBasedRuleSections } from './rule-types/RoomBasedRuleSections';
 
 interface Props {
   patientId: string;
@@ -69,24 +72,33 @@ export function RuleSettingsTab({ patientId }: Props) {
         >
           Vitals
         </h4>
+        {/* HR is the only vitals metric the wearable reports today — the
+            firmware emits no SpO₂ or temperature, so those rule cards are
+            withheld (a rule on a metric that never arrives would silently
+            never fire). Legacy SpO₂/temp rules, if any exist, still render
+            below so they can be disabled or deleted. */}
         <VitalsRuleCard
           patientId={patientId}
           rule={grouped.vitals.hr_bpm ?? null}
           defaults={{ metric: 'hr_bpm', min: 50, max: 110 }}
           title="Heart rate"
         />
-        <VitalsRuleCard
-          patientId={patientId}
-          rule={grouped.vitals.spo2_pct ?? null}
-          defaults={{ metric: 'spo2_pct', min: 92, max: null }}
-          title="SpO₂"
-        />
-        <VitalsRuleCard
-          patientId={patientId}
-          rule={grouped.vitals.temp_c ?? null}
-          defaults={{ metric: 'temp_c', min: 35, max: 38 }}
-          title="Temperature"
-        />
+        {grouped.vitals.spo2_pct && (
+          <VitalsRuleCard
+            patientId={patientId}
+            rule={grouped.vitals.spo2_pct}
+            defaults={{ metric: 'spo2_pct', min: 92, max: null }}
+            title="SpO₂ (no sensor — legacy rule)"
+          />
+        )}
+        {grouped.vitals.temp_c && (
+          <VitalsRuleCard
+            patientId={patientId}
+            rule={grouped.vitals.temp_c}
+            defaults={{ metric: 'temp_c', min: 35, max: 38 }}
+            title="Temperature (no sensor — legacy rule)"
+          />
+        )}
       </section>
 
       <section className="space-y-3" aria-labelledby="rules-zone-heading">
@@ -128,6 +140,12 @@ export function RuleSettingsTab({ patientId }: Props) {
         </h4>
         <DeviceSilenceRuleCard patientId={patientId} rule={grouped.device_silence} />
       </section>
+
+      <RoomBasedRuleSections
+        patientId={patientId}
+        roomTransitionRules={grouped.room_transition}
+        doorProximityRules={grouped.door_proximity}
+      />
     </div>
   );
 }
@@ -138,6 +156,9 @@ interface Grouped {
   fall: FallRule | null;
   inactivity: InactivityRule | null;
   device_silence: DeviceSilenceRule | null;
+  // Phase C: multi-instance per patient — collected as arrays.
+  room_transition: RoomTransitionRule[];
+  door_proximity: DoorProximityRule[];
 }
 
 function groupRules(rules: AlertRule[]): Grouped {
@@ -147,6 +168,8 @@ function groupRules(rules: AlertRule[]): Grouped {
     fall: null,
     inactivity: null,
     device_silence: null,
+    room_transition: [],
+    door_proximity: [],
   };
   for (const r of rules) {
     if (r.type === 'vitals') {
@@ -163,6 +186,10 @@ function groupRules(rules: AlertRule[]): Grouped {
       grouped.inactivity = r;
     } else if (r.type === 'device_silence' && grouped.device_silence == null) {
       grouped.device_silence = r;
+    } else if (r.type === 'room_transition') {
+      grouped.room_transition.push(r);
+    } else if (r.type === 'door_proximity') {
+      grouped.door_proximity.push(r);
     }
   }
   return grouped;

@@ -9,6 +9,12 @@ export type ToolMode =
   | 'room'
   | 'polygon'
   | 'furniture'
+  /** Door / window placement: click-to-place a connector segment in the
+   *  floor-plan editor (click start, click end). On finish the canvas
+   *  fires onConnectorDrawn; the workspace persists it to room_connectors
+   *  and it renders via the SVG overlay (not stored in canvas_json). */
+  | 'door'
+  | 'window'
   /** F6 beacon placement: every wall/room/furniture object is locked
    *  read-only, the F5 keyboard shortcuts are gated off, and click events
    *  on the canvas only matter when a beacon has been armed for
@@ -42,6 +48,10 @@ export interface SelectionDescriptor {
   kind: 'none' | 'wall' | 'room' | 'polygon' | 'furniture' | 'multi';
   /** Pixel length of the selected line, when kind === 'wall'. */
   pixelLength?: number;
+  /** Per-edge pixel lengths of the selected polygon room, in vertex order,
+   *  when kind === 'polygon'. Lets the caller calibrate scale from a known
+   *  room wall without the edges being individually selectable objects. */
+  edgeLengthsPx?: number[];
   /** Number of objects, when kind === 'multi'. */
   count?: number;
 }
@@ -52,6 +62,10 @@ export interface FloorPlanRow {
   name: string;
   canvas_json: unknown;
   scale_meters_per_pixel: number | null;
+  /** Log-distance path-loss exponent used by F8. Null → estimator falls
+   *  back to DEFAULT_PATH_LOSS_EXPONENT (2.0). Range enforced [1.0, 6.0]
+   *  by a DB check constraint. */
+  path_loss_exponent: number | null;
   created_at: string;
   updated_at: string;
   is_active: boolean;
@@ -62,6 +76,8 @@ export interface UpsertFloorPlanInput {
   patient_id: string;
   canvas_json: unknown;
   scale_meters_per_pixel: number | null;
+  /** Null clears the override and reverts to the code default. */
+  path_loss_exponent: number | null;
   name?: string;
 }
 
@@ -112,6 +128,21 @@ export interface FloorPlanCanvasHandle {
    *  removed; new dots are added. Pass an empty array to clear the
    *  trail entirely (end of replay or scrub-to-start). */
   setReplayDots: (sprites: ReplayDotSprite[]) => void;
+  /** Phase B: replace the rendered room polygons with the given list.
+   *  Polygons render as tinted filled outlines plus a centred name
+   *  label in a dedicated SVG overlay, sitting above the Fabric layer
+   *  and below the patient marker. Pass an empty array to clear. */
+  setRooms: (sprites: RoomSprite[]) => void;
+  /** Phase B: replace the rendered door / window / opening segments.
+   *  Doors render as dashed thick lines, windows as solid thin lines,
+   *  openings as dotted lines. Same SVG overlay as setRooms. */
+  setRoomConnectors: (sprites: RoomConnectorSprite[]) => void;
+  /** Phase B polish: extract the world-coord vertices of the currently
+   *  selected Fabric polygon, in caregiver-drawing order. Returns null
+   *  when nothing is selected or the selection isn't a polygon. Used by
+   *  "Promote to room" to seed the RoomDialog without making the
+   *  caregiver retype vertices. */
+  getSelectedPolygonVertices: () => [number, number][] | null;
 }
 
 /** A beacon as the canvas needs to render it — id, label for tooltip,
@@ -164,4 +195,38 @@ export interface ReplayDotSprite {
   y: number;
   /** 0..1 — dots earlier in the trail render at lower opacity. */
   alpha: number;
+}
+
+/** Phase B room overlay. Distinct from the DB shape so the canvas
+ *  doesn't depend on the rooms feature module — same separation as
+ *  BeaconSprite vs BeaconRow. World coords throughout; the canvas
+ *  applies screenFromWorld at render time. */
+export interface RoomSprite {
+  id: string;
+  name: string;
+  /** Drives the fill colour palette in the overlay so rooms of the
+   *  same kind render consistently. */
+  roomType:
+    | 'bedroom'
+    | 'bathroom'
+    | 'kitchen'
+    | 'living_room'
+    | 'dining_room'
+    | 'hallway'
+    | 'other';
+  /** Polygon vertices in world (canvas-pixel) coordinates. Implicit
+   *  closure — the canvas does not require repeating the first vertex. */
+  polygon: [number, number][];
+}
+
+/** Phase B door / window / opening overlay. Line segment in world
+ *  coords; the canvas styles it by kind (door: dashed thick, window:
+ *  solid thin, opening: dotted). */
+export interface RoomConnectorSprite {
+  id: string;
+  kind: 'door' | 'window' | 'opening';
+  /** Optional human label rendered next to the segment. */
+  label: string | null;
+  start: { x: number; y: number };
+  end: { x: number; y: number };
 }

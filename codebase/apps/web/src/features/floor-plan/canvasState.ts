@@ -23,6 +23,33 @@ export function computeScale(pixelLength: number, metresEntered: number): number
 }
 
 /**
+ * Compute scale from the measured real-world distance between two placed
+ * beacons. Beacons are the anchors the F8 pipeline already trusts (their
+ * canvas positions are what trilateration solves against), so taping
+ * between two beacons and entering the result is more rigorous than
+ * eyeballing a wall length. Throws on degenerate inputs.
+ */
+export function computeScaleFromBeacons(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  metresEntered: number,
+): number {
+  if (
+    !Number.isFinite(a.x) ||
+    !Number.isFinite(a.y) ||
+    !Number.isFinite(b.x) ||
+    !Number.isFinite(b.y)
+  ) {
+    throw new Error('beacon coordinates must be finite numbers');
+  }
+  const pixelDistance = Math.hypot(b.x - a.x, b.y - a.y);
+  if (pixelDistance <= 0) {
+    throw new Error('the two beacons share the same canvas position — place them apart first');
+  }
+  return computeScale(pixelDistance, metresEntered);
+}
+
+/**
  * Format a meters-per-pixel ratio as the more readable "1 px = X m" or
  * (when below 1 cm/px) "1 px = X cm".
  */

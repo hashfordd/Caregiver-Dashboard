@@ -1,83 +1,48 @@
-import { useMemo, useRef, useState } from 'react';
 import { Bluetooth, MapPin, Ruler, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { EmptyState } from '@/components/ui/empty-state';
-import { Skeleton } from '@/components/ui/skeleton';
-import { useFloorPlan } from '@/features/floor-plan/floorPlanQueries';
+import { DiscoveryList } from '@/features/beacons/DiscoveryList';
+import { isPlaced, type BeaconRow } from '@/features/beacons/types';
 import { publishFakeSignals } from '@/lib/devSignals';
-import { BeaconCalibrationDialog } from './BeaconCalibrationDialog';
-import {
-  BeaconPlacementCanvas,
-  placedCount,
-  type BeaconPlacementCanvasHandle,
-} from './BeaconPlacementCanvas';
-import { useBeacons, useDeleteBeacon } from './beaconQueries';
-import { DiscoveryList } from './DiscoveryList';
-import { PairDialog } from './PairDialog';
-import { isPlaced, type BeaconRow } from './types';
 
 const MIN_PLACED_FOR_F8 = 3;
 
-interface BeaconsPanelProps {
+interface BeaconsRailProps {
   patientId: string;
+  beacons: BeaconRow[];
+  pairedMacs: Set<string>;
+  /** Both a saved plan and a calibrated scale are required before a
+   *  beacon's (x, y) has real-world meaning. Pairing works without. */
+  placementReady: boolean;
+  planExists: boolean;
+  deletingId: string | undefined;
+  deleteError: string | null;
+  onPair: (mac: string) => void;
+  onPlace: (id: string) => void;
+  onCalibrate: (beacon: BeaconRow) => void;
+  onDelete: (id: string) => void;
 }
 
-export function BeaconsPanel({ patientId }: BeaconsPanelProps) {
-  const beaconsQuery = useBeacons(patientId);
-  const planQuery = useFloorPlan(patientId);
-  const deleteBeacon = useDeleteBeacon(patientId);
-  const [pairTarget, setPairTarget] = useState<string | null>(null);
-  const [calibrationTarget, setCalibrationTarget] = useState<BeaconRow | null>(null);
-  const placementRef = useRef<BeaconPlacementCanvasHandle | null>(null);
-
-  const pairedMacs = useMemo(
-    () => new Set((beaconsQuery.data ?? []).map((b) => b.mac_address)),
-    [beaconsQuery.data],
-  );
-
-  if (beaconsQuery.isLoading) {
-    return (
-      <div className="space-y-3">
-        <Skeleton className="h-20 w-full" />
-        <Skeleton className="h-20 w-full" />
-      </div>
-    );
-  }
-
-  if (beaconsQuery.isError) {
-    return (
-      <Card>
-        <CardContent className="py-6">
-          <p className="text-sm text-destructive">
-            Couldn't load beacons: {(beaconsQuery.error as Error).message}
-          </p>
-          <Button
-            size="sm"
-            variant="outline"
-            className="mt-3"
-            onClick={() => beaconsQuery.refetch()}
-          >
-            Try again
-          </Button>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  const beacons = beaconsQuery.data ?? [];
-  const plan = planQuery.data ?? null;
-  // Placement requires both a saved plan AND a calibrated scale — without
-  // metric anchoring the (x_canvas, y_canvas) coords have no real-world
-  // meaning. Pairing/discovery still work fine without either.
-  const placementReady = plan != null && plan.scale_meters_per_pixel != null;
-  const placed = placedCount(beacons);
+/** Beacons section of the unified Place workspace rail. The placement
+ *  surface itself is the shared canvas (Place arms it, a click drops the
+ *  beacon); this rail owns discovery, the paired list, and the per-beacon
+ *  actions. */
+export function BeaconsRail({
+  patientId,
+  beacons,
+  pairedMacs,
+  placementReady,
+  planExists,
+  deletingId,
+  deleteError,
+  onPair,
+  onPlace,
+  onCalibrate,
+  onDelete,
+}: BeaconsRailProps) {
+  const placed = beacons.filter(isPlaced).length;
   const showFewerNotice = placed < MIN_PLACED_FOR_F8;
-
-  const handlePlaceClick = (id: string) => {
-    placementRef.current?.arm(id);
-  };
 
   return (
     <div className="space-y-6">
@@ -87,11 +52,7 @@ export function BeaconsPanel({ patientId }: BeaconsPanelProps) {
           subtitle="BLE MACs picked up by the wearable. Pair each to give it a room."
           right={import.meta.env.DEV ? <DevInjectButton patientId={patientId} /> : null}
         />
-        <DiscoveryList
-          patientId={patientId}
-          pairedMacs={pairedMacs}
-          onPair={(mac) => setPairTarget(mac)}
-        />
+        <DiscoveryList patientId={patientId} pairedMacs={pairedMacs} onPair={onPair} />
       </section>
 
       <section className="space-y-2">
@@ -99,29 +60,19 @@ export function BeaconsPanel({ patientId }: BeaconsPanelProps) {
           title="Placement"
           subtitle={
             placementReady
-              ? 'Click Place on a beacon, then click on the floor plan to drop it. Drag a placed beacon to move it.'
+              ? 'Click Place on a beacon, then click the floor plan to drop it. Drag a placed beacon to move it.'
               : 'Set up a floor plan with a calibrated scale before placing beacons.'
           }
         />
-        {placementReady ? (
-          <div className="h-[min(60vh,720px)] min-h-[480px] w-full overflow-hidden rounded-lg border border-border bg-card">
-            <BeaconPlacementCanvas
-              ref={placementRef}
-              patientId={patientId}
-              floorPlan={plan}
-              beacons={beacons}
-            />
+        {!placementReady && (
+          <div className="flex items-start gap-3 rounded-md border border-border bg-muted/30 px-3 py-3 text-sm text-muted-foreground">
+            <MapPin className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+            <span>
+              {planExists
+                ? 'Switch to the Floor plan section, select a wall and use Set scale to anchor pixels to metres.'
+                : 'Switch to the Floor plan section and draw the patient’s space first.'}
+            </span>
           </div>
-        ) : (
-          <EmptyState
-            icon={<MapPin className="h-10 w-10" />}
-            title={plan == null ? 'No floor plan yet' : 'Floor plan needs a scale'}
-            description={
-              plan == null
-                ? 'Open the Floor plan sub-tab and draw the patient’s space first.'
-                : 'In the Floor plan sub-tab, select a wall and use Set scale to anchor pixels to metres.'
-            }
-          />
         )}
         {showFewerNotice && beacons.length > 0 && (
           <p className="rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
@@ -154,42 +105,21 @@ export function BeaconsPanel({ patientId }: BeaconsPanelProps) {
               <BeaconCard
                 key={b.id}
                 beacon={b}
-                deleting={deleteBeacon.isPending && deleteBeacon.variables === b.id}
+                deleting={deletingId === b.id}
                 placementReady={placementReady}
-                onPlace={() => handlePlaceClick(b.id)}
-                onCalibrate={() => setCalibrationTarget(b)}
-                onDelete={() => deleteBeacon.mutate(b.id)}
+                onPlace={() => onPlace(b.id)}
+                onCalibrate={() => onCalibrate(b)}
+                onDelete={() => onDelete(b.id)}
               />
             ))}
-            {deleteBeacon.isError && (
+            {deleteError && (
               <p className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                Couldn't delete: {(deleteBeacon.error as Error).message}
+                Couldn't delete: {deleteError}
               </p>
             )}
           </div>
         )}
       </section>
-
-      {pairTarget != null && (
-        <PairDialog
-          open
-          onOpenChange={(open) => {
-            if (!open) setPairTarget(null);
-          }}
-          mac={pairTarget}
-          patientId={patientId}
-          floorPlanId={plan?.id ?? null}
-        />
-      )}
-
-      <BeaconCalibrationDialog
-        beacon={calibrationTarget}
-        patientId={patientId}
-        open={calibrationTarget != null}
-        onOpenChange={(open) => {
-          if (!open) setCalibrationTarget(null);
-        }}
-      />
     </div>
   );
 }
@@ -213,10 +143,8 @@ function SectionHeader({ title, subtitle, right }: SectionHeaderProps) {
 }
 
 /** Dev-only fixture: publishes a fake validated SignalsMessage on the
- *  same broadcast channel the mqtt_bridge will publish on once slice 5
- *  ships. Exercises the full subscribe → context → store pipeline so
- *  the demo path matches the real path. Also reachable from the browser
- *  console as `window.__devSignals(patientId)`. */
+ *  same broadcast channel the mqtt_bridge publishes on, so the demo path
+ *  matches the real path. */
 function DevInjectButton({ patientId }: { patientId: string }) {
   return (
     <Button

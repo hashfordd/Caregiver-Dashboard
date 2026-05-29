@@ -27,6 +27,8 @@ import type {
   FurnitureKind,
   PatientMarkerSprite,
   ReplayDotSprite,
+  RoomConnectorSprite,
+  RoomSprite,
   SelectionDescriptor,
   ToolMode,
 } from './types';
@@ -54,6 +56,18 @@ interface FloorPlanCanvasProps {
    *  capture is armed. Coords are snapped to the grid. Parent stores
    *  the pending spot and disarms by calling armCalibrationCapture(false). */
   onCalibrationClick?: (x: number, y: number) => void;
+  /** Door/window placement: fires when a connector segment is drawn in
+   *  the editor (click start → click end). World coords; the parent
+   *  persists it to room_connectors. */
+  onConnectorDrawn?: (
+    kind: 'door' | 'window',
+    start: { x: number; y: number },
+    end: { x: number; y: number },
+  ) => void;
+  /** Inline dimension editing: fires when a caregiver types a real length
+   *  (metres) directly onto a wall / room-edge label in the canvas. The
+   *  parent recalibrates scale from the segment's pixel length. */
+  onDimensionCommit?: (pixelLength: number, metres: number) => void;
   width?: number;
   height?: number;
   className?: string;
@@ -108,7 +122,14 @@ function describeSelection(canvas: fabric.Canvas): SelectionDescriptor {
     return { kind: 'wall', pixelLength: len };
   }
   if (active instanceof fabric.Polygon) {
-    return { kind: 'polygon' };
+    // Edges aren't selectable objects, so expose their pixel lengths here —
+    // the caller can set a known room wall's real length to calibrate scale.
+    const verts = polygonWorldVertices(active);
+    const edgeLengthsPx = verts.map((v, i) => {
+      const next = verts[(i + 1) % verts.length]!;
+      return Math.hypot(next.x - v.x, next.y - v.y);
+    });
+    return { kind: 'polygon', edgeLengthsPx };
   }
   if (active instanceof fabric.Rect && kindOf(active) === 'room') {
     return { kind: 'room' };
@@ -140,6 +161,8 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       onSelectionChange,
       onBeaconUpdate,
       onCalibrationClick,
+      onConnectorDrawn,
+      onDimensionCommit,
       width,
       height,
       className,
@@ -171,6 +194,11 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     const markerLayerRef = useRef<HTMLDivElement>(null);
     const replayDotsLayerRef = useRef<HTMLDivElement>(null);
     const shadingLayerRef = useRef<SVGSVGElement>(null);
+    /** Phase B: rooms + connectors render as SVG content (polygons,
+     *  lines, labels). Single overlay rather than two refs because they
+     *  share a coordinate space and the redraw cost is dominated by
+     *  the screenFromWorld pass, not the SVG churn. */
+    const roomsLayerRef = useRef<SVGSVGElement>(null);
     const snapIndicatorRef = useRef<HTMLDivElement>(null);
     const fabricRef = useRef<fabric.Canvas | null>(null);
 
@@ -186,6 +214,14 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       polygon: fabric.Polygon | null;
       previewLine: fabric.Line | null;
     } | null>(null);
+    // Door/window draft: ephemeral — the finished connector is persisted
+    // to room_connectors and rendered via the SVG overlay, so nothing is
+    // added to canvas_json. Only the in-progress preview line lives here.
+    const connectorDraftRef = useRef<{
+      kind: 'door' | 'window';
+      start: WorldPoint;
+      previewLine: fabric.Line;
+    } | null>(null);
 
     // Stable refs for callbacks/data so changes don't re-mount the canvas.
     const onDirtyRef = useRef(onDirty);
@@ -194,6 +230,8 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     const onSelectionChangeRef = useRef(onSelectionChange);
     const onBeaconUpdateRef = useRef(onBeaconUpdate);
     const onCalibrationClickRef = useRef(onCalibrationClick);
+    const onConnectorDrawnRef = useRef(onConnectorDrawn);
+    const onDimensionCommitRef = useRef(onDimensionCommit);
     const scaleRef = useRef(scale);
     const showDimensionsRef = useRef(showDimensions ?? true);
     const editingRef = useRef(editing ?? true);
@@ -237,6 +275,12 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       onCalibrationClickRef.current = onCalibrationClick;
     }, [onCalibrationClick]);
     useEffect(() => {
+      onConnectorDrawnRef.current = onConnectorDrawn;
+    }, [onConnectorDrawn]);
+    useEffect(() => {
+      onDimensionCommitRef.current = onDimensionCommit;
+    }, [onDimensionCommit]);
+    useEffect(() => {
       scaleRef.current = scale;
     }, [scale]);
     useEffect(() => {
@@ -271,9 +315,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         // Force back to select mode so the next entry into edit mode
         // starts cleanly. Beacon-placement is the exception — it's a
         // legit non-editing mode, not a leftover draft state.
-        if (modeRef.current !== 'beacon-placement') {
+        if (modeRef.current !== 'beacon-placement' && modeRef.current !== 'calibration') {
           modeRef.current = 'select';
-          canvas.defaultCursor = 'default';
+          canvas.defaultCursor = 'grab'; // view mode pans on drag
           onModeChangeRef.current?.('select');
         }
       }
@@ -307,13 +351,22 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       const joinEls: HTMLDivElement[] = [];
 
       // ─── Helpers ────────────────────────────────────────────────────────
-      const modeCursor = () => (modeRef.current === 'select' ? 'default' : 'crosshair');
+      const modeCursor = () =>
+        // View mode reads as 'select' but isn't editable — show the grab
+        // cursor to signal the canvas pans on drag.
+        !editingRef.current && modeRef.current === 'select'
+          ? 'grab'
+          : modeRef.current === 'select'
+            ? 'default'
+            : 'crosshair';
 
       const setEventedForAll = (mode: ToolMode) => {
         // In beacon-placement, every wall/room/furniture is locked: clicks
         // pass through to the canvas so the beacon-placement handler
-        // sees them. Selection/drawing modes follow the F5 rules.
-        const evented = mode === 'select';
+        // sees them. Selection/drawing modes follow the F5 rules. Objects
+        // are only grabbable while EDITING in select mode — in view (locked)
+        // mode nothing is draggable, even though the tool reads 'select'.
+        const evented = editingRef.current && mode === 'select';
         for (const obj of canvas.getObjects()) {
           if (kindOf(obj)) obj.evented = evented;
         }
@@ -581,18 +634,82 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       const LABEL_CLASS =
         'pointer-events-none absolute z-25 -translate-x-1/2 -translate-y-1/2 rounded-md bg-card/95 px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground shadow-sm';
 
-      function makeLabel(text: string, screen: WorldPoint): HTMLDivElement {
+      // True while a caregiver is typing in a dimension-label input, so the
+      // periodic label rebuild (after:render) doesn't yank the focused field.
+      let labelEditActive = false;
+
+      // A length label. When editing AND `editable` is supplied, it becomes a
+      // metres input positioned on the wall/edge — type the real length and
+      // the plan recalibrates scale from this segment's pixel length. This is
+      // how both individual walls and polygon-room edges get sized in place.
+      function makeLabel(
+        text: string,
+        screen: WorldPoint,
+        editable?: { pixelLength: number },
+      ): HTMLDivElement {
         const el = document.createElement('div');
         el.className = LABEL_CLASS;
-        el.textContent = text;
         el.style.left = `${screen.x}px`;
         el.style.top = `${screen.y}px`;
+        // Editable only in the Select tool — during drawing modes the inputs
+        // would swallow clicks meant for placing walls/doors.
+        if (
+          editable &&
+          editingRef.current &&
+          modeRef.current === 'select' &&
+          editable.pixelLength > 4
+        ) {
+          el.classList.remove('pointer-events-none');
+          el.classList.add('pointer-events-auto');
+          const s = scaleRef.current;
+          const metres = s != null && s > 0 ? editable.pixelLength * s : null;
+          const input = document.createElement('input');
+          input.type = 'text';
+          input.value = metres != null ? metres.toFixed(2) : '';
+          input.placeholder = 'm';
+          input.title = 'Type this wall’s real length in metres to scale the plan';
+          input.setAttribute('aria-label', 'Wall length in metres');
+          input.className = 'w-12 bg-transparent text-center outline-none';
+          input.addEventListener('pointerdown', (e) => e.stopPropagation());
+          input.addEventListener('focus', () => {
+            labelEditActive = true;
+            input.select();
+          });
+          input.addEventListener('keydown', (e) => {
+            e.stopPropagation(); // keep canvas shortcuts (Backspace etc.) from firing
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              input.blur();
+            } else if (e.key === 'Escape') {
+              input.value = metres != null ? metres.toFixed(2) : '';
+              input.blur();
+            }
+          });
+          input.addEventListener('blur', () => {
+            labelEditActive = false;
+            const v = Number(input.value.replace(/[^0-9.]/g, ''));
+            if (Number.isFinite(v) && v > 0) {
+              onDimensionCommitRef.current?.(editable.pixelLength, v);
+            }
+            renderLabelsAndJoins();
+          });
+          el.appendChild(input);
+          const unit = document.createElement('span');
+          unit.textContent = 'm';
+          unit.className = 'ml-0.5 opacity-60';
+          el.appendChild(unit);
+        } else {
+          el.textContent = text;
+        }
         return el;
       }
 
       function renderLabels() {
         const layer = labelsLayerRef.current;
         if (!layer) return;
+        // Don't tear down labels while one is being edited — replaceChildren
+        // would destroy the focused input mid-keystroke.
+        if (labelEditActive) return;
         // Rebuild from scratch every call — replaceChildren drops every
         // existing label DOM node, so any stale element from a prior
         // viewport / size / load cycle is gone before we re-emit.
@@ -619,11 +736,38 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
             const perp = { x: -dy / len, y: dx / len };
             const offset = 16;
             next.push(
-              makeLabel(formatLength(len), {
-                x: midScreen.x + perp.x * offset,
-                y: midScreen.y + perp.y * offset,
-              }),
+              makeLabel(
+                formatLength(len),
+                {
+                  x: midScreen.x + perp.x * offset,
+                  y: midScreen.y + perp.y * offset,
+                },
+                { pixelLength: len },
+              ),
             );
+          } else if (k === 'room' && obj instanceof fabric.Polygon) {
+            // Polygon rooms aren't made of selectable wall objects, so label
+            // each EDGE with its length — editable so the caregiver can set a
+            // known room wall and scale the whole plan from it.
+            const verts = polygonWorldVertices(obj);
+            for (let i = 0; i < verts.length; i++) {
+              const a = verts[i]!;
+              const b = verts[(i + 1) % verts.length]!;
+              const dx = b.x - a.x;
+              const dy = b.y - a.y;
+              const len = Math.hypot(dx, dy);
+              if (len < 4) continue;
+              const midScreen = screenFromWorld({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+              const perp = { x: -dy / len, y: dx / len };
+              const offset = 16;
+              next.push(
+                makeLabel(
+                  formatLength(len),
+                  { x: midScreen.x + perp.x * offset, y: midScreen.y + perp.y * offset },
+                  { pixelLength: len },
+                ),
+              );
+            }
           } else if (k === 'furniture' && obj instanceof fabric.Group) {
             // Furniture group's left/top are the world centre (CENTER origin).
             const cx = obj.left ?? 0;
@@ -1012,8 +1156,16 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           return;
         }
         if (!interactiveRef.current) return;
-        if (!editingRef.current) return;
         const e = opt.e as MouseEvent;
+
+        // View (locked) mode: nothing is grabbable, so a plain drag pans the
+        // floor plan — the caregiver can move around without holding Space.
+        if (!editingRef.current) {
+          panningRef.current = true;
+          panOriginRef.current = { x: e.clientX, y: e.clientY };
+          canvas.setCursor('grabbing');
+          return;
+        }
 
         if (spaceHeldRef.current) {
           panningRef.current = true;
@@ -1099,7 +1251,49 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           snapshot();
           autoRevertToSelect();
           renderLabelsAndJoins();
+        } else if (mode === 'door' || mode === 'window') {
+          handleConnectorClick(mode, sp);
         }
+      };
+
+      // Click-to-place a door/window. First click sets the start (snapping
+      // to wall ends so it sits on the geometry); second click finishes and
+      // fires onConnectorDrawn. The tool stays armed so multiple openings
+      // can be placed in a row — Escape or the Select tool exits.
+      const handleConnectorClick = (kind: 'door' | 'window', point: WorldPoint) => {
+        const draft = connectorDraftRef.current;
+        if (!draft) {
+          const previewLine = new fabric.Line([point.x, point.y, point.x, point.y], {
+            stroke: kind === 'door' ? '#b45309' : '#0e7490',
+            strokeWidth: 5,
+            strokeDashArray: kind === 'window' ? [2, 4] : undefined,
+            strokeLineCap: 'round',
+            selectable: false,
+            evented: false,
+          });
+          canvas.add(previewLine);
+          connectorDraftRef.current = { kind, start: { x: point.x, y: point.y }, previewLine };
+          return;
+        }
+        const len = Math.hypot(point.x - draft.start.x, point.y - draft.start.y);
+        canvas.remove(draft.previewLine);
+        connectorDraftRef.current = null;
+        setHud(null);
+        setSnapIndicator(null);
+        canvas.requestRenderAll();
+        // Ignore a zero-length tap (double-click on one spot).
+        if (len < 4) return;
+        onConnectorDrawnRef.current?.(kind, draft.start, { x: point.x, y: point.y });
+      };
+
+      const cancelConnectorDraft = () => {
+        const draft = connectorDraftRef.current;
+        if (!draft) return;
+        canvas.remove(draft.previewLine);
+        connectorDraftRef.current = null;
+        setHud(null);
+        setSnapIndicator(null);
+        canvas.requestRenderAll();
       };
 
       const handlePolygonClick = (point: WorldPoint) => {
@@ -1220,6 +1414,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         if (!editingRef.current) return;
         cancelWallDraft();
         cancelPolygonDraft();
+        cancelConnectorDraft();
         canvas.discardActiveObject();
         const tagged = canvas.getObjects().filter((o) => kindOf(o));
         if (tagged.length === 0) return;
@@ -1239,6 +1434,138 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         renderLabelsAndJoins();
         renderShading();
       };
+
+      // ─── Phase B: rooms + connectors overlay ────────────────────────────
+      // Single SVG layer for both. World coords pass through
+      // screenFromWorld at render time so the overlay rides zoom/pan with
+      // the canvas — same idea as the beacon DOM layer. Rooms render as
+      // tinted, outlined polygons with a centred name label; connectors
+      // render as line segments styled by kind (door dashed, window
+      // solid, opening dotted).
+      const SVG_NS = 'http://www.w3.org/2000/svg';
+      let roomSprites: RoomSprite[] = [];
+      let connectorSprites: RoomConnectorSprite[] = [];
+
+      // Soft palette per room_type. Stroke is the strong shade; fill is
+      // the same hue at 14% opacity so multiple rooms don't muddy when
+      // they touch. Picked to read on both light and dark themes.
+      const ROOM_TYPE_COLOR: Record<RoomSprite['roomType'], string> = {
+        bedroom: '#8b5cf6', // violet
+        bathroom: '#06b6d4', // cyan
+        kitchen: '#f59e0b', // amber
+        living_room: '#10b981', // emerald
+        dining_room: '#ef4444', // red
+        hallway: '#64748b', // slate
+        other: '#3b82f6', // blue
+      };
+
+      function centroid(pts: { x: number; y: number }[]): { x: number; y: number } {
+        // Naive average centroid. For rendering a label it's good enough
+        // even on concave polygons; we don't need the geometric
+        // (signed-area) centroid here.
+        if (pts.length === 0) return { x: 0, y: 0 };
+        let sx = 0;
+        let sy = 0;
+        for (const p of pts) {
+          sx += p.x;
+          sy += p.y;
+        }
+        return { x: sx / pts.length, y: sy / pts.length };
+      }
+
+      function renderRoomsAndConnectors() {
+        const layer = roomsLayerRef.current;
+        if (!layer) return;
+        // Clear and rebuild. Cheap given a handful of rooms; the
+        // alternative (diff + reuse) would buy nothing observable at
+        // prototype scale.
+        while (layer.firstChild) layer.removeChild(layer.firstChild);
+
+        for (const sprite of roomSprites) {
+          if (sprite.polygon.length < 3) continue;
+          const screenPts = sprite.polygon.map(([x, y]) => screenFromWorld({ x, y }));
+          const pointsAttr = screenPts.map((p) => `${p.x},${p.y}`).join(' ');
+          const color = ROOM_TYPE_COLOR[sprite.roomType] ?? ROOM_TYPE_COLOR.other;
+
+          const poly = document.createElementNS(SVG_NS, 'polygon');
+          poly.setAttribute('points', pointsAttr);
+          poly.setAttribute('fill', color);
+          poly.setAttribute('fill-opacity', '0.14');
+          poly.setAttribute('stroke', color);
+          poly.setAttribute('stroke-width', '2');
+          poly.setAttribute('stroke-linejoin', 'round');
+          poly.setAttribute('data-room-id', sprite.id);
+          // Native tooltip so caregivers can hover for the name without
+          // a custom popper.
+          const titleEl = document.createElementNS(SVG_NS, 'title');
+          titleEl.textContent = sprite.name;
+          poly.appendChild(titleEl);
+          layer.appendChild(poly);
+
+          const c = centroid(screenPts);
+          const label = document.createElementNS(SVG_NS, 'text');
+          label.setAttribute('x', String(c.x));
+          label.setAttribute('y', String(c.y));
+          label.setAttribute('text-anchor', 'middle');
+          label.setAttribute('dominant-baseline', 'middle');
+          label.setAttribute('font-size', '12');
+          label.setAttribute('font-weight', '600');
+          label.setAttribute('fill', color);
+          label.setAttribute('paint-order', 'stroke');
+          label.setAttribute('stroke', 'white');
+          label.setAttribute('stroke-width', '3');
+          label.setAttribute('stroke-linejoin', 'round');
+          label.setAttribute('pointer-events', 'none');
+          label.textContent = sprite.name;
+          layer.appendChild(label);
+        }
+
+        for (const sprite of connectorSprites) {
+          const s = screenFromWorld(sprite.start);
+          const e = screenFromWorld(sprite.end);
+          const line = document.createElementNS(SVG_NS, 'line');
+          line.setAttribute('x1', String(s.x));
+          line.setAttribute('y1', String(s.y));
+          line.setAttribute('x2', String(e.x));
+          line.setAttribute('y2', String(e.y));
+          line.setAttribute('stroke-linecap', 'round');
+          line.setAttribute('data-connector-id', sprite.id);
+          if (sprite.kind === 'door') {
+            line.setAttribute('stroke', '#0ea5e9'); // sky
+            line.setAttribute('stroke-width', '4');
+            line.setAttribute('stroke-dasharray', '6 4');
+          } else if (sprite.kind === 'window') {
+            line.setAttribute('stroke', '#64748b'); // slate
+            line.setAttribute('stroke-width', '3');
+          } else {
+            line.setAttribute('stroke', '#94a3b8'); // muted slate
+            line.setAttribute('stroke-width', '2');
+            line.setAttribute('stroke-dasharray', '2 4');
+          }
+          const titleEl = document.createElementNS(SVG_NS, 'title');
+          titleEl.textContent = sprite.label ?? sprite.kind;
+          line.appendChild(titleEl);
+          layer.appendChild(line);
+
+          if (sprite.label) {
+            const mid = { x: (s.x + e.x) / 2, y: (s.y + e.y) / 2 };
+            const label = document.createElementNS(SVG_NS, 'text');
+            label.setAttribute('x', String(mid.x));
+            // 10 px above the midpoint so the label doesn't bisect the
+            // segment line.
+            label.setAttribute('y', String(mid.y - 10));
+            label.setAttribute('text-anchor', 'middle');
+            label.setAttribute('font-size', '10');
+            label.setAttribute('fill', 'currentColor');
+            label.setAttribute('paint-order', 'stroke');
+            label.setAttribute('stroke', 'white');
+            label.setAttribute('stroke-width', '3');
+            label.setAttribute('pointer-events', 'none');
+            label.textContent = sprite.label;
+            layer.appendChild(label);
+          }
+        }
+      }
 
       Object.assign(canvas as unknown as Record<string, unknown>, {
         __fpClearAll: clearAll,
@@ -1264,6 +1591,14 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         },
         __fpSetReplayDots: (sprites: ReplayDotSprite[]) => {
           applyReplayDots(sprites);
+        },
+        __fpSetRooms: (sprites: RoomSprite[]) => {
+          roomSprites = sprites;
+          renderRoomsAndConnectors();
+        },
+        __fpSetRoomConnectors: (sprites: RoomConnectorSprite[]) => {
+          connectorSprites = sprites;
+          renderRoomsAndConnectors();
         },
       });
 
@@ -1302,6 +1637,26 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
             setHud(screen.x + 14, screen.y + 14, formatLength(len));
             canvas.requestRenderAll();
           }
+          return;
+        }
+
+        const connDraft = connectorDraftRef.current;
+        if (connDraft && (modeRef.current === 'door' || modeRef.current === 'window')) {
+          const raw = canvas.getScenePoint(opt.e);
+          const gridSnapped = { x: snap(raw.x), y: snap(raw.y) };
+          const epSnap = trySnapWorld(gridSnapped);
+          const tip = epSnap.snapped ? { x: epSnap.x, y: epSnap.y } : gridSnapped;
+          setSnapIndicator(epSnap.snapped ? { x: epSnap.x, y: epSnap.y } : null);
+          connDraft.previewLine.set({
+            x1: connDraft.start.x,
+            y1: connDraft.start.y,
+            x2: tip.x,
+            y2: tip.y,
+          });
+          const screen = screenFromMouse(e);
+          const len = Math.hypot(tip.x - connDraft.start.x, tip.y - connDraft.start.y);
+          setHud(screen.x + 14, screen.y + 14, formatLength(len));
+          canvas.requestRenderAll();
           return;
         }
 
@@ -1501,6 +1856,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         renderBeacons();
         renderCalibrationPoints();
         renderMarker();
+        renderRoomsAndConnectors();
       });
       canvas.on('selection:created', () => {
         emitSelection();
@@ -1626,6 +1982,11 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         if (e.key === 'Escape') {
           if (drawingRef.current?.kind === 'wall') {
             cancelWallDraft();
+            return;
+          }
+          if (connectorDraftRef.current) {
+            cancelConnectorDraft();
+            autoRevertToSelect();
             return;
           }
           if (polygonDraftRef.current) {
@@ -1759,6 +2120,15 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
             if (draft.polygon) canvas.remove(draft.polygon);
             polygonDraftRef.current = null;
           }
+          // Drop an in-progress door/window when leaving its tool.
+          if (
+            (prevMode === 'door' || prevMode === 'window') &&
+            mode !== prevMode &&
+            connectorDraftRef.current
+          ) {
+            canvas.remove(connectorDraftRef.current.previewLine);
+            connectorDraftRef.current = null;
+          }
           canvas.requestRenderAll();
         },
         setFurnitureKind: (kind) => {
@@ -1772,7 +2142,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           backfillKinds(canvas, data);
           applyLocksToAll(canvas);
           for (const obj of canvas.getObjects()) {
-            if (kindOf(obj)) obj.evented = modeRef.current === 'select';
+            if (kindOf(obj)) obj.evented = editingRef.current && modeRef.current === 'select';
           }
           canvas.renderAll();
         },
@@ -1918,6 +2288,26 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           } | null;
           c?.__fpSetReplayDots?.(sprites);
         },
+        setRooms: (sprites) => {
+          const c = fabricRef.current as unknown as {
+            __fpSetRooms?: (sprites: RoomSprite[]) => void;
+          } | null;
+          c?.__fpSetRooms?.(sprites);
+        },
+        setRoomConnectors: (sprites) => {
+          const c = fabricRef.current as unknown as {
+            __fpSetRoomConnectors?: (sprites: RoomConnectorSprite[]) => void;
+          } | null;
+          c?.__fpSetRoomConnectors?.(sprites);
+        },
+        getSelectedPolygonVertices: () => {
+          const c = fabricRef.current;
+          if (!c) return null;
+          const active = c.getActiveObject();
+          if (!(active instanceof fabric.Polygon)) return null;
+          const verts = polygonWorldVertices(active);
+          return verts.map((v) => [v.x, v.y] as [number, number]);
+        },
       }),
       [],
     );
@@ -1957,6 +2347,15 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           className="relative z-10"
         />
         <div ref={labelsLayerRef} className="pointer-events-none absolute inset-0 z-25" />
+        {/* Phase B: rooms + connectors overlay. z-15 sits above the
+            Fabric canvas (z-10) and shading (z-5) but below labels (z-25)
+            so wall length labels remain readable on top of room fills. */}
+        <svg
+          ref={roomsLayerRef}
+          className="pointer-events-none absolute inset-0 z-15"
+          width={canvasWidth}
+          height={canvasHeight}
+        />
         <div ref={handlesLayerRef} className="pointer-events-none absolute inset-0 z-30" />
         <div ref={joinsLayerRef} className="pointer-events-none absolute inset-0 z-22" />
         {/* z-30: above shading + labels, alongside endpoint handles. The

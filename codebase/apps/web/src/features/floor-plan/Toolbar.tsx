@@ -1,5 +1,7 @@
 import {
+  AppWindow,
   ChevronDown,
+  DoorOpen,
   Eraser,
   Eye,
   EyeOff,
@@ -42,10 +44,19 @@ interface ToolbarProps {
   saving: boolean;
   showDimensions: boolean;
   editing: boolean;
+  /** Count of beacons with both canvas coords set. The "Set scale from
+   *  beacons" entry is disabled below 2. */
+  placedBeaconCount: number;
   onModeChange: (mode: ToolMode) => void;
   onFurnitureKindChange: (kind: FurnitureKind) => void;
   onSetScale: () => void;
+  onSetScaleFromBeacons: () => void;
   onSetWallLength: () => void;
+  /** Phase B polish: promote the currently-selected polygon to an
+   *  addressable rooms.id entity. Enabled only while a polygon is
+   *  selected; the Place workspace wires it to read the vertices off
+   *  the canvas and open the RoomDialog with them pre-filled. */
+  onPromotePolygonToRoom: () => void;
   onSave: () => void;
   onDelete: () => void;
   onReset: () => void;
@@ -71,10 +82,13 @@ export function Toolbar({
   saving,
   showDimensions,
   editing,
+  placedBeaconCount,
   onModeChange,
   onFurnitureKindChange,
   onSetScale,
+  onSetScaleFromBeacons,
   onSetWallLength,
+  onPromotePolygonToRoom,
   onSave,
   onDelete,
   onReset,
@@ -120,6 +134,24 @@ export function Toolbar({
         onClick={() => onModeChange('polygon')}
         icon={Pentagon}
         label="Polygon"
+        disabled={toolsDisabled}
+      />
+      <div className="mx-1 h-6 w-px bg-border" />
+      {/* Door / window are click-to-place tools: click a start point, then
+          an end point, and the opening is placed on the floor plan — no
+          coordinate entry. */}
+      <ModeButton
+        active={mode === 'door'}
+        onClick={() => onModeChange('door')}
+        icon={DoorOpen}
+        label="Door"
+        disabled={toolsDisabled}
+      />
+      <ModeButton
+        active={mode === 'window'}
+        onClick={() => onModeChange('window')}
+        icon={AppWindow}
+        label="Window"
         disabled={toolsDisabled}
       />
       <div className="mx-1 h-6 w-px bg-border" />
@@ -265,16 +297,56 @@ export function Toolbar({
         </DropdownMenuContent>
       </DropdownMenu>
       <div className="mx-1 h-6 w-px bg-border" />
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={onSetScale}
-        disabled={toolsDisabled || !wallSelected}
-        title={wallSelected ? 'Anchor pixels to metres using this wall' : 'Select a wall first'}
-      >
-        <Ruler className="h-4 w-4" />
-        Set scale
-      </Button>
+      {/* Scale calibration has two ritual paths: anchor on a wall whose
+          real length you know, or anchor on two beacons whose between-
+          tape distance you know. Beacon-based is the rigorous default
+          once enough beacons are placed because the F8 pipeline already
+          treats beacon coords as ground truth. */}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={toolsDisabled}
+            title="Anchor pixels to metres"
+            className="gap-1.5"
+          >
+            <Ruler className="h-4 w-4" />
+            <span className="hidden sm:inline">Set scale</span>
+            <ChevronDown className="h-3 w-3 opacity-60" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
+          <DropdownMenuItem
+            onSelect={onSetScale}
+            disabled={!wallSelected}
+            title={wallSelected ? 'Use the selected wall as the reference' : 'Select a wall first'}
+          >
+            <Slash className="mr-2 h-4 w-4" />
+            From selected wall
+            {!wallSelected && (
+              <span className="ml-2 text-[10px] text-muted-foreground">no wall selected</span>
+            )}
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={onSetScaleFromBeacons}
+            disabled={placedBeaconCount < 2}
+            title={
+              placedBeaconCount < 2
+                ? 'Place at least two beacons in the Beacons tab first'
+                : 'Tape between two beacons and type the distance'
+            }
+          >
+            <Ruler className="mr-2 h-4 w-4" />
+            From two beacons
+            {placedBeaconCount < 2 && (
+              <span className="ml-2 text-[10px] text-muted-foreground">
+                need 2 placed ({placedBeaconCount})
+              </span>
+            )}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
       <Button
         variant="outline"
         size="sm"
@@ -291,7 +363,30 @@ export function Toolbar({
         <StretchHorizontal className="h-4 w-4" />
         Set length
       </Button>
+      {/* Inline wall-length editor: type the selected wall's real length and
+          the whole plan rescales so it measures that. Appears only with a
+          single wall selected. */}
       <span className="ml-1 text-xs text-muted-foreground">{scaleLabel}</span>
+
+      <div className="mx-1 h-6 w-px bg-border" />
+      {/* Phase B polish: convert the currently-selected Fabric polygon
+          into an addressable rooms.id entity. The polygon stays on the
+          canvas as decoration until the caregiver deletes it; the new
+          room renders via the SVG overlay layer. */}
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={onPromotePolygonToRoom}
+        disabled={toolsDisabled || selection.kind !== 'polygon'}
+        title={
+          selection.kind === 'polygon'
+            ? 'Promote this polygon to an addressable room'
+            : 'Draw a polygon and select it first'
+        }
+      >
+        <Pentagon className="h-4 w-4" />
+        Promote to room
+      </Button>
 
       <div className="ml-auto flex items-center gap-2">
         {!editing && (

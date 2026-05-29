@@ -26,7 +26,9 @@ import {
   type AlertRule,
   type AlertRuleType,
   type DataPoint,
+  type DoorProximityRule,
   type HistoryWindow,
+  type RoomTransitionRule,
   type ZoneRule,
 } from '@alzcare/shared/rules';
 import {
@@ -68,14 +70,23 @@ interface DispatchOutcome {
   details?: string;
 }
 
-const ALL_RULE_TYPES: readonly AlertRuleType[] = ['vitals', 'zone', 'fall', 'inactivity'] as const;
+const ALL_RULE_TYPES: readonly AlertRuleType[] = [
+  'vitals',
+  'zone',
+  'fall',
+  'inactivity',
+  'room_transition',
+  'door_proximity',
+] as const;
 
 /** Maps the inserted source table to the rule types it can trigger.
  *  inactivity is intentionally absent — it fires on a scheduled tick,
- *  handled by the inactivity_scan function. */
+ *  handled by the inactivity_scan function. Phase C: room_transition
+ *  and door_proximity both trigger off position_estimates, same as
+ *  zone — they're addressable variants of indoor presence rules. */
 const TRIGGER_MAP: Record<WebhookTable, AlertRuleType[]> = {
   sensor_readings: ['vitals'],
-  position_estimates: ['zone'],
+  position_estimates: ['zone', 'room_transition', 'door_proximity'],
   events: ['fall'],
 };
 
@@ -344,7 +355,9 @@ const MAX_DWELL_SECONDS = 24 * 60 * 60; // sanity cap
 
 /** Loads only the slice of history any of the active rules might need.
  *  For position_estimates inserts, that's the dwell window of any zone
- *  rule (capped). For other tables, no history is needed. */
+ *  / room_transition / door_proximity rule (capped). Phase C also
+ *  fetches the patient's active floor-plan's rooms + connectors +
+ *  scale so the new evaluators can resolve their addressable refs. */
 async function loadHistoryWindow(
   supabase: SupabaseClient,
   table: WebhookTable,
@@ -354,29 +367,111 @@ async function loadHistoryWindow(
   const empty: HistoryWindow = { positions: [], sensors: [], events: [] };
   if (table !== 'position_estimates') return empty;
 
+  const hasRoomRule = rules.some(
+    (r): r is RoomTransitionRule | DoorProximityRule =>
+      r.type === 'room_transition' || r.type === 'door_proximity',
+  );
+
+  // Max dwell across every position-triggered rule type that supports
+  // it. The 60 s buffer absorbs clock skew + DB lag so the dwell check
+  // doesn't false-negative on the boundary.
   const maxDwell = Math.min(
     MAX_DWELL_SECONDS,
     Math.max(
       0,
-      ...rules
-        .filter((r): r is ZoneRule => r.type === 'zone')
-        .map((r) => r.params.dwell_seconds ?? 0),
+      ...rules.flatMap<number>((r) => {
+        if (r.type === 'zone') return [(r as ZoneRule).params.dwell_seconds ?? 0];
+        if (r.type === 'room_transition' || r.type === 'door_proximity') {
+          return [(r as RoomTransitionRule | DoorProximityRule).params.dwell_seconds ?? 0];
+        }
+        return [];
+      }),
     ),
   );
-  if (maxDwell === 0) return empty;
 
-  const sinceIso = new Date(Date.now() - (maxDwell + 60) * 1000).toISOString();
-  const positionsRes = await supabase
-    .from('position_estimates')
-    .select(
-      'id, patient_id, recorded_at, mode, x_canvas, y_canvas, lat, lng, confidence, indoor_confidence, gps_strong, created_at',
-    )
+  const needsPositionHistory = maxDwell > 0;
+
+  let positions: PositionEstimateRow[] = [];
+  if (needsPositionHistory) {
+    const sinceIso = new Date(Date.now() - (maxDwell + 60) * 1000).toISOString();
+    const positionsRes = await supabase
+      .from('position_estimates')
+      .select(
+        'id, patient_id, recorded_at, mode, x_canvas, y_canvas, lat, lng, confidence, indoor_confidence, gps_strong, created_at',
+      )
+      .eq('patient_id', patientId)
+      .gte('recorded_at', sinceIso)
+      .order('recorded_at', { ascending: false })
+      .limit(POSITION_HISTORY_LIMIT);
+    if (!positionsRes.error) {
+      positions = (positionsRes.data ?? []) as PositionEstimateRow[];
+    }
+  }
+
+  if (!hasRoomRule) {
+    return { ...empty, positions };
+  }
+
+  // Resolve the patient's active floor plan once. Rooms + connectors are
+  // floor_plan_scoped; without an active plan the room rules can't
+  // evaluate.
+  const planRes = await supabase
+    .from('floor_plans')
+    .select('id, scale_meters_per_pixel')
     .eq('patient_id', patientId)
-    .gte('recorded_at', sinceIso)
-    .order('recorded_at', { ascending: false })
-    .limit(POSITION_HISTORY_LIMIT);
-  if (positionsRes.error) return empty;
-  return { ...empty, positions: (positionsRes.data ?? []) as PositionEstimateRow[] };
+    .eq('is_active', true)
+    .maybeSingle();
+  if (planRes.error || planRes.data == null) {
+    return { ...empty, positions };
+  }
+  const plan = planRes.data as { id: string; scale_meters_per_pixel: number | null };
+  const scaleMetersPerPixel =
+    plan.scale_meters_per_pixel != null && Number.isFinite(plan.scale_meters_per_pixel)
+      ? plan.scale_meters_per_pixel
+      : undefined;
+
+  // Fetch rooms + connectors in parallel — both are floor-plan-scoped
+  // and pure reads. Failures degrade gracefully: each individual rule
+  // skips when its referenced entity is missing from the maps.
+  const [roomsRes, connectorsRes] = await Promise.all([
+    supabase.from('rooms').select('id, polygon_canvas').eq('floor_plan_id', plan.id),
+    supabase
+      .from('room_connectors')
+      .select('id, start_x, start_y, end_x, end_y')
+      .eq('floor_plan_id', plan.id),
+  ]);
+
+  const rooms: Record<string, { polygon_canvas: [number, number][] }> = {};
+  if (!roomsRes.error) {
+    for (const r of (roomsRes.data ?? []) as Array<{
+      id: string;
+      polygon_canvas: [number, number][];
+    }>) {
+      rooms[r.id] = { polygon_canvas: r.polygon_canvas };
+    }
+  }
+  const roomConnectors: Record<
+    string,
+    { start_x: number; start_y: number; end_x: number; end_y: number }
+  > = {};
+  if (!connectorsRes.error) {
+    for (const c of (connectorsRes.data ?? []) as Array<{
+      id: string;
+      start_x: number;
+      start_y: number;
+      end_x: number;
+      end_y: number;
+    }>) {
+      roomConnectors[c.id] = {
+        start_x: c.start_x,
+        start_y: c.start_y,
+        end_x: c.end_x,
+        end_y: c.end_y,
+      };
+    }
+  }
+
+  return { ...empty, positions, rooms, roomConnectors, scaleMetersPerPixel };
 }
 
 function json(body: unknown, status: number): Response {

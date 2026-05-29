@@ -33,6 +33,12 @@ import {
   ParseBeaconArgError,
   type BeaconArg,
 } from './lib/parse-beacon-arg.ts';
+import {
+  summariseOutcomes,
+  validateScenarioExpectations,
+  type AlertLike,
+  type ScenarioFile,
+} from './lib/scenario.ts';
 
 interface TruthRow {
   recorded_at: string;
@@ -344,6 +350,113 @@ async function run(args: string[]): Promise<void> {
   process.exit(passed ? 0 : 1);
 }
 
+// ─── Phase D: scenario validation ─────────────────────────────────────
+//
+// A `scenario` is a JSON file declaring a fixture + a list of expected
+// alert outcomes. The harness replays the fixture, drains the rules
+// engine, queries `alerts` for rows created during the run, and
+// validates each expectation. Exits 0 on full pass, 1 on any failure.
+// Pure comparison logic lives in lib/scenario.ts so it's unit-testable
+// without touching the bridge or DB.
+
+async function scenario(args: string[]): Promise<void> {
+  const { values, positionals } = parseArgs({
+    args,
+    options: {
+      'bridge-url': { type: 'string', default: 'http://127.0.0.1:54321/functions/v1/mqtt_bridge' },
+      url: { type: 'string', default: 'http://127.0.0.1:54321' },
+      'service-key': { type: 'string' },
+      'allow-non-local': { type: 'boolean', default: false },
+    },
+    allowPositionals: true,
+  });
+  const scenarioPath = positionals[0];
+  if (!scenarioPath) fail('scenario: missing <scenario.json>');
+  const bridgeUrl = values['bridge-url']!;
+  const url = values.url!;
+  const serviceKey = values['service-key'] ?? process.env.SB_SERVICE_KEY;
+  if (!serviceKey) fail('scenario: --service-key (or SB_SERVICE_KEY env) required');
+  const allowNonLocal = values['allow-non-local'] === true || process.env.ALLOW_NON_LOCAL === '1';
+  assertLocalOrAllowed('Supabase URL', url, allowNonLocal);
+  assertLocalOrAllowed('bridge URL', bridgeUrl, allowNonLocal);
+
+  const raw = await readFile(scenarioPath, 'utf8');
+  const config = JSON.parse(raw) as ScenarioFile;
+  if (!config.fixture) fail('scenario: missing "fixture" path');
+  if (!config.patientId) fail('scenario: missing "patientId"');
+  if (!Array.isArray(config.expectations)) fail('scenario: "expectations" must be an array');
+
+  // Resolve fixture path relative to the scenario file location.
+  const fixturePath = resolve(dirname(scenarioPath), config.fixture);
+  const fixture = await readJsonl<SignalsMessage>(fixturePath);
+  console.log(`scenario: ${scenarioPath}`);
+  console.log(`scenario: fixture ${fixturePath} (${fixture.length} ticks)`);
+  console.log(`scenario: ${config.expectations.length} expectation(s)`);
+
+  const supabase = createClient(url, serviceKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const t0 = new Date().toISOString();
+
+  // Same replay loop as run() — pace at 1 Hz so cooldown / dwell windows
+  // behave the way they will in production.
+  let postedOk = 0;
+  for (let i = 0; i < fixture.length; i++) {
+    const sig = fixture[i]!;
+    const topic = `device/${sig.patient_id}/signals`;
+    const res = await fetch(bridgeUrl, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${serviceKey}`,
+      },
+      body: JSON.stringify({ topic, message: sig }),
+    });
+    if (res.ok) postedOk += 1;
+    else console.warn(`scenario: bridge ${res.status} on tick ${i}`);
+    if (i < fixture.length - 1) await new Promise((r) => setTimeout(r, TICK_INTERVAL_MS));
+  }
+  const drainMs = Number.isFinite(config.drainMs) ? Math.max(0, config.drainMs!) : 3000;
+  console.log(`scenario: posted ${postedOk}/${fixture.length} ticks; draining ${drainMs} ms...`);
+  await new Promise((r) => setTimeout(r, drainMs));
+
+  // Query alerts produced during the run window. Excluding rows created
+  // before t0 keeps the harness deterministic across re-runs.
+  const alertsRes = await supabase
+    .from('alerts')
+    .select('id, rule_id, severity, context, fired_at, created_at')
+    .eq('patient_id', config.patientId)
+    .gt('created_at', t0)
+    .order('fired_at', { ascending: true });
+  if (alertsRes.error) fail(`scenario: alerts query failed — ${alertsRes.error.message}`);
+
+  const alerts = ((alertsRes.data ?? []) as AlertLike[]).map((a) => ({
+    id: a.id,
+    rule_id: a.rule_id,
+    severity: a.severity,
+    context: a.context ?? {},
+  }));
+  console.log(`scenario: ${alerts.length} alert(s) fired during run`);
+
+  const outcomes = validateScenarioExpectations(config.expectations, alerts);
+  const summary = summariseOutcomes(outcomes);
+
+  console.log('');
+  console.log('=== scenario expectations ===');
+  for (const o of outcomes) {
+    const mark = o.pass ? 'PASS ✓' : 'FAIL ✗';
+    const detail =
+      o.expected === 'fires'
+        ? `${o.observed}/${o.required ?? 1} alerts`
+        : `${o.observed} alert(s) (expected 0)`;
+    console.log(`  ${mark}  ${o.name}  —  ${detail}`);
+    for (const f of o.failures) console.log(`        · ${f}`);
+  }
+  console.log('');
+  console.log(`scenario: ${summary.passed} passed, ${summary.failed} failed`);
+  process.exit(summary.pass ? 0 : 1);
+}
+
 // ─── entry point ──────────────────────────────────────────────────────
 
 const subcommand = process.argv[2];
@@ -351,6 +464,8 @@ if (subcommand === 'generate') {
   await generate(process.argv.slice(3));
 } else if (subcommand === 'run') {
   await run(process.argv.slice(3));
+} else if (subcommand === 'scenario') {
+  await scenario(process.argv.slice(3));
 } else {
   console.error('replay-signals: usage:');
   console.error('  tsx index.ts generate <output-dir> --patient-id <uuid> --device-id <uuid> \\');
@@ -358,5 +473,6 @@ if (subcommand === 'generate') {
   console.error("       --beacon 'AA:BB:CC:DD:EE:03|150,260' [...]");
   console.error('  tsx index.ts run <fixture-path> --truth <truth-path> --service-key <key> \\');
   console.error('       --patient-id <uuid>');
+  console.error('  tsx index.ts scenario <scenario.json> --service-key <key>');
   process.exit(2);
 }
