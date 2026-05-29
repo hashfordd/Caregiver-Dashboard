@@ -28,6 +28,22 @@ const config: UserConfig & { test: VitestUserConfig['test'] } = {
   server: {
     port: 5173,
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // Split the heavy, lazily-mounted vendors into their own chunks so
+        // the initial dashboard load doesn't ship the map/canvas/chart
+        // engines. Route-level React.lazy already code-splits the views
+        // that use them; this keeps each vendor in one cacheable chunk
+        // that survives app-code changes.
+        manualChunks: {
+          mapbox: ['mapbox-gl'],
+          fabric: ['fabric'],
+          charts: ['recharts'],
+        },
+      },
+    },
+  },
   test: {
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],

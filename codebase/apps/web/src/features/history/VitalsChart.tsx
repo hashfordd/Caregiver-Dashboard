@@ -15,6 +15,12 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { useVitalsHistory } from '@/lib/queries/history';
 import { formatAppTz } from '@/lib/time';
+import {
+  useTemperatureUnit,
+  celsiusToFahrenheit,
+  temperatureUnitSymbol,
+  type TemperatureUnit,
+} from '@/lib/units/temperature';
 import type { DateRange } from './types';
 
 // Dual-axis approach: HR on the left axis (physiological range 40–180 bpm),
@@ -56,7 +62,12 @@ function formatXTick(isoString: string, rangePreset: string): string {
   });
 }
 
-function CustomTooltip({ active, payload, label }: TooltipProps<number, string>) {
+function CustomTooltip({
+  active,
+  payload,
+  label,
+  tempUnit = 'c',
+}: TooltipProps<number, string> & { tempUnit?: TemperatureUnit }) {
   if (!active || !payload?.length) return null;
 
   const timeStr = formatAppTz(label as string, {
@@ -75,7 +86,9 @@ function CustomTooltip({ active, payload, label }: TooltipProps<number, string>)
         if (entry.value == null) return null;
         let formatted: string;
         if (entry.dataKey === 'temp_c') {
-          formatted = `${(entry.value as number).toFixed(1)} °C`;
+          const c = entry.value as number;
+          const shown = tempUnit === 'f' ? celsiusToFahrenheit(c) : c;
+          formatted = `${shown.toFixed(1)} ${temperatureUnitSymbol(tempUnit)}`;
         } else if (entry.dataKey === 'spo2_pct') {
           formatted = `${Math.round(entry.value as number)} %`;
         } else {
@@ -112,6 +125,7 @@ function decimate<T extends { recorded_at: string }>(rows: T[], maxPoints: numbe
 
 export function VitalsChart({ patientId, range }: Props) {
   const { data, isLoading, isError, error } = useVitalsHistory(patientId, range);
+  const tempUnit = useTemperatureUnit();
   const decimated = useMemo(() => (data ? decimate(data, MAX_POINTS) : data), [data]);
 
   if (isLoading) {
@@ -181,13 +195,13 @@ export function VitalsChart({ patientId, range }: Props) {
           tick={{ fontSize: 11 }}
           className="text-muted-foreground"
         />
-        <Tooltip content={<CustomTooltip />} />
+        <Tooltip content={<CustomTooltip tempUnit={tempUnit} />} />
         <Legend
           wrapperStyle={{ fontSize: 12 }}
           formatter={(value) => {
             if (value === 'hr_bpm') return 'HR (bpm)';
             if (value === 'spo2_pct') return 'SpO₂ (%)';
-            if (value === 'temp_c') return 'Temp (°C)';
+            if (value === 'temp_c') return `Temp (${temperatureUnitSymbol(tempUnit)})`;
             return value;
           }}
         />

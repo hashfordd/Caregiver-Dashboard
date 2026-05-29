@@ -138,7 +138,7 @@ function ConnectionStatusPill({ status, lastSeen, now }: PillProps) {
     status === 'subscribed' && !subscribedButQuiet && 'bg-accent',
     subscribedButQuiet && 'bg-amber-500',
     status === 'idle' && 'bg-muted-foreground/40 animate-pulse',
-    (status === 'disconnected' || status === 'error') && 'bg-destructive',
+    (status === 'disconnected' || status === 'error' || status === 'offline') && 'bg-destructive',
   );
 
   const label = (() => {
@@ -148,6 +148,8 @@ function ConnectionStatusPill({ status, lastSeen, now }: PillProps) {
         return 'Live';
       case 'disconnected':
         return 'Disconnected';
+      case 'offline':
+        return 'Offline — reconnecting';
       case 'error':
         return 'Error';
       case 'idle':
@@ -157,7 +159,9 @@ function ConnectionStatusPill({ status, lastSeen, now }: PillProps) {
   })();
 
   const variant: 'outline' | 'destructive' =
-    status === 'error' || status === 'disconnected' ? 'destructive' : 'outline';
+    status === 'error' || status === 'disconnected' || status === 'offline'
+      ? 'destructive'
+      : 'outline';
 
   const tooltip = freshest > 0 ? `Last update ${Math.round(ageMs / 1000)}s ago` : undefined;
 

@@ -24,7 +24,9 @@ export function App() {
             {/* Authenticated but not yet provider-bound — onboarding +
                 invite-acceptance live above the provider gate. */}
             <Route path="/onboarding" element={<OnboardingPage />} />
-            <Route path="/invite/:token" element={<AcceptInvitePage />} />
+            {/* SEC: token rides in the fragment (/invite#<token>), not the
+                path, so it stays out of server logs + Referer headers. */}
+            <Route path="/invite" element={<AcceptInvitePage />} />
             <Route element={<RequireProviderBound />}>
               <Route element={<AppLayout />}>
                 <Route path="/" element={<Navigate to="/dashboard" replace />} />

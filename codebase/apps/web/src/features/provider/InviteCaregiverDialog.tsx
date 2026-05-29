@@ -45,8 +45,12 @@ export function InviteCaregiverDialog({ open, onOpenChange }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // SEC: the token rides in the URL *fragment* (#), not the path. A
+  // fragment is never sent to the server (so it can't land in access
+  // logs) nor included in the Referer header on outbound navigation,
+  // unlike a path segment. AcceptInvitePage reads it from location.hash.
   const inviteUrl = issued
-    ? `${window.location.origin}/invite/${encodeURIComponent(issued.token)}`
+    ? `${window.location.origin}/invite#${encodeURIComponent(issued.token)}`
     : '';
 
   function handleSubmit(e: FormEvent) {

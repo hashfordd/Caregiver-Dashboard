@@ -28,6 +28,15 @@ export type { SensorReadingRow, SignalsMessage };
  *
  * Item 91: reconnect logic extracted into subscribeWithRetry so
  * useAllocatedAlerts and any future hooks get the same watchdog.
+ *
+ * Perf: `lastSeen` is updated through a leading-edge throttle rather than
+ * once per inbound message. Under multi-Hz telemetry × N patients a
+ * per-message setState cascaded a re-render through every PatientStream
+ * context consumer. The first sample in a burst applies immediately (so
+ * the header pill reacts instantly and tests observe it synchronously);
+ * further samples within COALESCE_MS collapse into a single trailing
+ * flush. Net effect: at most ~1 lastSeen render/sec instead of one per
+ * packet, with no loss of "is data flowing" fidelity.
  */
 
 export interface PositionEstimateRow {
@@ -66,7 +75,13 @@ export interface PatientStreamCallbacks {
   onError?: (error: Error) => void;
 }
 
-export type PatientStreamStatus = 'idle' | 'subscribed' | 'disconnected' | 'error';
+export type PatientStreamStatus =
+  | 'idle'
+  | 'subscribed'
+  | 'disconnected'
+  | 'error'
+  // Fast-retry budget exhausted; still retrying on the slow interval.
+  | 'offline';
 
 export interface PatientStreamLastSeen {
   sensor: number | null;
@@ -87,6 +102,11 @@ const INITIAL_LAST_SEEN: PatientStreamLastSeen = {
   signals: null,
 };
 
+// Coalescing window for lastSeen flushes. Matches the 1s relative-time
+// tick used by the dashboard grid — finer resolution buys nothing the UI
+// can show.
+const LAST_SEEN_COALESCE_MS = 1_000;
+
 export function usePatientStream(
   patientId: string | null,
   callbacks: PatientStreamCallbacks,
@@ -97,14 +117,43 @@ export function usePatientStream(
   const [status, setStatus] = useState<PatientStreamStatus>('idle');
   const [lastSeen, setLastSeen] = useState<PatientStreamLastSeen>(INITIAL_LAST_SEEN);
 
+  // Leading-edge throttle plumbing for lastSeen (see header note). The
+  // ref holds the authoritative value; setState only fires on the
+  // leading edge of a burst and once on the trailing edge.
+  const lastSeenRef = useRef<PatientStreamLastSeen>(INITIAL_LAST_SEEN);
+  const lastFlushAtRef = useRef(0);
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     if (!patientId) {
       setStatus('idle');
       setLastSeen(INITIAL_LAST_SEEN);
+      lastSeenRef.current = INITIAL_LAST_SEEN;
+      lastFlushAtRef.current = 0;
       return;
     }
 
     let signalsChannel: RealtimeChannel | null = null;
+
+    // Reset the throttle baseline for this patient session so the first
+    // sample always applies on the leading edge.
+    lastSeenRef.current = INITIAL_LAST_SEEN;
+    lastFlushAtRef.current = 0;
+
+    const bumpLastSeen = (field: keyof PatientStreamLastSeen): void => {
+      lastSeenRef.current = { ...lastSeenRef.current, [field]: Date.now() };
+      const elapsed = Date.now() - lastFlushAtRef.current;
+      if (elapsed >= LAST_SEEN_COALESCE_MS) {
+        lastFlushAtRef.current = Date.now();
+        setLastSeen(lastSeenRef.current);
+      } else if (flushTimerRef.current == null) {
+        flushTimerRef.current = setTimeout(() => {
+          flushTimerRef.current = null;
+          lastFlushAtRef.current = Date.now();
+          setLastSeen(lastSeenRef.current);
+        }, LAST_SEEN_COALESCE_MS - elapsed);
+      }
+    };
 
     const unsubscribePostgres = subscribeWithRetry({
       channelName: `patient:${patientId}`,
@@ -115,7 +164,7 @@ export function usePatientStream(
           table: 'sensor_readings',
           filter: `patient_id=eq.${patientId}`,
           onMessage: (row) => {
-            setLastSeen((prev) => ({ ...prev, sensor: Date.now() }));
+            bumpLastSeen('sensor');
             callbacksRef.current.onSensorReading?.(row as SensorReadingRow);
           },
         },
@@ -125,7 +174,7 @@ export function usePatientStream(
           table: 'position_estimates',
           filter: `patient_id=eq.${patientId}`,
           onMessage: (row) => {
-            setLastSeen((prev) => ({ ...prev, position: Date.now() }));
+            bumpLastSeen('position');
             callbacksRef.current.onPositionEstimate?.(row as PositionEstimateRow);
           },
         },
@@ -135,7 +184,7 @@ export function usePatientStream(
           table: 'alerts',
           filter: `patient_id=eq.${patientId}`,
           onMessage: (row) => {
-            setLastSeen((prev) => ({ ...prev, alert: Date.now() }));
+            bumpLastSeen('alert');
             callbacksRef.current.onAlert?.(row as AlertRow);
           },
         },
@@ -148,6 +197,7 @@ export function usePatientStream(
       onStatusChange: (s) => {
         if (s === 'CLOSED' || s === 'TIMED_OUT') setStatus('disconnected');
       },
+      onOffline: () => setStatus('offline'),
     });
 
     // F6 signals broadcast lives on its own channel because Supabase
@@ -155,12 +205,17 @@ export function usePatientStream(
     // separate subscriptions. Status of this channel isn't surfaced —
     // postgres-channel `status` is enough for the header pill, and
     // signals are best-effort by design.
+    //
+    // SEC-01: opened as a *private* channel so Realtime Authorization
+    // gates receipt by the realtime.messages RLS policy
+    // (`can_access_patient`). A caregiver can no longer subscribe to
+    // another patient's live signals by guessing the topic name.
     signalsChannel = supabase
-      .channel(`patient:${patientId}:signals`)
+      .channel(`patient:${patientId}:signals`, { config: { private: true } })
       .on('broadcast', { event: 'signals' }, (event) => {
         const payload = (event as { payload?: unknown }).payload as SignalsMessage | undefined;
         if (!payload) return;
-        setLastSeen((prev) => ({ ...prev, signals: Date.now() }));
+        bumpLastSeen('signals');
         callbacksRef.current.onSignals?.(payload);
       })
       .subscribe();
@@ -168,6 +223,10 @@ export function usePatientStream(
     return () => {
       unsubscribePostgres();
       if (signalsChannel) void supabase.removeChannel(signalsChannel);
+      if (flushTimerRef.current != null) {
+        clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = null;
+      }
       setStatus('idle');
     };
   }, [patientId]);

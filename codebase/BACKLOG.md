@@ -4,6 +4,17 @@ Items deferred from the foundational scaffold. Add new entries here rather than 
 
 Format: `- **<area>** — what + why deferred + reference (feature ID / task ID).`
 
+> **Hardening pass (resolved):** several items below are now done — see
+> [docs/HARDENING.md](./docs/HARDENING.md). Shipped: SEC-01 realtime channel
+> authorization (private channels + `realtime.messages` RLS; needs hosted
+> validation), invite token moved to the URL fragment, reconnect-never-gives-up
+>
+> - LIVE DATA LOST banner, `position_estimates` retention compactor, bridge
+>   Dockerfile + fly.toml, °C/°F caregiver preference, dashboard re-render +
+>   bundle perf, and an `npm audit` sweep (16→9, no critical/high). Console
+>   actions still outstanding: HiveMQ `dashboard-ro` ACL lockdown and Supabase
+>   JWT-expiry shortening (steps in HARDENING.md).
+
 ## Deferred during scaffold
 
 - **Vulnerability remediation** — `npm audit` reports 13 transitive vulnerabilities (4 low / 5 moderate / 3 high / 1 critical) at scaffold time. Deferred because `npm audit fix --force` would likely downgrade pinned versions; review individually and patch before any production-shaped deploy.

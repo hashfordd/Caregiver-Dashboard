@@ -1,0 +1,34 @@
+# Fly.io config for the long-running mqtt_bridge (Deno worker).
+#
+# Deploy from the codebase/ dir so packages/shared is in the build context:
+#   flyctl deploy --config apps/edge/fly.toml --dockerfile apps/edge/Dockerfile
+#
+# Secrets (NEVER commit — set once per environment):
+#   flyctl secrets set \
+#     SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... \
+#     MQTT_BROKER_URL=mqtts://...:8883 MQTT_USERNAME=... MQTT_PASSWORD=...
+#
+# This is a worker, not an HTTP service: it exposes no ports. It must run as
+# EXACTLY ONE instance — each broker message has to be processed once, so two
+# subscribers would double-process. Enforce with:  flyctl scale count 1
+
+app = "alzcare-mqtt-bridge"
+primary_region = "syd"
+
+[build]
+
+[env]
+  INGEST_SERVER_ID = "fly"
+  LOG_LEVEL = "info"
+
+[deploy]
+  # Replace the running machine outright — never run two bridges at once.
+  strategy = "immediate"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+
+# Intentionally no [http_service] / [[services]] — nothing to expose. A single
+# always-on machine subscribes to HiveMQ and writes to Supabase. Do not enable
+# auto_stop_machines: the bridge must stay up to keep monitoring live.

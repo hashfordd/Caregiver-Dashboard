@@ -1,3 +1,4 @@
+import type { PatientStreamStatus } from '@/lib/usePatientStream';
 import { MIN_SAMPLES_TOTAL } from './calibrationAggregator';
 
 export type CaptureStatus =
@@ -26,7 +27,7 @@ interface QualityReadoutProps {
   /** Stream connection status forwarded from PatientStream. Helps the
    *  caregiver distinguish "no signals because the wearable is off" from
    *  "no signals because the broker dropped". */
-  streamStatus: 'idle' | 'subscribed' | 'disconnected' | 'error';
+  streamStatus: PatientStreamStatus;
   /** Phase F item 53: seconds left in the current capture window
    *  (initial or extended). The status pill reads "Capturing… 3 s
    *  left" or "Extending… 4 s left" so caregivers know how long to

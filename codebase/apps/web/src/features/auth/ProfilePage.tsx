@@ -4,10 +4,11 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { CaregiverRole } from '@alzcare/shared';
+import { CaregiverRole, TemperatureUnit } from '@alzcare/shared';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth/AuthProvider';
 import { useCurrentCaregiver } from '@/features/provider/providerQueries';
+import { useTemperatureUnitStore } from '@/lib/units/temperature';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -24,6 +25,7 @@ const profileSchema = z.object({
   full_name: z.string().min(1, 'Required'),
   role: CaregiverRole,
   company_name: z.string().max(120).optional().or(z.literal('')),
+  temperature_unit: TemperatureUnit,
 });
 type ProfileFormValues = z.infer<typeof profileSchema>;
 
@@ -39,7 +41,7 @@ export function ProfilePage() {
 
   const form = useForm<ProfileFormValues>({
     resolver: zodResolver(profileSchema),
-    defaultValues: { full_name: '', role: 'family', company_name: '' },
+    defaultValues: { full_name: '', role: 'family', company_name: '', temperature_unit: 'c' },
   });
 
   useEffect(() => {
@@ -48,6 +50,7 @@ export function ProfilePage() {
         full_name: profileQuery.data.full_name,
         role: profileQuery.data.role,
         company_name: profileQuery.data.company_name ?? '',
+        temperature_unit: profileQuery.data.temperature_unit ?? 'c',
       });
     }
   }, [profileQuery.data, form]);
@@ -58,11 +61,17 @@ export function ProfilePage() {
         full_name: values.full_name,
         role: values.role,
         company_name: values.company_name?.trim() ? values.company_name.trim() : null,
+        temperature_unit: values.temperature_unit,
       };
       const { error } = await supabase.from('caregivers').update(payload).eq('id', user!.id);
       if (error) throw error;
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['caregiver', 'me'] }),
+    onSuccess: (_data, values) => {
+      // Reflect the new preference app-wide immediately (e.g. the history
+      // VitalsChart) without waiting for the profile query to refetch.
+      useTemperatureUnitStore.getState().setUnit(values.temperature_unit);
+      queryClient.invalidateQueries({ queryKey: ['caregiver', 'me'] });
+    },
   });
 
   if (profileQuery.isLoading) {
@@ -160,6 +169,28 @@ export function ProfilePage() {
               />
               <p className="text-xs text-muted-foreground">
                 The organisation you provide care for. Optional for family caregivers.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="temperature_unit">Temperature unit</Label>
+              <Select
+                value={form.watch('temperature_unit')}
+                onValueChange={(v) =>
+                  form.setValue('temperature_unit', v as ProfileFormValues['temperature_unit'], {
+                    shouldDirty: true,
+                  })
+                }
+              >
+                <SelectTrigger id="temperature_unit" aria-label="Temperature unit">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="c">Celsius (°C)</SelectItem>
+                  <SelectItem value="f">Fahrenheit (°F)</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                How temperatures are shown across the app. Readings are always recorded in Celsius.
               </p>
             </div>
             {updateMutation.isError && (

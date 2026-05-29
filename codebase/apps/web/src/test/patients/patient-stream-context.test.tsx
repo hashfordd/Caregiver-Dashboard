@@ -69,7 +69,10 @@ describe('PatientStreamProvider', () => {
     // position / alert) plus the F6 signals broadcast.
     expect(channelMock).toHaveBeenCalledTimes(2);
     expect(channelMock).toHaveBeenCalledWith('patient:p1');
-    expect(channelMock).toHaveBeenCalledWith('patient:p1:signals');
+    // SEC-01: signals channel is now private.
+    expect(channelMock).toHaveBeenCalledWith('patient:p1:signals', {
+      config: { private: true },
+    });
   });
 
   it('fans a single received row out to multiple registered listeners', () => {

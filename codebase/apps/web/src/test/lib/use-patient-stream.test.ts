@@ -96,7 +96,10 @@ describe('usePatientStream', () => {
       initialProps: { id: 'p1' as string | null },
     });
     expect(channelMock).toHaveBeenCalledWith('patient:p1');
-    expect(channelMock).toHaveBeenCalledWith('patient:p1:signals');
+    // SEC-01: signals channel is now opened as a private channel.
+    expect(channelMock).toHaveBeenCalledWith('patient:p1:signals', {
+      config: { private: true },
+    });
     expect(removeChannelMock).not.toHaveBeenCalled();
 
     rerender({ id: 'p2' });
@@ -105,13 +108,18 @@ describe('usePatientStream', () => {
     // subscribed leaks signals from the previous patient.
     expect(removeChannelMock).toHaveBeenCalledTimes(2);
     expect(channelMock).toHaveBeenCalledWith('patient:p2');
-    expect(channelMock).toHaveBeenCalledWith('patient:p2:signals');
+    expect(channelMock).toHaveBeenCalledWith('patient:p2:signals', {
+      config: { private: true },
+    });
   });
 
   it('opens a separate signals broadcast channel and forwards payloads via onSignals', () => {
     const onSignals = vi.fn();
     const { result } = renderHook(() => usePatientStream('p1', { onSignals }));
-    expect(channelMock).toHaveBeenCalledWith('patient:p1:signals');
+    // SEC-01: signals channel is now opened as a private channel.
+    expect(channelMock).toHaveBeenCalledWith('patient:p1:signals', {
+      config: { private: true },
+    });
     const signalsState = channels.get('patient:p1:signals')!;
     const handler = signalsState.ons.get('__broadcast:signals') as BroadcastCb;
     expect(handler).toBeTypeOf('function');

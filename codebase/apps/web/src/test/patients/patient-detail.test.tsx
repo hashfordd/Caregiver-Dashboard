@@ -146,7 +146,10 @@ describe('PatientDetailPage', () => {
       expect(channelMock).toHaveBeenCalledTimes(2);
     });
     expect(channelMock).toHaveBeenCalledWith(`patient:${PATIENT_ID}`);
-    expect(channelMock).toHaveBeenCalledWith(`patient:${PATIENT_ID}:signals`);
+    // SEC-01: signals channel is now private.
+    expect(channelMock).toHaveBeenCalledWith(`patient:${PATIENT_ID}:signals`, {
+      config: { private: true },
+    });
     expect(removeChannelMock).not.toHaveBeenCalled();
   });
 });

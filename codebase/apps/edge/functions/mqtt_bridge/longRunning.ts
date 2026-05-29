@@ -56,6 +56,11 @@ if (!BROKER_URL) {
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
+// SEC-01: authenticate the realtime socket with the service-role JWT so
+// the bridge can broadcast on *private* channels (patient:<id>:signals).
+// service_role bypasses Realtime Authorization RLS, so the bridge keeps
+// publishing while client receipt is gated by the realtime.messages policy.
+supabase.realtime.setAuth(SUPABASE_SERVICE_ROLE_KEY);
 
 const client = mqtt.connect(BROKER_URL, {
   username: MQTT_USERNAME,

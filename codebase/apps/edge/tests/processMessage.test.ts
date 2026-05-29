@@ -166,7 +166,10 @@ describe('processMessage', () => {
     const outcome = await processMessage(`device/${PATIENT_ID}/signals`, payload, supabase);
 
     expect(outcome).toMatchObject({ kind: 'signals', persisted: false, reason: 'broadcast' });
-    expect(supabase.__channelMock).toHaveBeenCalledWith(`patient:${PATIENT_ID}:signals`);
+    // SEC-01: signals broadcast channel is opened as a private channel.
+    expect(supabase.__channelMock).toHaveBeenCalledWith(`patient:${PATIENT_ID}:signals`, {
+      config: { private: true },
+    });
     expect(supabase.__sendMock).toHaveBeenCalledWith({
       type: 'broadcast',
       event: 'signals',

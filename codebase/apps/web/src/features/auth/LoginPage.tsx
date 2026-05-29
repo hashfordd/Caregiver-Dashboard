@@ -9,7 +9,7 @@ import { Card, CardContent } from '@/components/ui/card';
 
 type Mode = 'password' | 'magic';
 
-type LocationState = { from?: { pathname?: string } } | null;
+type LocationState = { from?: { pathname?: string; hash?: string } } | null;
 
 export function LoginPage() {
   const [email, setEmail] = useState('');
@@ -23,7 +23,17 @@ export function LoginPage() {
   // ProtectedRoute redirects unauthenticated users here with the original
   // location attached as state.from so we can return them to the deep
   // link after sign-in.
-  const redirectTo = (location.state as LocationState)?.from?.pathname ?? '/';
+  const from = (location.state as LocationState)?.from;
+  const redirectPath = from?.pathname ?? '/';
+  // Preserve the deep link's fragment (e.g. an /invite#<token>) across the
+  // sign-in round-trip. Magic-link omits the hash because Supabase owns the
+  // redirect URL fragment for its own tokens; the invite token then falls
+  // back to the Onboarding paste flow.
+  const redirectHash = from?.hash ?? '';
+  // Single string so react-router parses any `?query` in the path and the
+  // `#hash` correctly; equals redirectPath exactly when there's no hash, so
+  // the non-invite redirect behaviour is unchanged.
+  const redirectTo = redirectPath + redirectHash;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -34,7 +44,7 @@ export function LoginPage() {
     if (mode === 'magic') {
       const { error: otpError } = await supabase.auth.signInWithOtp({
         email,
-        options: { emailRedirectTo: window.location.origin + redirectTo },
+        options: { emailRedirectTo: window.location.origin + redirectPath },
       });
       if (otpError) setError(otpError.message);
       else setInfo('Check your email for the sign-in link.');

@@ -36,6 +36,9 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
+// SEC-01: authenticate the realtime socket with the service-role JWT so
+// the bridge can broadcast on the now-private patient:<id>:signals channel.
+supabase.realtime.setAuth(SUPABASE_SERVICE_ROLE_KEY);
 
 /** Constant-time string compare. Mirrors position_estimator + rules_engine. */
 function timingSafeEqual(a: string, b: string): boolean {

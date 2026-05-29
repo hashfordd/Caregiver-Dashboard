@@ -103,6 +103,7 @@ describe('ProfilePage', () => {
       full_name: 'Jane Q. Doe',
       role: 'family',
       company_name: 'Riverside Care',
+      temperature_unit: 'c',
     });
     expect(updateEqMock).toHaveBeenCalledWith('id', 'user-1');
   });

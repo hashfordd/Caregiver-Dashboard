@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { ChevronRight } from 'lucide-react';
 import type { AlertRow } from '@alzcare/shared';
 import { Badge } from '@/components/ui/badge';
@@ -21,7 +22,7 @@ interface LiveGridRowProps {
   onSelect: (patientId: string) => void;
 }
 
-export function LiveGridRow({
+function LiveGridRowInner({
   patient,
   latestUnackedAlert,
   now,
@@ -69,6 +70,26 @@ export function LiveGridRow({
     </button>
   );
 }
+
+// The shared 1s `now` tick changes every second for every row, so a plain
+// React.memo wouldn't help. This comparator skips the re-render unless a
+// non-clock prop changed OR the clock tick actually moves this row's
+// derived status/relative-age label — most ticks don't, for most rows.
+export const LiveGridRow = memo(LiveGridRowInner, (prev, next) => {
+  if (
+    prev.patient !== next.patient ||
+    prev.latestUnackedAlert !== next.latestUnackedAlert ||
+    prev.selected !== next.selected ||
+    prev.onSelect !== next.onSelect
+  ) {
+    return false;
+  }
+  const ts = next.patient.last_position_at;
+  return (
+    deriveConnectionStatus(ts, prev.now) === deriveConnectionStatus(ts, next.now) &&
+    formatRelativeAge(ts, prev.now) === formatRelativeAge(ts, next.now)
+  );
+});
 
 function StatusDot({ status }: { status: ReturnType<typeof deriveConnectionStatus> }) {
   const label = status === 'online' ? 'Online' : status === 'stale' ? 'Stale signal' : 'Offline';

@@ -66,7 +66,14 @@ function getSignalsChannel(supabase: SupabaseClient, patientId: string): Realtim
   }
   let channel = perClient.get(patientId);
   if (!channel) {
-    channel = supabase.channel(`patient:${patientId}:signals`);
+    // SEC-01: private channel so Realtime Authorization gates receivers.
+    // The bridge authenticates its realtime socket with the service-role
+    // JWT (see setAuth at client creation), which bypasses realtime RLS,
+    // so sending is unaffected; only client *receipt* is now scoped by
+    // the realtime.messages policy.
+    channel = supabase.channel(`patient:${patientId}:signals`, {
+      config: { private: true },
+    });
     channel.subscribe();
     perClient.set(patientId, channel);
   }

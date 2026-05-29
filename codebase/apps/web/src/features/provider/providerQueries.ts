@@ -21,7 +21,7 @@ async function fetchDirectory(): Promise<DirectoryEntry[]> {
 }
 
 const CAREGIVER_PROFILE_COLUMNS =
-  'id, email, full_name, role, company_name, care_provider_id, provider_role';
+  'id, email, full_name, role, company_name, care_provider_id, provider_role, temperature_unit';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Reads

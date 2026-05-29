@@ -80,10 +80,20 @@ function sortAscending(rows: PositionEstimateRow[]): PositionEstimateRow[] {
   return [...rows].sort((a, b) => a.recorded_at.localeCompare(b.recorded_at));
 }
 
+// `rows` is always time-ascending (hydrate sorts; push appends newer
+// samples), so expired points are a contiguous prefix. Drop them with a
+// front scan + single slice instead of a full filter that re-parses every
+// timestamp on every 1 Hz push — typically 0–1 points expire per call, so
+// the common path is O(1) and returns the input array untouched.
 function trimTo30Min(rows: PositionEstimateRow[]): PositionEstimateRow[] {
   const tail = rows[rows.length - 1];
   if (!tail) return rows;
-  const newestMs = new Date(tail.recorded_at).getTime();
-  const cutoffMs = newestMs - TRAIL_WINDOW_MS;
-  return rows.filter((r) => new Date(r.recorded_at).getTime() >= cutoffMs);
+  const cutoffMs = new Date(tail.recorded_at).getTime() - TRAIL_WINDOW_MS;
+  let start = 0;
+  while (start < rows.length) {
+    const r = rows[start]!;
+    if (new Date(r.recorded_at).getTime() >= cutoffMs) break;
+    start += 1;
+  }
+  return start === 0 ? rows : rows.slice(start);
 }
