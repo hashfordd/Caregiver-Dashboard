@@ -74,6 +74,7 @@ vi.mock('@/features/beacons/beaconQueries', () => ({
   useUpsertBeacon: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useUpdateBeaconPosition: () => ({ mutate: updatePositionMock, isPending: false }),
   useUpdateBeaconCalibration: () => ({ mutate: vi.fn(), isPending: false }),
+  useRenameBeacon: () => ({ mutate: vi.fn(), isPending: false }),
   useDeleteBeacon: () => ({
     mutate: deleteBeaconMock,
     isPending: false,

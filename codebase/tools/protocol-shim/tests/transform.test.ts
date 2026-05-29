@@ -266,8 +266,8 @@ describe('ingestTotal — combined device payload', () => {
 
     // Signals: measured BLE passed straight through (no synthesis).
     expect(r.signals?.ble).toEqual([
-      { mac: '06:05:04:03:02:21', rssi: -72 },
-      { mac: '06:05:04:03:02:31', rssi: -81 },
+      { mac: '06:05:04:03:02:21', rssi: -72, battery_pct: 58 },
+      { mac: '06:05:04:03:02:31', rssi: -81, battery_pct: 68 },
     ]);
     expect(r.signals?.gps).toBeUndefined(); // gps_status INVALID
 
