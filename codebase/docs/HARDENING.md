@@ -18,8 +18,8 @@ patient's live telemetry. Now closed via Supabase Realtime Authorization:
 - The dashboard (`usePatientStream`) and the bridge (`processMessage`) open
   the channel as **private** (`{ config: { private: true } }`).
 - The bridge calls `supabase.realtime.setAuth(SERVICE_ROLE_KEY)` so it can
-  publish to the private channel (service_role bypasses realtime RLS); only
-  client _receipt_ is gated.
+  publish to the private channel (service*role bypasses realtime RLS); only
+  client \_receipt* is gated.
 
 **Must validate against a hosted project** (local `supabase functions serve`
 doesn't run the bridge — see BACKLOG). After deploy:
