@@ -39,6 +39,16 @@ export default [
     },
   },
   {
+    // Node tooling scripts (sim/build helpers) — give them Node globals so
+    // console/process/URL/timers aren't flagged no-undef.
+    files: ['**/*.{js,mjs,cjs}'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: { ...globals.node },
+    },
+  },
+  {
     files: ['apps/web/**/*.{ts,tsx}'],
     plugins: {
       'react-hooks': reactHooks,
