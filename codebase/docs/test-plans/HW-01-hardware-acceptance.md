@@ -16,7 +16,7 @@ triangulation, and GPS.
 
 - [ ] ESP32 watch flashed with `LVGL_Arduino/Watch_Code_Broadcast_LVGL_Module.ino`,
       powered, and joined to Wi-Fi. Serial monitor shows `Published topic:
-    alzcare/site1/patient001/total` with `Publish result: SUCCESS`.
+alzcare/site1/patient001/total` with `Publish result: SUCCESS`.
 - [ ] At least 3 BLE beacons powered and physically placed in the test space.
 - [ ] The device MAC is paired to the demo patient (`devices.paired_patient_id`), and
       that patient has a saved, **scaled** floor plan with the 3–4 beacons **placed**
