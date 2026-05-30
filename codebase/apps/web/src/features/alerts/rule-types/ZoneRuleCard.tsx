@@ -1,40 +1,35 @@
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
+import { Pencil } from 'lucide-react';
 import type {
   AlertSeverity,
   IndoorZoneParams as IndoorZoneParamsT,
   ZoneRule,
 } from '@alzcare/shared';
+import { Button } from '@/components/ui/button';
 import { useDeleteAlertRule, useUpsertAlertRule } from '../useAlertRules';
 import { RulePreview } from '../RulePreview';
+import { NumberField } from '../inputs/NumberField';
 import { FieldLabel, RuleCardShell } from './RuleCardShell';
+
+// Fabric.js is heavy and only needed when the caregiver opens the picker, so
+// the on-plan zone editor is split out of the settings bundle.
+const ZonePolygonPicker = lazy(() =>
+  import('./ZonePolygonPicker').then((m) => ({ default: m.ZonePolygonPicker })),
+);
 
 interface Props {
   patientId: string;
   rule: ZoneRule | null;
 }
 
-const DEFAULT_INDOOR_PARAMS: IndoorZoneParamsT = {
-  space: 'indoor',
-  polygon: [
-    [0, 0],
-    [200, 0],
-    [200, 200],
-    [0, 200],
-  ],
-  direction: 'enter',
-  dwell_seconds: 0,
-};
-
-/** F11 V1: indoor zone polygons in floor-plan canvas coordinates. The
- *  dedicated on-canvas polygon picker is a follow-up task — for now
- *  this card exposes the polygon as JSON so caregivers can paste
- *  coordinates from the Place tab.
+/** F11 V1: indoor zone polygons in floor-plan canvas coordinates. The polygon
+ *  is drawn directly on the floor plan via ZonePolygonPicker (reusing the Place
+ *  tab's room-drawing tool) — no more pasting raw coordinate JSON.
  *
- *  Phase C: zone rules now discriminate on `params.space`. This card
- *  edits the indoor branch only (canvas pixel polygons over the patient's
- *  floor plan); the outdoor geofence editor lives on the map view. Rules
- *  loaded from the DB that are outdoor (space === 'outdoor') are
- *  rendered as "create new" because their data shape doesn't match
+ *  Phase C: zone rules discriminate on `params.space`. This card edits the
+ *  indoor branch only (canvas pixel polygons over the patient's floor plan);
+ *  outdoor geofences are edited from the map view. Rules loaded from the DB
+ *  that are outdoor render as "create new" because their shape doesn't match
  *  this card's editor. */
 export function ZoneRuleCard({ patientId, rule }: Props) {
   const upsert = useUpsertAlertRule(patientId);
@@ -49,9 +44,8 @@ export function ZoneRuleCard({ patientId, rule }: Props) {
     indoorRuleParams?.direction ?? 'enter',
   );
   const [dwellSeconds, setDwellSeconds] = useState<number>(indoorRuleParams?.dwell_seconds ?? 0);
-  const [polygonText, setPolygonText] = useState<string>(
-    JSON.stringify(indoorRuleParams?.polygon ?? DEFAULT_INDOOR_PARAMS.polygon, null, 2),
-  );
+  const [polygon, setPolygon] = useState<[number, number][]>(indoorRuleParams?.polygon ?? []);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   useEffect(() => {
     if (rule && rule.params.space === 'indoor') {
@@ -60,46 +54,20 @@ export function ZoneRuleCard({ patientId, rule }: Props) {
       setDraftEnabled(rule.enabled);
       setDirection(p.direction);
       setDwellSeconds(p.dwell_seconds);
-      setPolygonText(JSON.stringify(p.polygon, null, 2));
+      setPolygon(p.polygon);
     } else {
       setDraftSeverity('critical');
       setDraftEnabled(true);
       setDirection('enter');
       setDwellSeconds(0);
-      setPolygonText(JSON.stringify(DEFAULT_INDOOR_PARAMS.polygon, null, 2));
+      setPolygon([]);
     }
   }, [rule]);
 
-  const polygonResult = useMemo<
-    { ok: true; polygon: [number, number][] } | { ok: false; error: string }
-  >(() => {
-    try {
-      const parsed = JSON.parse(polygonText) as unknown;
-      if (
-        !Array.isArray(parsed) ||
-        parsed.length < 3 ||
-        !parsed.every(
-          (p) =>
-            Array.isArray(p) &&
-            p.length === 2 &&
-            typeof p[0] === 'number' &&
-            typeof p[1] === 'number',
-        )
-      ) {
-        return {
-          ok: false,
-          error: 'Expected an array of ≥3 [x, y] pairs in canvas coords.',
-        };
-      }
-      return { ok: true, polygon: parsed as [number, number][] };
-    } catch (err) {
-      return { ok: false, error: (err as Error).message };
-    }
-  }, [polygonText]);
-
+  const validPolygon = polygon.length >= 3;
   const validDwell = Number.isFinite(dwellSeconds) && dwellSeconds >= 0;
-  const draftParams: IndoorZoneParamsT | null = polygonResult.ok
-    ? { space: 'indoor', polygon: polygonResult.polygon, direction, dwell_seconds: dwellSeconds }
+  const draftParams: IndoorZoneParamsT | null = validPolygon
+    ? { space: 'indoor', polygon, direction, dwell_seconds: dwellSeconds }
     : null;
 
   const dirty =
@@ -109,26 +77,28 @@ export function ZoneRuleCard({ patientId, rule }: Props) {
     rule.enabled !== draftEnabled ||
     (draftParams != null && JSON.stringify(rule.params) !== JSON.stringify(draftParams));
 
-  const previewRule: ZoneRule = {
-    id: rule?.id ?? 'preview',
-    patient_id: patientId,
-    severity: draftSeverity,
-    enabled: draftEnabled,
-    type: 'zone',
-    params: draftParams ?? DEFAULT_INDOOR_PARAMS,
-    created_at: rule?.created_at ?? new Date(0).toISOString(),
-    updated_at: new Date(0).toISOString(),
-  };
+  const previewRule: ZoneRule | null = draftParams
+    ? {
+        id: rule?.id ?? 'preview',
+        patient_id: patientId,
+        severity: draftSeverity,
+        enabled: draftEnabled,
+        type: 'zone',
+        params: draftParams,
+        created_at: rule?.created_at ?? new Date(0).toISOString(),
+        updated_at: new Date(0).toISOString(),
+      }
+    : null;
 
   return (
     <RuleCardShell
-      title="Zone (indoor canvas polygon)"
+      title="Zone (indoor area)"
       type="zone"
       severity={draftSeverity}
       enabled={draftEnabled}
       onSeverityChange={setDraftSeverity}
       onEnabledChange={setDraftEnabled}
-      saveDisabled={!dirty || !polygonResult.ok || !validDwell}
+      saveDisabled={!dirty || !validPolygon || !validDwell}
       saving={upsert.isPending}
       saveError={upsert.error ? (upsert.error as Error).message : null}
       onSave={() => {
@@ -143,43 +113,72 @@ export function ZoneRuleCard({ patientId, rule }: Props) {
         });
       }}
       onDelete={isIndoorRule && rule ? () => remove.mutate(rule.id) : undefined}
-      preview={<RulePreview rule={previewRule} />}
+      preview={
+        previewRule ? (
+          <RulePreview rule={previewRule} />
+        ) : (
+          <span>Draw a zone on the floor plan to see a 24-hour preview.</span>
+        )
+      }
     >
+      <p className="text-xs text-muted-foreground">
+        Alerts when the patient enters or leaves an area you draw on the floor plan — e.g. the
+        kitchen, a stairwell, or the front hallway.
+      </p>
       <div className="grid gap-3 sm:grid-cols-2">
-        <FieldLabel label="Direction">
+        <FieldLabel label="Alert when the patient…">
           <select
             value={direction}
             onChange={(e) => setDirection(e.target.value as IndoorZoneParamsT['direction'])}
             className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
           >
-            <option value="enter">Fire on entering polygon</option>
-            <option value="exit">Fire on leaving polygon</option>
+            <option value="enter">Enters the zone</option>
+            <option value="exit">Leaves the zone</option>
           </select>
         </FieldLabel>
-        <FieldLabel label="Dwell seconds (0 = immediate)">
-          <input
-            type="number"
-            min={0}
-            value={dwellSeconds}
-            onChange={(e) => setDwellSeconds(Number(e.target.value))}
-            className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
-          />
-        </FieldLabel>
-      </div>
-      <FieldLabel label="Polygon — array of [x_canvas, y_canvas] pairs (≥3)">
-        <textarea
-          value={polygonText}
-          onChange={(e) => setPolygonText(e.target.value)}
-          rows={6}
-          className="w-full rounded-md border border-border bg-background px-2 py-1 font-mono text-xs"
+        <NumberField
+          label="Hold for"
+          description="Seconds inside/outside before alerting (0 = immediately)."
+          unit="s"
+          min={0}
+          max={600}
+          value={dwellSeconds}
+          onChange={(v) => setDwellSeconds(v ?? dwellSeconds)}
+          presets={[
+            { label: 'Now', value: 0 },
+            { label: '10 s', value: 10 },
+            { label: '30 s', value: 30 },
+            { label: '1 min', value: 60 },
+          ]}
         />
-      </FieldLabel>
-      {!polygonResult.ok && <p className="text-xs text-destructive">{polygonResult.error}</p>}
-      <p className="text-xs text-muted-foreground">
-        Coordinates are in floor-plan canvas pixels. For outdoor lat/lng geofences, edit the rule
-        from the patient's Map view instead. An on-canvas polygon picker is the next upgrade — see
-        BACKLOG.
-      </p>
+      </div>
+
+      <div className="flex items-center justify-between gap-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2">
+        <span className="text-xs text-muted-foreground">
+          {validPolygon ? `Zone drawn · ${polygon.length} corners` : 'No zone drawn yet'}
+        </span>
+        <Button type="button" size="sm" variant="outline" onClick={() => setPickerOpen(true)}>
+          <Pencil className="mr-1 h-3.5 w-3.5" />
+          {validPolygon ? 'Edit on floor plan' : 'Draw on floor plan'}
+        </Button>
+      </div>
+      {!validPolygon && (
+        <p className="text-xs text-destructive">
+          Draw a zone on the floor plan to enable this rule.
+        </p>
+      )}
+
+      {pickerOpen && (
+        <Suspense fallback={null}>
+          <ZonePolygonPicker
+            open={pickerOpen}
+            onOpenChange={setPickerOpen}
+            patientId={patientId}
+            initialPolygon={validPolygon ? polygon : null}
+            onConfirm={(verts) => setPolygon(verts)}
+          />
+        </Suspense>
+      )}
     </RuleCardShell>
   );
 }

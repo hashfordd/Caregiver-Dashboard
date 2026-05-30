@@ -8,10 +8,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { RoomRow } from '@/features/floor-plan/roomTypes';
 import { ROOM_TYPE_LABEL } from '@/features/floor-plan/roomTypes';
+import { NumberField } from '../inputs/NumberField';
 
 interface RoomTransitionRuleDialogProps {
   open: boolean;
@@ -149,16 +149,21 @@ export function RoomTransitionRuleDialog({
                 <option value="exit">Left</option>
               </select>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="rt-dwell">Dwell (seconds)</Label>
-              <Input
-                id="rt-dwell"
-                type="number"
-                min={0}
-                value={dwellSeconds}
-                onChange={(e) => setDwellSeconds(Number(e.target.value))}
-              />
-            </div>
+            <NumberField
+              label="Hold for"
+              description="Seconds before alerting (0 = immediately)."
+              unit="s"
+              min={0}
+              max={600}
+              value={dwellSeconds}
+              onChange={(v) => setDwellSeconds(v ?? dwellSeconds)}
+              presets={[
+                { label: 'Now', value: 0 },
+                { label: '10 s', value: 10 },
+                { label: '30 s', value: 30 },
+                { label: '1 min', value: 60 },
+              ]}
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
