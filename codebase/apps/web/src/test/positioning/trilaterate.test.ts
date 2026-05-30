@@ -177,6 +177,63 @@ describe('trilaterate', () => {
     expect(errM).toBeLessThan(0.1);
   });
 
+  it('drops a strong-RSSI NLOS outlier via leave-one-out (4 beacons)', () => {
+    // b-4 has the STRONGEST rssi but an NLOS-inflated distance (+4 m). A
+    // top-3-by-RSSI solver must include it (it's the strongest) and gets
+    // dragged off truth; the all-beacons + leave-one-out solver detects it
+    // as the residual-worsening anchor, drops it, and recovers truth.
+    const truth = { x: 130, y: 80 };
+    const beacons = [
+      { id: 'b-1', x: 0, y: 0, rssi: -50 },
+      { id: 'b-2', x: 260, y: 0, rssi: -52 },
+      { id: 'b-3', x: 130, y: 240, rssi: -90 },
+      { id: 'b-4-nlos', x: 260, y: 240, rssi: -48 }, // strongest, but shadowed
+    ];
+    const distances: BeaconDistance[] = beacons.map((b) => {
+      const ideal = Math.hypot(b.x - truth.x, b.y - truth.y) * SCALE;
+      return {
+        beacon_id: b.id,
+        x_canvas: b.x,
+        y_canvas: b.y,
+        rssi: b.rssi,
+        distance_m: b.id === 'b-4-nlos' ? ideal + 4 : ideal,
+      };
+    });
+    const result = trilaterate(distances, SCALE);
+    expect(result).not.toBeNull();
+    const errM = Math.hypot(result!.x_canvas - truth.x, result!.y_canvas - truth.y) * SCALE;
+    expect(errM).toBeLessThan(0.3);
+  });
+
+  it('averages down noise: 5 beacons beat 3 on mean recovery error', () => {
+    // The all-beacons weighted least-squares solve is over-determined with
+    // 5 anchors, so per-beacon distance noise averages out — a win the old
+    // top-3 solver threw away by discarding the extra two beacons.
+    const five = [
+      { id: 'b-1', x: 0, y: 0 },
+      { id: 'b-2', x: 300, y: 0 },
+      { id: 'b-3', x: 0, y: 240 },
+      { id: 'b-4', x: 300, y: 240 },
+      { id: 'b-5', x: 150, y: 300 },
+    ];
+    const truth = { x: 150, y: 120 };
+    const meanErr = (n: number): number => {
+      const errs: number[] = [];
+      for (let seed = 1; seed <= 120; seed++) {
+        const rand = rng(seed);
+        const clean = distancesFor(truth, five.slice(0, n), SCALE);
+        const noisy: BeaconDistance[] = clean.map((d) => ({
+          ...d,
+          distance_m: Math.max(0.1, d.distance_m * (1 + gaussian(rand, 0, 0.08))),
+        }));
+        const r = trilaterate(noisy, SCALE);
+        if (r) errs.push(Math.hypot(r.x_canvas - truth.x, r.y_canvas - truth.y) * SCALE);
+      }
+      return errs.reduce((a, b) => a + b, 0) / errs.length;
+    };
+    expect(meanErr(5)).toBeLessThan(meanErr(3));
+  });
+
   it('returns null when scaleMetersPerPixel is invalid', () => {
     const beacons = [
       { id: 'b-1', x: 0, y: 0 },
