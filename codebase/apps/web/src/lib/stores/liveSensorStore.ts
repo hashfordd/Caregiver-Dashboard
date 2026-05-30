@@ -1,5 +1,11 @@
 import { create } from 'zustand';
 import type { SensorReadingRow } from '@alzcare/shared';
+import {
+  classifyActivity,
+  magnitudeDeviationG,
+  nextActivitySince,
+  type ActivityState,
+} from '@/lib/activity';
 
 export type Metric = 'hr' | 'spo2' | 'temp';
 
@@ -22,6 +28,13 @@ export interface MovementState {
   gyro: { x: number; y: number; z: number } | null;
   buffer: { t: number; v: number }[];
   lastReceivedAt: number | null;
+  /** Coarse motion class derived from the latest accel/gyro reading. Stored
+   *  here (not in the card) so the Movement card, the Current Activity card,
+   *  and the position motion-gate share one definition and one "since" clock. */
+  activityState: ActivityState | null;
+  /** Epoch ms (reading time) the patient entered the current activity state —
+   *  carried forward while unchanged, reset when the class flips. */
+  activitySince: number | null;
 }
 
 const FIVE_MIN_MS = 5 * 60 * 1000;
@@ -42,7 +55,15 @@ function emptyPatient(): Record<Metric, CardState> {
 }
 
 function emptyMovement(): MovementState {
-  return { latest: null, accel: null, gyro: null, buffer: [], lastReceivedAt: null };
+  return {
+    latest: null,
+    accel: null,
+    gyro: null,
+    buffer: [],
+    lastReceivedAt: null,
+    activityState: null,
+    activitySince: null,
+  };
 }
 
 function mag3(v: { x: number; y: number; z: number }): number {
@@ -96,6 +117,13 @@ export const useLiveSensorStore = create<LiveSensorState>((set) => ({
         const buffer = [...prev.buffer, { t: recordedAt, v: magnitudeG }].filter(
           (p) => p.t >= cutoff,
         );
+        const activityState = classifyActivity(magnitudeDeviationG(magnitudeG), gyroDps);
+        const activitySince = nextActivitySince(
+          prev.activityState,
+          prev.activitySince,
+          activityState,
+          recordedAt,
+        );
         result.movement = {
           ...state.movement,
           [patientId]: {
@@ -104,6 +132,8 @@ export const useLiveSensorStore = create<LiveSensorState>((set) => ({
             gyro: row.gyro ?? null,
             buffer,
             lastReceivedAt: now,
+            activityState,
+            activitySince,
           },
         };
       }

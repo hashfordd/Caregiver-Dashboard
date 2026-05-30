@@ -2,6 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useLiveSensorStore, type Metric } from '@/lib/stores/liveSensorStore';
 import { useNow } from '@/lib/useNow';
 import { cn } from '@/lib/utils';
+import { FreshnessPip } from './FreshnessPip';
 import { Sparkline } from './Sparkline';
 
 const STALE_MS = 30 * 1000;
@@ -77,25 +78,4 @@ export function SensorCard({ patientId, metric }: SensorCardProps) {
 function formatValue(metric: Metric, value: number): string {
   if (metric === 'temp') return value.toFixed(1);
   return Math.round(value).toString();
-}
-
-function FreshnessPip({ stale, hasData }: { stale: boolean; hasData: boolean }) {
-  if (!hasData) {
-    return (
-      <span className="h-2 w-2 rounded-full bg-muted-foreground/30" aria-label="no data yet" />
-    );
-  }
-  return (
-    <span className="relative flex h-2 w-2" aria-label={stale ? 'stale' : 'fresh'}>
-      {!stale && (
-        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent/60" />
-      )}
-      <span
-        className={cn(
-          'relative inline-flex h-2 w-2 rounded-full',
-          stale ? 'bg-destructive' : 'bg-accent',
-        )}
-      />
-    </span>
-  );
 }
