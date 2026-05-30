@@ -45,6 +45,7 @@ import {
   useUpsertRoom,
   useUpsertRoomConnector,
 } from '@/features/floor-plan/roomQueries';
+import { useConnectorProximityRule } from '@/features/floor-plan/useConnectorProximityRule';
 import type { ConnectorKind, RoomConnectorRow, RoomRow } from '@/features/floor-plan/roomTypes';
 import { ScaleDialog } from '@/features/floor-plan/ScaleDialog';
 import { ScaleFromBeaconsDialog } from '@/features/floor-plan/ScaleFromBeaconsDialog';
@@ -60,6 +61,8 @@ import type {
   ToolMode,
 } from '@/features/floor-plan/types';
 import { WallLengthDialog } from '@/features/floor-plan/WallLengthDialog';
+import { useAlertRules } from '@/features/alerts/useAlertRules';
+import type { DoorProximityRule } from '@alzcare/shared/rules';
 import { BeaconsRail } from './BeaconsRail';
 import { CalibrationRail } from './CalibrationRail';
 import { FloorPlanRail } from './FloorPlanRail';
@@ -135,6 +138,8 @@ export function PlaceWorkspace({ patientId }: PlaceWorkspaceProps) {
   const deleteRoom = useDeleteRoom();
   const upsertConnector = useUpsertRoomConnector();
   const deleteConnector = useDeleteRoomConnector();
+  const connectorRules = useConnectorProximityRule({ patientId });
+  const alertRulesQuery = useAlertRules(patientId);
   const pointsQuery = useCalibrationPoints(planId);
   const deletePoint = useDeleteCalibrationPoint(planId ?? '');
 
@@ -201,6 +206,17 @@ export function PlaceWorkspace({ patientId }: PlaceWorkspaceProps) {
   const rooms = roomsQuery.data ?? [];
   const connectors = connectorsQuery.data ?? [];
   const points = useMemo(() => pointsQuery.data ?? [], [pointsQuery.data]);
+  // Build connector_id → radius_m map for the per-zone buffer controls and
+  // for the canvas proximity zone rectangles.
+  const connectorRadiusM = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const rule of alertRulesQuery.data ?? []) {
+      if (rule.type !== 'door_proximity') continue;
+      const p = rule.params as DoorProximityRule['params'];
+      if (p.connector_id) map.set(p.connector_id, p.radius_m);
+    }
+    return map;
+  }, [alertRulesQuery.data]);
   const plan = planQuery.data ?? null;
   const placementReady = plan != null && plan.scale_meters_per_pixel != null;
   // Beacon placement only writes canvas pixel coords, which don't need a
@@ -235,14 +251,29 @@ export function PlaceWorkspace({ patientId }: PlaceWorkspaceProps) {
   }, [roomsQuery.data]);
 
   useEffect(() => {
-    const saved: RoomConnectorSprite[] = (connectorsQuery.data ?? []).map((c) => ({
-      id: c.id,
-      kind: c.kind,
-      label: c.label,
-      start: { x: c.start_x, y: c.start_y },
-      end: { x: c.end_x, y: c.end_y },
-    }));
-    // Merge unsaved draws so they show on the canvas before Save persists them.
+    const rules = alertRulesQuery.data ?? [];
+    // Build connector_id → radius_m map for proximity zone rendering.
+    const radiusMap = new Map<string, number>();
+    for (const rule of rules) {
+      if (rule.type !== 'door_proximity') continue;
+      const p = rule.params as DoorProximityRule['params'];
+      if (p.connector_id) radiusMap.set(p.connector_id, p.radius_m);
+    }
+    const saved: RoomConnectorSprite[] = (connectorsQuery.data ?? []).map((c) => {
+      const radiusM = radiusMap.get(c.id);
+      const proximityRadiusPx =
+        radiusM != null && scale != null && scale > 0 ? radiusM / scale : undefined;
+      return {
+        id: c.id,
+        kind: c.kind,
+        label: c.label,
+        start: { x: c.start_x, y: c.start_y },
+        end: { x: c.end_x, y: c.end_y },
+        proximityRadiusPx,
+      };
+    });
+    // Merge unsaved draws — pending connectors don't have a paired rule yet,
+    // so render them without a zone (zone appears after Save).
     const drawn: RoomConnectorSprite[] = pendingConnectors.map((c, i) => ({
       id: `__pending-${i}`,
       kind: c.kind,
@@ -251,7 +282,7 @@ export function PlaceWorkspace({ patientId }: PlaceWorkspaceProps) {
       end: c.end,
     }));
     canvasRef.current?.setRoomConnectors([...saved, ...drawn]);
-  }, [connectorsQuery.data, pendingConnectors]);
+  }, [connectorsQuery.data, alertRulesQuery.data, pendingConnectors, scale]);
 
   // All beacons (incl. unplaced) so an arm→drop flow doesn't need a refresh.
   // The canvas only renders them in beacon-placement / calibration modes.
@@ -347,11 +378,12 @@ export function PlaceWorkspace({ patientId }: PlaceWorkspaceProps) {
     // Persist any doors/windows drawn this session now that the plan has an
     // id (the upsert returns the row even on first create). They were held
     // pending so they save WITH the plan, not before it exists.
+    // door/window connectors also provision a paired proximity alert_rule.
     const savedPlanId = (result as { id?: string }).id ?? planQuery.data?.id;
     if (savedPlanId && pendingConnectors.length > 0) {
       await Promise.all(
         pendingConnectors.map((c) =>
-          upsertConnector.mutateAsync({
+          connectorRules.createConnectorWithRule({
             patient_id: patientId,
             floor_plan_id: savedPlanId,
             kind: c.kind,
@@ -381,6 +413,7 @@ export function PlaceWorkspace({ patientId }: PlaceWorkspaceProps) {
     upsert,
     pendingConnectors,
     upsertConnector,
+    connectorRules,
   ]);
 
   const handleSave = useCallback(() => {
@@ -653,6 +686,7 @@ export function PlaceWorkspace({ patientId }: PlaceWorkspaceProps) {
                 <RoomsRail
                   rooms={rooms}
                   connectors={connectors}
+                  connectorRadiusM={connectorRadiusM}
                   roomsLoading={roomsQuery.isLoading}
                   connectorsLoading={connectorsQuery.isLoading}
                   deleteRoomPending={deleteRoom.isPending}
@@ -671,7 +705,13 @@ export function PlaceWorkspace({ patientId }: PlaceWorkspaceProps) {
                     setConnectorDialog({ open: true, initial: c, presetKind: c.kind })
                   }
                   onDeleteConnector={(c) =>
-                    deleteConnector.mutate({ id: c.id, floor_plan_id: c.floor_plan_id })
+                    void connectorRules.deleteConnectorWithRule({
+                      id: c.id,
+                      floor_plan_id: c.floor_plan_id,
+                    })
+                  }
+                  onUpdateRadius={(connectorId, radiusM) =>
+                    void connectorRules.updateConnectorRadius(connectorId, radiusM)
                   }
                 />
               </>
@@ -774,9 +814,15 @@ export function PlaceWorkspace({ patientId }: PlaceWorkspaceProps) {
             rooms={rooms}
             initial={connectorDialog.initial}
             presetKind={connectorDialog.presetKind}
-            submitting={upsertConnector.isPending}
+            submitting={upsertConnector.isPending || connectorRules.upsertConnectorPending}
             onConfirm={async (input) => {
-              await upsertConnector.mutateAsync(input);
+              // New connector: provision paired proximity rule.
+              // Edit: just update the connector (rule is already paired).
+              if (!input.id) {
+                await connectorRules.createConnectorWithRule(input);
+              } else {
+                await upsertConnector.mutateAsync(input);
+              }
             }}
           />
         </>

@@ -57,6 +57,12 @@ vi.mock('@/features/floor-plan/roomQueries', () => ({
   useDeleteRoomConnector: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
+vi.mock('@/features/alerts/useAlertRules', () => ({
+  useAlertRules: () => ({ data: [], isLoading: false, isError: false }),
+  useUpsertAlertRule: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useDeleteAlertRule: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+
 vi.mock('@/features/patients/PatientStreamContext', () => ({
   usePatientStreamContext: () => patientStreamContext.current,
   PatientStreamProvider: ({ children }: { children: ReactNode }) => children,

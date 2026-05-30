@@ -97,6 +97,22 @@ vi.mock('@/features/floor-plan/roomQueries', () => ({
   useDeleteRoomConnector: () => ({ mutate: vi.fn(), isPending: false, error: null }),
 }));
 
+vi.mock('@/features/alerts/useAlertRules', () => ({
+  useAlertRules: () => ({ data: [], isLoading: false, isError: false }),
+  useUpsertAlertRule: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useDeleteAlertRule: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+
+vi.mock('@/features/floor-plan/useConnectorProximityRule', () => ({
+  useConnectorProximityRule: () => ({
+    createConnectorWithRule: upsertConnectorMock,
+    deleteConnectorWithRule: vi.fn(),
+    updateConnectorRadius: vi.fn(),
+    upsertConnectorPending: false,
+    deleteConnectorPending: false,
+  }),
+}));
+
 vi.mock('@/features/calibration/calibrationQueries', () => ({
   useCalibrationPoints: () => ({ data: [], isLoading: false, isError: false }),
   useCaptureCalibrationPoint: () => ({ mutate: vi.fn(), isPending: false, reset: vi.fn() }),

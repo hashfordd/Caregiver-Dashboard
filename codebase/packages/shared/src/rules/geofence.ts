@@ -56,6 +56,54 @@ export function isSimplePolygon(polygon: GeofencePolygon): boolean {
   return true;
 }
 
+// ─── oriented-rectangle proximity test ───────────────────────────────────────
+
+/** Returns true when point P lies inside the oriented rectangle that
+ *  surrounds segment AB, expanded by `rPx` on all four sides.
+ *
+ *  The rectangle is axis-aligned to the segment (not to screen axes):
+ *    - the "along" axis runs from A to B, extended by rPx past each end
+ *    - the "perp" axis is orthogonal, half-width rPx on each side
+ *
+ *  This is the geometry used by the door/window proximity zone feature
+ *  when params.shape === 'rectangle'.  It is a pure function of canvas
+ *  pixel coordinates; the caller converts radius_m → rPx before calling.
+ *
+ *  Degenerate case (A === B): falls back to a circle of radius rPx. */
+export function pointInSegmentRect(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  rPx: number,
+): boolean {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+
+  if (lenSq === 0) {
+    // Degenerate segment: use a circle.
+    return (px - ax) * (px - ax) + (py - ay) * (py - ay) <= rPx * rPx;
+  }
+
+  // Project P onto the segment's local axes (along, perp).
+  // along ranges [-rPx .. len+rPx] when inside the extended rect;
+  // perp  ranges [-rPx .. +rPx]   when inside the half-width band.
+  const len = Math.sqrt(lenSq);
+  // Unit vector along A→B.
+  const ux = dx / len;
+  const uy = dy / len;
+  // Vector from A to P.
+  const apx = px - ax;
+  const apy = py - ay;
+  const along = apx * ux + apy * uy;
+  const perp = apx * -uy + apy * ux; // perpendicular component
+
+  return along >= -rPx && along <= len + rPx && perp >= -rPx && perp <= rPx;
+}
+
 function segmentsIntersect(
   p1: [number, number],
   p2: [number, number],
