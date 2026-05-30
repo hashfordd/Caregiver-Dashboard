@@ -10,7 +10,7 @@
       "headers": [
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; img-src 'self' data: blob: https://*.tiles.mapbox.com https://api.mapbox.com; font-src 'self' data:; script-src 'self' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' https://*.supabase.co https://*.supabase.in wss://*.supabase.co wss://*.supabase.in https://api.mapbox.com https://events.mapbox.com https://*.tiles.mapbox.com wss://*.hivemq.cloud; worker-src 'self' blob:; child-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+          "value": "default-src 'self'; img-src 'self' data: blob: https://*.tiles.mapbox.com https://api.mapbox.com https://vercel.live https://vercel.com; font-src 'self' data: https://vercel.live https://assets.vercel.com; script-src 'self' blob: https://vercel.live; style-src 'self' 'unsafe-inline'; connect-src 'self' https://*.supabase.co https://*.supabase.in wss://*.supabase.co wss://*.supabase.in https://api.mapbox.com https://events.mapbox.com https://*.tiles.mapbox.com wss://*.hivemq.cloud https://vercel.live wss://vercel.live; worker-src 'self' blob:; child-src 'self' blob:; frame-src 'self' https://vercel.live; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
         },
         {
           "key": "Strict-Transport-Security",
