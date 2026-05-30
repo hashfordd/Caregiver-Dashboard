@@ -12,7 +12,7 @@
 // geofence); withinTimeWindow now resolves wall-clock against
 // APP_TIMEZONE (Australia/Sydney) instead of the caller's local zone.
 
-import { APP_TIMEZONE } from '../index.ts';
+import { APP_TIMEZONE } from '../timezone.ts';
 import { pointInSegmentRect } from './geofence.ts';
 import type {
   AlertRule,

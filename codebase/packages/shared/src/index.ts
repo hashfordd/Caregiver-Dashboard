@@ -16,4 +16,4 @@ export * from './rules/index.ts';
  * canonical timezone; per-patient timezones are out of scope until
  * a future phase introduces interstate operations.
  */
-export const APP_TIMEZONE = 'Australia/Sydney';
+export { APP_TIMEZONE } from './timezone.ts';
