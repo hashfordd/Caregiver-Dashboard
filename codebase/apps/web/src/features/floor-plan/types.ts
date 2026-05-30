@@ -225,7 +225,11 @@ export interface RoomSprite {
 
 /** Phase B door / window / opening overlay. Line segment in world
  *  coords; the canvas styles it by kind (door: dashed thick, window:
- *  solid thin, opening: dotted). */
+ *  solid thin, opening: dotted).
+ *
+ *  `proximityRadiusPx` (world pixels) drives the translucent proximity
+ *  zone rectangle drawn around door/window connectors.  When omitted the
+ *  zone is not rendered (e.g. for openings or when no rule is paired). */
 export interface RoomConnectorSprite {
   id: string;
   kind: 'door' | 'window' | 'opening';
@@ -233,4 +237,8 @@ export interface RoomConnectorSprite {
   label: string | null;
   start: { x: number; y: number };
   end: { x: number; y: number };
+  /** World-pixel radius of the paired proximity zone.  When set, an
+   *  oriented rectangle is rendered around the segment.  Omit for openings
+   *  or connectors that have no paired alert rule. */
+  proximityRadiusPx?: number;
 }

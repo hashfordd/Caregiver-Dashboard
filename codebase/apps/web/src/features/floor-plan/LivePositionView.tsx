@@ -12,6 +12,8 @@ import { FloorPlanCanvas } from './FloorPlanCanvas';
 import { ModeIndicator } from './ModeIndicator';
 import { useRoomConnectors, useRooms } from './roomQueries';
 import { CONNECTOR_KIND_LABEL } from './roomTypes';
+import { useAlertRules } from '@/features/alerts/useAlertRules';
+import type { DoorProximityRule } from '@alzcare/shared/rules';
 import { computeLocationContext, extractFurniture } from './locationContext';
 import { cn } from '@/lib/utils';
 import { usePositionMarker } from './usePositionMarker';
@@ -47,6 +49,7 @@ export function LivePositionView({ patientId }: LivePositionViewProps) {
   const beaconsQuery = useBeacons(patientId);
   const roomsQuery = useRooms(planQuery.data?.id);
   const connectorsQuery = useRoomConnectors(planQuery.data?.id);
+  const alertRulesQuery = useAlertRules(patientId);
   const estimate = usePositionMarker();
   const discovered = useDiscoveredBeaconsStore((s) => s.cards[patientId]);
   const canvasRef = useRef<FloorPlanCanvasHandle | null>(null);
@@ -96,15 +99,31 @@ export function LivePositionView({ patientId }: LivePositionViewProps) {
   }, [roomsQuery.data]);
   useEffect(() => {
     const connectors = connectorsQuery.data ?? [];
-    const sprites: RoomConnectorSprite[] = connectors.map((c) => ({
-      id: c.id,
-      kind: c.kind,
-      label: c.label ?? CONNECTOR_KIND_LABEL[c.kind],
-      start: { x: c.start_x, y: c.start_y },
-      end: { x: c.end_x, y: c.end_y },
-    }));
+    const rules = alertRulesQuery.data ?? [];
+    const scale = planQuery.data?.scale_meters_per_pixel;
+    // Build a map from connector_id → radius_m for door_proximity rules so
+    // the canvas can draw the translucent zone rectangle around each door/window.
+    const radiusMap = new Map<string, number>();
+    for (const rule of rules) {
+      if (rule.type !== 'door_proximity') continue;
+      const p = rule.params as DoorProximityRule['params'];
+      if (p.connector_id) radiusMap.set(p.connector_id, p.radius_m);
+    }
+    const sprites: RoomConnectorSprite[] = connectors.map((c) => {
+      const radiusM = radiusMap.get(c.id);
+      const proximityRadiusPx =
+        radiusM != null && scale != null && scale > 0 ? radiusM / scale : undefined;
+      return {
+        id: c.id,
+        kind: c.kind,
+        label: c.label ?? CONNECTOR_KIND_LABEL[c.kind],
+        start: { x: c.start_x, y: c.start_y },
+        end: { x: c.end_x, y: c.end_y },
+        proximityRadiusPx,
+      };
+    });
     canvasRef.current?.setRoomConnectors(sprites);
-  }, [connectorsQuery.data]);
+  }, [connectorsQuery.data, alertRulesQuery.data, planQuery.data?.scale_meters_per_pixel]);
 
   // Push the latest estimate into the canvas marker. Outdoor mode and
   // null canvas coords both clear the marker (no useful indoor position

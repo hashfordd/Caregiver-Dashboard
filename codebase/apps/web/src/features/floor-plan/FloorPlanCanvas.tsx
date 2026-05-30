@@ -1637,6 +1637,59 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         for (const sprite of connectorSprites) {
           const s = screenFromWorld(sprite.start);
           const e = screenFromWorld(sprite.end);
+
+          // Proximity zone rectangle — drawn first so it sits under the
+          // segment line. Only for door/window that carry a radius.
+          if (
+            sprite.proximityRadiusPx != null &&
+            sprite.proximityRadiusPx > 0 &&
+            (sprite.kind === 'door' || sprite.kind === 'window')
+          ) {
+            const vt = canvas.viewportTransform;
+            const zoom = vt ? vt[0] : 1;
+            // Convert world-pixel radius to screen pixels.
+            const rScreen = sprite.proximityRadiusPx * zoom;
+            // Segment direction in screen space.
+            const sdx = e.x - s.x;
+            const sdy = e.y - s.y;
+            const sLen = Math.hypot(sdx, sdy);
+            if (sLen > 0) {
+              const ux = sdx / sLen;
+              const uy = sdy / sLen;
+              // Perpendicular unit vector.
+              const px = -uy;
+              const py = ux;
+              // Four corners of the oriented rectangle (end caps extend by r).
+              const corners = [
+                { x: s.x - rScreen * ux + rScreen * px, y: s.y - rScreen * uy + rScreen * py },
+                { x: s.x - rScreen * ux - rScreen * px, y: s.y - rScreen * uy - rScreen * py },
+                { x: e.x + rScreen * ux - rScreen * px, y: e.y + rScreen * uy - rScreen * py },
+                { x: e.x + rScreen * ux + rScreen * px, y: e.y + rScreen * uy + rScreen * py },
+              ];
+              const pointsStr = corners.map((c) => `${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(' ');
+              const zone = document.createElementNS(SVG_NS, 'polygon');
+              zone.setAttribute('points', pointsStr);
+              zone.setAttribute('pointer-events', 'none');
+              zone.setAttribute('data-zone-for', sprite.id);
+              if (sprite.kind === 'door') {
+                // Exit risk — warm red family, 12% opacity.
+                zone.setAttribute('fill', '#ef4444');
+                zone.setAttribute('fill-opacity', '0.12');
+                zone.setAttribute('stroke', '#ef4444');
+                zone.setAttribute('stroke-opacity', '0.40');
+              } else {
+                // Window risk — amber family, 12% opacity.
+                zone.setAttribute('fill', '#f59e0b');
+                zone.setAttribute('fill-opacity', '0.12');
+                zone.setAttribute('stroke', '#f59e0b');
+                zone.setAttribute('stroke-opacity', '0.40');
+              }
+              zone.setAttribute('stroke-width', '1');
+              zone.setAttribute('stroke-dasharray', '4 3');
+              layer.appendChild(zone);
+            }
+          }
+
           const line = document.createElementNS(SVG_NS, 'line');
           line.setAttribute('x1', String(s.x));
           line.setAttribute('y1', String(s.y));
