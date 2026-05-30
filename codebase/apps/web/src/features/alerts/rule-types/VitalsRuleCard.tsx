@@ -2,7 +2,19 @@ import { useEffect, useState } from 'react';
 import type { AlertSeverity, VitalsParams, VitalsRule } from '@alzcare/shared';
 import { useDeleteAlertRule, useUpsertAlertRule } from '../useAlertRules';
 import { RulePreview } from '../RulePreview';
+import { NumberField } from '../inputs/NumberField';
 import { FieldLabel, RuleCardShell } from './RuleCardShell';
+
+const METRIC_UNIT: Record<VitalsParams['metric'], string> = {
+  hr_bpm: 'bpm',
+  spo2_pct: '%',
+  temp_c: '°C',
+};
+const METRIC_RANGE: Record<VitalsParams['metric'], { min: number; max: number }> = {
+  hr_bpm: { min: 30, max: 220 },
+  spo2_pct: { min: 50, max: 100 },
+  temp_c: { min: 30, max: 45 },
+};
 
 interface Props {
   patientId: string;
@@ -102,31 +114,35 @@ export function VitalsRuleCard({
           {params.metric === 'temp_c' && <option value="temp_c">Temperature (°C)</option>}
         </select>
       </FieldLabel>
+      <p className="text-xs text-muted-foreground">
+        Alerts when a reading leaves the safe range. Leave a bound blank for a one-sided limit (e.g.
+        only a low-heart-rate alarm).
+      </p>
       <div className="grid gap-3 sm:grid-cols-2">
-        <FieldLabel label="Lower bound (inclusive)">
-          <input
-            type="number"
-            value={params.min ?? ''}
-            placeholder="—"
-            onChange={(e) => {
-              const v = e.target.value;
-              setParams((p) => ({ ...p, min: v === '' ? null : Number(v) }));
-            }}
-            className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
-          />
-        </FieldLabel>
-        <FieldLabel label="Upper bound (inclusive)">
-          <input
-            type="number"
-            value={params.max ?? ''}
-            placeholder="—"
-            onChange={(e) => {
-              const v = e.target.value;
-              setParams((p) => ({ ...p, max: v === '' ? null : Number(v) }));
-            }}
-            className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
-          />
-        </FieldLabel>
+        <NumberField
+          label="Lower bound (inclusive)"
+          unit={METRIC_UNIT[params.metric]}
+          allowEmpty
+          min={METRIC_RANGE[params.metric].min}
+          max={METRIC_RANGE[params.metric].max}
+          step={params.metric === 'temp_c' ? 0.1 : 1}
+          placeholder="No low limit"
+          value={params.min}
+          onChange={(v) => setParams((p) => ({ ...p, min: v }))}
+          invalid={!validRange}
+        />
+        <NumberField
+          label="Upper bound (inclusive)"
+          unit={METRIC_UNIT[params.metric]}
+          allowEmpty
+          min={METRIC_RANGE[params.metric].min}
+          max={METRIC_RANGE[params.metric].max}
+          step={params.metric === 'temp_c' ? 0.1 : 1}
+          placeholder="No high limit"
+          value={params.max}
+          onChange={(v) => setParams((p) => ({ ...p, max: v }))}
+          invalid={!validRange}
+        />
       </div>
       {!validRange && (
         <p className="text-xs text-destructive">Lower bound must be less than upper bound.</p>

@@ -8,9 +8,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { CONNECTOR_KIND_LABEL, type RoomConnectorRow } from '@/features/floor-plan/roomTypes';
+import { NumberField } from '../inputs/NumberField';
 
 interface DoorProximityRuleDialogProps {
   open: boolean;
@@ -142,27 +142,37 @@ export function DoorProximityRuleDialog({
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label htmlFor="dp-radius">Radius (metres)</Label>
-              <Input
-                id="dp-radius"
-                type="number"
-                step="0.1"
-                min={0.1}
-                value={radiusM}
-                onChange={(e) => setRadiusM(Number(e.target.value))}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="dp-dwell">Dwell (seconds)</Label>
-              <Input
-                id="dp-dwell"
-                type="number"
-                min={0}
-                value={dwellSeconds}
-                onChange={(e) => setDwellSeconds(Number(e.target.value))}
-              />
-            </div>
+            <NumberField
+              label="Distance from the door"
+              description="How close counts as “at the door”."
+              unit="m"
+              min={0.5}
+              max={5}
+              step={0.5}
+              value={radiusM}
+              onChange={(v) => setRadiusM(v ?? radiusM)}
+              presets={[
+                { label: '0.5 m', value: 0.5 },
+                { label: '1 m', value: 1 },
+                { label: '1.5 m', value: 1.5 },
+                { label: '2 m', value: 2 },
+              ]}
+            />
+            <NumberField
+              label="Hold for"
+              description="Seconds spent near it before alerting (0 = immediately)."
+              unit="s"
+              min={0}
+              max={600}
+              value={dwellSeconds}
+              onChange={(v) => setDwellSeconds(v ?? dwellSeconds)}
+              presets={[
+                { label: 'Now', value: 0 },
+                { label: '10 s', value: 10 },
+                { label: '30 s', value: 30 },
+                { label: '1 min', value: 60 },
+              ]}
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-3">

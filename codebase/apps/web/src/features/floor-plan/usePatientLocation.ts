@@ -38,31 +38,23 @@ export function usePatientLocation(
     [planQuery.data?.canvas_json],
   );
 
-  const pos =
-    estimate != null &&
-    estimate.mode === 'indoor' &&
-    estimate.x_canvas != null &&
-    estimate.y_canvas != null
-      ? { x: estimate.x_canvas, y: estimate.y_canvas }
-      : null;
+  // Primitive deps (not a fresh {x,y} object each render) so the memo is stable.
+  const x = estimate?.mode === 'indoor' ? estimate.x_canvas : null;
+  const y = estimate?.mode === 'indoor' ? estimate.y_canvas : null;
+  const scale = planQuery.data?.scale_meters_per_pixel ?? null;
 
   return useMemo(() => {
-    if (pos == null) return { context: null, roomName: null };
+    if (x == null || y == null) return { context: null, roomName: null };
+    const pos = { x, y };
     const rooms = roomsQuery.data ?? [];
     const context = computeLocationContext(
       pos,
       rooms,
       connectorsQuery.data ?? [],
       furniture,
-      planQuery.data?.scale_meters_per_pixel ?? null,
+      scale,
     );
     const roomName = rooms.find((r) => pointInPolygon(pos, r.polygon_canvas))?.name ?? null;
     return { context, roomName };
-  }, [
-    pos,
-    roomsQuery.data,
-    connectorsQuery.data,
-    furniture,
-    planQuery.data?.scale_meters_per_pixel,
-  ]);
+  }, [x, y, roomsQuery.data, connectorsQuery.data, furniture, scale]);
 }
