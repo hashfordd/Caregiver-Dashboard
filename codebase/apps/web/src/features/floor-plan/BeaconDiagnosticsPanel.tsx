@@ -46,10 +46,16 @@ export function BeaconDiagnosticsPanel({ patientId }: BeaconDiagnosticsPanelProp
   const rows = useMemo(() => {
     const beacons = beaconsQuery.data ?? [];
     const cards = discovered ?? {};
+    // Case-insensitive MAC match: the ESP32 reports lowercase, placed beacons
+    // may be stored uppercase. Fold the discovery keys to lowercase once and
+    // look up each beacon by its lowercased MAC.
+    const cardsByMac = new Map(
+      Object.entries(cards).map(([mac, sample]) => [mac.toLowerCase(), sample]),
+    );
     return beacons
       .filter((b) => b.x_canvas != null && b.y_canvas != null)
       .map((b) => {
-        const card = cards[b.mac_address];
+        const card = cardsByMac.get(b.mac_address.toLowerCase());
         const rssi = card?.lastRssi ?? null;
         const ageMs = card?.lastSeen != null ? nowMs - card.lastSeen : null;
         const rssi1m = b.rssi_at_1m ?? DEFAULT_RSSI_AT_1M;

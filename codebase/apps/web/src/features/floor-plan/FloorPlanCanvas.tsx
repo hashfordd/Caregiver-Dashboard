@@ -638,14 +638,44 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       // periodic label rebuild (after:render) doesn't yank the focused field.
       let labelEditActive = false;
 
+      // Resize a single wall to a real-world length at the CURRENT scale: keep
+      // its start point and angle, move only the far end. Crucially this does
+      // NOT touch the global scale, so every other wall keeps its own length —
+      // setting one wall to 8.1 m never rescales the rest of the plan. (Mirrors
+      // setSelectedWallLength but targets the specific line whose label was
+      // edited rather than the active selection.)
+      function resizeWallToLength(line: fabric.Line, metres: number, scaleMPerPx: number) {
+        const ends = lineWorldEndpoints(line);
+        const dx = ends.end.x - ends.start.x;
+        const dy = ends.end.y - ends.start.y;
+        const currentPx = Math.hypot(dx, dy);
+        if (currentPx === 0) return;
+        const ratio = metres / scaleMPerPx / currentPx;
+        line.set({
+          x1: ends.start.x,
+          y1: ends.start.y,
+          x2: ends.start.x + dx * ratio,
+          y2: ends.start.y + dy * ratio,
+          scaleX: 1,
+          scaleY: 1,
+          angle: 0,
+        });
+        line.setCoords();
+        canonicaliseLine(line);
+        emitDirty();
+        snapshot();
+        canvas.requestRenderAll();
+      }
+
       // A length label. When editing AND `editable` is supplied, it becomes a
-      // metres input positioned on the wall/edge — type the real length and
-      // the plan recalibrates scale from this segment's pixel length. This is
-      // how both individual walls and polygon-room edges get sized in place.
+      // metres input positioned on the wall/edge. For a wall (editable.wall set)
+      // typing a length RESIZES just that wall at the current scale. For a
+      // polygon room-edge (no wall object), or before any scale exists, it
+      // calibrates the plan scale from this segment's pixel length instead.
       function makeLabel(
         text: string,
         screen: WorldPoint,
-        editable?: { pixelLength: number },
+        editable?: { pixelLength: number; wall?: fabric.Line },
       ): HTMLDivElement {
         const el = document.createElement('div');
         el.className = LABEL_CLASS;
@@ -667,7 +697,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           input.type = 'text';
           input.value = metres != null ? metres.toFixed(2) : '';
           input.placeholder = 'm';
-          input.title = 'Type this wall’s real length in metres to scale the plan';
+          input.title = editable.wall
+            ? 'Type this wall’s real length in metres to resize it'
+            : 'Type this edge’s real length in metres to scale the plan';
           input.setAttribute('aria-label', 'Wall length in metres');
           input.className = 'w-12 bg-transparent text-center outline-none';
           input.addEventListener('pointerdown', (e) => e.stopPropagation());
@@ -689,7 +721,17 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
             labelEditActive = false;
             const v = Number(input.value.replace(/[^0-9.]/g, ''));
             if (Number.isFinite(v) && v > 0) {
-              onDimensionCommitRef.current?.(editable.pixelLength, v);
+              const sNow = scaleRef.current;
+              if (editable.wall && sNow != null && sNow > 0) {
+                // Scale is already known → resize THIS wall to the typed length
+                // and leave the global scale (and every other wall) untouched.
+                resizeWallToLength(editable.wall, v, sNow);
+              } else {
+                // No scale yet (first measurement bootstraps it) or a polygon
+                // room-edge (not a resizable wall object) → calibrate the plan
+                // scale from this segment instead.
+                onDimensionCommitRef.current?.(editable.pixelLength, v);
+              }
             }
             renderLabelsAndJoins();
           });
@@ -742,7 +784,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                   x: midScreen.x + perp.x * offset,
                   y: midScreen.y + perp.y * offset,
                 },
-                { pixelLength: len },
+                { pixelLength: len, wall: obj },
               ),
             );
           } else if (k === 'room' && obj instanceof fabric.Polygon) {

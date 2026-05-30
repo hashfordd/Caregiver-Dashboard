@@ -78,14 +78,17 @@ export function rssiVectorToDistances(
   beacons: BeaconRow[],
   exponent: number = DEFAULT_PATH_LOSS_EXPONENT,
 ): BeaconDistance[] {
+  // MAC matching is case-insensitive: the ESP32 (Bluedroid) reports addresses
+  // lowercase while a placed/typed beacon MAC may be stored uppercase. Fold both
+  // sides to lowercase so a case difference never silently drops a beacon.
   const rssiByMac = new Map<string, number>();
   for (const sample of observation) {
-    if (Number.isFinite(sample.rssi)) rssiByMac.set(sample.mac, sample.rssi);
+    if (Number.isFinite(sample.rssi)) rssiByMac.set(sample.mac.toLowerCase(), sample.rssi);
   }
   const out: BeaconDistance[] = [];
   for (const beacon of beacons) {
     if (beacon.x_canvas == null || beacon.y_canvas == null) continue;
-    const rssi = rssiByMac.get(beacon.mac_address);
+    const rssi = rssiByMac.get(beacon.mac_address.toLowerCase());
     if (rssi === undefined) continue;
     let rssi1m = beacon.rssi_at_1m;
     if (rssi1m == null) {
