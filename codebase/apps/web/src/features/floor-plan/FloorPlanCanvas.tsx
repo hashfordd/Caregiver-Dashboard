@@ -667,6 +667,44 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         canvas.requestRenderAll();
       }
 
+      // Resize ONE edge of a polygon room to a real-world length at the current
+      // scale by scaling the whole room along that edge's dominant axis, anchored
+      // at the room's top-left. A rectangular room stays rectangular: editing a
+      // horizontal edge sets the width (both horizontal edges), a vertical edge
+      // sets the height — perpendicular edges keep their length. The GLOBAL scale
+      // is untouched, so furniture and every other object keep their real size.
+      function resizeRoomEdgeToLength(
+        poly: fabric.Polygon,
+        edgeIndex: number,
+        metres: number,
+        scaleMPerPx: number,
+      ) {
+        const verts = polygonWorldVertices(poly);
+        if (verts.length < 2) return;
+        const a = verts[edgeIndex]!;
+        const b = verts[(edgeIndex + 1) % verts.length]!;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const edgeLen = Math.hypot(dx, dy);
+        if (edgeLen === 0) return;
+        const ratio = metres / scaleMPerPx / edgeLen;
+        const xs = verts.map((v) => v.x);
+        const ys = verts.map((v) => v.y);
+        const minX = Math.min(...xs);
+        const minY = Math.min(...ys);
+        const horizontal = Math.abs(dx) >= Math.abs(dy);
+        const next = verts.map((v) =>
+          horizontal
+            ? { x: minX + (v.x - minX) * ratio, y: v.y }
+            : { x: v.x, y: minY + (v.y - minY) * ratio },
+        );
+        setPolygonVertices(poly, next);
+        poly.setCoords();
+        emitDirty();
+        snapshot();
+        canvas.requestRenderAll();
+      }
+
       // A length label. When editing AND `editable` is supplied, it becomes a
       // metres input positioned on the wall/edge. For a wall (editable.wall set)
       // typing a length RESIZES just that wall at the current scale. For a
@@ -675,7 +713,11 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       function makeLabel(
         text: string,
         screen: WorldPoint,
-        editable?: { pixelLength: number; wall?: fabric.Line },
+        editable?: {
+          pixelLength: number;
+          wall?: fabric.Line;
+          roomEdge?: { poly: fabric.Polygon; index: number };
+        },
       ): HTMLDivElement {
         const el = document.createElement('div');
         el.className = LABEL_CLASS;
@@ -699,7 +741,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           input.placeholder = 'm';
           input.title = editable.wall
             ? 'Type this wall’s real length in metres to resize it'
-            : 'Type this edge’s real length in metres to scale the plan';
+            : editable.roomEdge
+              ? 'Type this edge’s real length in metres to resize the room'
+              : 'Type this edge’s real length in metres to scale the plan';
           input.setAttribute('aria-label', 'Wall length in metres');
           input.className = 'w-12 bg-transparent text-center outline-none';
           input.addEventListener('pointerdown', (e) => e.stopPropagation());
@@ -726,10 +770,13 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                 // Scale is already known → resize THIS wall to the typed length
                 // and leave the global scale (and every other wall) untouched.
                 resizeWallToLength(editable.wall, v, sNow);
+              } else if (editable.roomEdge && sNow != null && sNow > 0) {
+                // Scale known → resize the room along this edge (keeps the room
+                // rectangular, leaves the global scale + other objects alone).
+                resizeRoomEdgeToLength(editable.roomEdge.poly, editable.roomEdge.index, v, sNow);
               } else {
-                // No scale yet (first measurement bootstraps it) or a polygon
-                // room-edge (not a resizable wall object) → calibrate the plan
-                // scale from this segment instead.
+                // No scale yet (first measurement bootstraps it) → calibrate the
+                // plan scale from this segment instead.
                 onDimensionCommitRef.current?.(editable.pixelLength, v);
               }
             }
@@ -790,7 +837,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           } else if (k === 'room' && obj instanceof fabric.Polygon) {
             // Polygon rooms aren't made of selectable wall objects, so label
             // each EDGE with its length — editable so the caregiver can set a
-            // known room wall and scale the whole plan from it.
+            // room dimension and the room resizes along that edge's axis.
             const verts = polygonWorldVertices(obj);
             for (let i = 0; i < verts.length; i++) {
               const a = verts[i]!;
@@ -806,7 +853,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                 makeLabel(
                   formatLength(len),
                   { x: midScreen.x + perp.x * offset, y: midScreen.y + perp.y * offset },
-                  { pixelLength: len },
+                  { pixelLength: len, roomEdge: { poly: obj, index: i } },
                 ),
               );
             }
