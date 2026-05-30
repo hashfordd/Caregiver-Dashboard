@@ -45,6 +45,7 @@ import {
   useUpsertRoom,
   useUpsertRoomConnector,
 } from '@/features/floor-plan/roomQueries';
+import { useConnectorProximityRule } from '@/features/floor-plan/useConnectorProximityRule';
 import type { ConnectorKind, RoomConnectorRow, RoomRow } from '@/features/floor-plan/roomTypes';
 import { ScaleDialog } from '@/features/floor-plan/ScaleDialog';
 import { ScaleFromBeaconsDialog } from '@/features/floor-plan/ScaleFromBeaconsDialog';
@@ -135,6 +136,7 @@ export function PlaceWorkspace({ patientId }: PlaceWorkspaceProps) {
   const deleteRoom = useDeleteRoom();
   const upsertConnector = useUpsertRoomConnector();
   const deleteConnector = useDeleteRoomConnector();
+  const connectorRules = useConnectorProximityRule({ patientId });
   const pointsQuery = useCalibrationPoints(planId);
   const deletePoint = useDeleteCalibrationPoint(planId ?? '');
 
@@ -347,11 +349,12 @@ export function PlaceWorkspace({ patientId }: PlaceWorkspaceProps) {
     // Persist any doors/windows drawn this session now that the plan has an
     // id (the upsert returns the row even on first create). They were held
     // pending so they save WITH the plan, not before it exists.
+    // door/window connectors also provision a paired proximity alert_rule.
     const savedPlanId = (result as { id?: string }).id ?? planQuery.data?.id;
     if (savedPlanId && pendingConnectors.length > 0) {
       await Promise.all(
         pendingConnectors.map((c) =>
-          upsertConnector.mutateAsync({
+          connectorRules.createConnectorWithRule({
             patient_id: patientId,
             floor_plan_id: savedPlanId,
             kind: c.kind,
@@ -381,6 +384,7 @@ export function PlaceWorkspace({ patientId }: PlaceWorkspaceProps) {
     upsert,
     pendingConnectors,
     upsertConnector,
+    connectorRules,
   ]);
 
   const handleSave = useCallback(() => {
@@ -671,7 +675,10 @@ export function PlaceWorkspace({ patientId }: PlaceWorkspaceProps) {
                     setConnectorDialog({ open: true, initial: c, presetKind: c.kind })
                   }
                   onDeleteConnector={(c) =>
-                    deleteConnector.mutate({ id: c.id, floor_plan_id: c.floor_plan_id })
+                    void connectorRules.deleteConnectorWithRule({
+                      id: c.id,
+                      floor_plan_id: c.floor_plan_id,
+                    })
                   }
                 />
               </>
@@ -774,9 +781,15 @@ export function PlaceWorkspace({ patientId }: PlaceWorkspaceProps) {
             rooms={rooms}
             initial={connectorDialog.initial}
             presetKind={connectorDialog.presetKind}
-            submitting={upsertConnector.isPending}
+            submitting={upsertConnector.isPending || connectorRules.upsertConnectorPending}
             onConfirm={async (input) => {
-              await upsertConnector.mutateAsync(input);
+              // New connector: provision paired proximity rule.
+              // Edit: just update the connector (rule is already paired).
+              if (!input.id) {
+                await connectorRules.createConnectorWithRule(input);
+              } else {
+                await upsertConnector.mutateAsync(input);
+              }
             }}
           />
         </>
