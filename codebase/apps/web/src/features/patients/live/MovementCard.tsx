@@ -2,44 +2,19 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useLiveSensorStore } from '@/lib/stores/liveSensorStore';
 import { useNow } from '@/lib/useNow';
 import { cn } from '@/lib/utils';
+import { ACTIVITY_LABEL, activityColor } from '@/lib/activity';
+import { FreshnessPip } from './FreshnessPip';
 import { Sparkline } from './Sparkline';
 
 const STALE_MS = 30 * 1000;
-
-// Activity classification from accel magnitude deviation from 1 g (rest) plus
-// gyro rotation rate. Tuned for the QMI8658 at rest (~1 g, a few deg/s of noise);
-// a single spike is left to the existing fall rule — this card reflects sustained
-// motion level. Thresholds are intentionally simple + adjustable.
-const REST_DEV_G = 0.08; // |magnitude - 1g| below this ⇒ essentially still
-const LIGHT_DEV_G = 0.3;
-const REST_GYRO_DPS = 20;
-const LIGHT_GYRO_DPS = 90;
-
-type Activity = 'resting' | 'light' | 'active';
-
-function classify(devG: number, gyroDps: number): Activity {
-  if (devG < REST_DEV_G && gyroDps < REST_GYRO_DPS) return 'resting';
-  if (devG < LIGHT_DEV_G && gyroDps < LIGHT_GYRO_DPS) return 'light';
-  return 'active';
-}
-
-const ACTIVITY_LABEL: Record<Activity, string> = {
-  resting: 'Resting',
-  light: 'Light activity',
-  active: 'Active',
-};
-
-function activityColor(a: Activity, stale: boolean): string {
-  if (stale) return 'text-destructive';
-  if (a === 'resting') return 'text-muted-foreground';
-  if (a === 'light') return 'text-foreground';
-  return 'text-amber-500 dark:text-amber-400';
-}
 
 interface MovementCardProps {
   patientId: string;
 }
 
+// The wearable reports heart rate + a 6-axis IMU (no SpO₂/temperature), so the
+// movement card reflects the sustained motion level classified in the store
+// (resting / light / active). A single spike is left to the fall rule.
 export function MovementCard({ patientId }: MovementCardProps) {
   const movement = useLiveSensorStore((s) => s.movement[patientId]);
   const now = useNow(1000);
@@ -49,8 +24,7 @@ export function MovementCard({ patientId }: MovementCardProps) {
   const ageSeconds = lastReceivedAt != null ? Math.round((now - lastReceivedAt) / 1000) : null;
 
   const latest = movement?.latest ?? null;
-  const devG = latest ? Math.abs(latest.magnitudeG - 1) : 0;
-  const activity = latest ? classify(devG, latest.gyroDps) : null;
+  const activity = movement?.activityState ?? null;
 
   return (
     <Card className="relative overflow-hidden">
@@ -92,26 +66,5 @@ export function MovementCard({ patientId }: MovementCardProps) {
         )}
       </CardContent>
     </Card>
-  );
-}
-
-function FreshnessPip({ stale, hasData }: { stale: boolean; hasData: boolean }) {
-  if (!hasData) {
-    return (
-      <span className="h-2 w-2 rounded-full bg-muted-foreground/30" aria-label="no data yet" />
-    );
-  }
-  return (
-    <span className="relative flex h-2 w-2" aria-label={stale ? 'stale' : 'fresh'}>
-      {!stale && (
-        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent/60" />
-      )}
-      <span
-        className={cn(
-          'relative inline-flex h-2 w-2 rounded-full',
-          stale ? 'bg-destructive' : 'bg-accent',
-        )}
-      />
-    </span>
   );
 }

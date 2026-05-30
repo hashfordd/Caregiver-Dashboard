@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { AlertSeverity, InactivityParams, InactivityRule } from '@alzcare/shared';
 import { useDeleteAlertRule, useUpsertAlertRule } from '../useAlertRules';
 import { RulePreview } from '../RulePreview';
+import { NumberField } from '../inputs/NumberField';
 import { FieldLabel, RuleCardShell } from './RuleCardShell';
 
 interface Props {
@@ -77,15 +78,22 @@ export function InactivityRuleCard({ patientId, rule }: Props) {
       onDelete={rule ? () => remove.mutate(rule.id) : undefined}
       preview={<RulePreview rule={previewRule} />}
     >
-      <FieldLabel label="Trigger after this many minutes without movement">
-        <input
-          type="number"
-          min={1}
-          value={params.inactive_minutes}
-          onChange={(e) => setParams((p) => ({ ...p, inactive_minutes: Number(e.target.value) }))}
-          className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
-        />
-      </FieldLabel>
+      <NumberField
+        label="Alert after this long without movement"
+        description="Flags a patient who hasn't moved within the floor plan for the chosen time."
+        unit="min"
+        min={1}
+        max={1440}
+        value={params.inactive_minutes}
+        onChange={(v) => setParams((p) => ({ ...p, inactive_minutes: v ?? p.inactive_minutes }))}
+        presets={[
+          { label: '30 min', value: 30 },
+          { label: '1 hr', value: 60 },
+          { label: '2 hr', value: 120 },
+          { label: '4 hr', value: 240 },
+        ]}
+        invalid={!validMinutes}
+      />
       <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
         <input
           type="checkbox"

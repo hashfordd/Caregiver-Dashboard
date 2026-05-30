@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import type { AlertSeverity, DeviceSilenceParams, DeviceSilenceRule } from '@alzcare/shared';
 import { useDeleteAlertRule, useUpsertAlertRule } from '../useAlertRules';
 import { RulePreview } from '../RulePreview';
-import { FieldLabel, RuleCardShell } from './RuleCardShell';
+import { NumberField } from '../inputs/NumberField';
+import { RuleCardShell } from './RuleCardShell';
 
 // Item 131: device_silence — fires when the patient's wearable hasn't
 // reported in N minutes. Distinct from inactivity ("patient not moving
@@ -78,15 +79,22 @@ export function DeviceSilenceRuleCard({ patientId, rule }: Props) {
       onDelete={rule ? () => remove.mutate(rule.id) : undefined}
       preview={<RulePreview rule={previewRule} />}
     >
-      <FieldLabel label="Trigger when the wearable hasn't reported for this many minutes">
-        <input
-          type="number"
-          min={1}
-          value={params.silence_minutes}
-          onChange={(e) => setParams((p) => ({ ...p, silence_minutes: Number(e.target.value) }))}
-          className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
-        />
-      </FieldLabel>
+      <NumberField
+        label="Alert when the wearable goes quiet for this long"
+        description="Catches a flat battery, a removed band, or lost connectivity — the device simply stopped reporting."
+        unit="min"
+        min={1}
+        max={1440}
+        value={params.silence_minutes}
+        onChange={(v) => setParams((p) => ({ ...p, silence_minutes: v ?? p.silence_minutes }))}
+        presets={[
+          { label: '5 min', value: 5 },
+          { label: '15 min', value: 15 },
+          { label: '30 min', value: 30 },
+          { label: '1 hr', value: 60 },
+        ]}
+        invalid={!validMinutes}
+      />
     </RuleCardShell>
   );
 }
