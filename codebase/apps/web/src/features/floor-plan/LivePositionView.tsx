@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { LayoutGrid, MapPin } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -14,9 +14,9 @@ import { useRoomConnectors, useRooms } from './roomQueries';
 import { CONNECTOR_KIND_LABEL } from './roomTypes';
 import { useAlertRules } from '@/features/alerts/useAlertRules';
 import type { DoorProximityRule } from '@alzcare/shared/rules';
-import { computeLocationContext, extractFurniture } from './locationContext';
 import { cn } from '@/lib/utils';
-import { usePositionMarker } from './usePositionMarker';
+import { useGatedPositionMarker } from './useGatedPositionMarker';
+import { usePatientLocation } from './usePatientLocation';
 import type {
   BeaconSprite,
   FloorPlanCanvasHandle,
@@ -50,7 +50,9 @@ export function LivePositionView({ patientId }: LivePositionViewProps) {
   const roomsQuery = useRooms(planQuery.data?.id);
   const connectorsQuery = useRoomConnectors(planQuery.data?.id);
   const alertRulesQuery = useAlertRules(patientId);
-  const estimate = usePositionMarker();
+  // Motion-gated estimate: holds a resting patient still and lightly smooths a
+  // moving one, so the marker and the location badge below stop jittering.
+  const estimate = useGatedPositionMarker();
   const discovered = useDiscoveredBeaconsStore((s) => s.cards[patientId]);
   const canvasRef = useRef<FloorPlanCanvasHandle | null>(null);
   // Item 94: 5 s tick drives the stale ring transition. Cheaper than
@@ -151,35 +153,10 @@ export function LivePositionView({ patientId }: LivePositionViewProps) {
     canvasRef.current?.setPatientMarker(sprite);
   }, [estimate, nowMs]);
 
-  // Floor-plan intelligence: derive a human "where / doing what" context from
-  // the live indoor position vs placed furniture, rooms, and doors/windows.
-  const furniture = useMemo(
-    () => extractFurniture(planQuery.data?.canvas_json ?? null),
-    [planQuery.data?.canvas_json],
-  );
-  const locCtx = useMemo(() => {
-    if (
-      estimate == null ||
-      estimate.mode !== 'indoor' ||
-      estimate.x_canvas == null ||
-      estimate.y_canvas == null
-    ) {
-      return null;
-    }
-    return computeLocationContext(
-      { x: estimate.x_canvas, y: estimate.y_canvas },
-      roomsQuery.data ?? [],
-      connectorsQuery.data ?? [],
-      furniture,
-      planQuery.data?.scale_meters_per_pixel ?? null,
-    );
-  }, [
-    estimate,
-    roomsQuery.data,
-    connectorsQuery.data,
-    furniture,
-    planQuery.data?.scale_meters_per_pixel,
-  ]);
+  // Floor-plan intelligence: derive a human "where / doing what" badge from the
+  // (gated) indoor position vs placed furniture, rooms, and doors/windows. The
+  // same hook feeds the Current Activity card so both phrase it identically.
+  const { context: locCtx } = usePatientLocation(patientId, estimate);
 
   if (planQuery.isLoading) {
     return (
@@ -251,6 +228,7 @@ export function LivePositionView({ patientId }: LivePositionViewProps) {
           <p className="text-xs text-muted-foreground">
             Last update {new Date(estimate.recorded_at).toLocaleTimeString()} · confidence{' '}
             {((estimate.confidence ?? 0) * 100).toFixed(0)}%
+            {estimate.held && ' · holding (at rest)'}
           </p>
         )}
         {estimate != null && estimate.mode === 'outdoor' && (
