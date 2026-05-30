@@ -10,6 +10,7 @@ import {
 import { useDiscoveredBeaconsStore } from '@/lib/stores/discoveredBeaconsStore';
 import { useLiveSensorStore } from '@/lib/stores/liveSensorStore';
 import { useBrokerTelemetry } from '@/lib/broker/useBrokerTelemetry';
+import { useBrokerSignals } from '@/lib/broker/useBrokerSignals';
 
 type Listener<T> = (row: T) => void;
 type Unsubscribe = () => void;
@@ -41,9 +42,13 @@ export function PatientStreamProvider({
   const alertListeners = useRef<Set<Listener<AlertRow>>>(new Set());
   const signalsListeners = useRef<Set<Listener<SignalsMessage>>>(new Set());
 
-  // Low-latency vitals straight from the broker (supplements the Supabase
-  // realtime path below, which stays as the persistence-backed fallback).
+  // Low-latency vitals + BLE discovery straight from the broker (supplement the
+  // Supabase realtime/broadcast paths below, which stay as fallbacks). Without
+  // the signals subscription, beacon discovery only worked while the
+  // mqtt_bridge was republishing — a broker-connected dashboard saw vitals but
+  // no beacons.
   useBrokerTelemetry(patientId);
+  useBrokerSignals(patientId);
 
   const handle = usePatientStream(patientId, {
     onSensorReading: (row) => {
