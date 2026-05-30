@@ -5,12 +5,14 @@
     The provided LVGL library file must be installed first
 ******************************************************************************/
 #include "LVGL_Driver.h"
+#include "esp_heap_caps.h"
 
 static lv_disp_draw_buf_t draw_buf;
-static lv_color_t buf1[ LVGL_BUF_LEN ];
-static lv_color_t buf2[ LVGL_BUF_LEN ];
-// static lv_color_t* buf1 = (lv_color_t*) heap_caps_malloc(LVGL_BUF_LEN, MALLOC_CAP_SPIRAM);
-// static lv_color_t* buf2 = (lv_color_t*) heap_caps_malloc(LVGL_BUF_LEN, MALLOC_CAP_SPIRAM);
+// The LVGL draw buffers live in PSRAM so the ~11 KB they used to occupy in
+// internal SRAM stays free for the BLE controller. Allocated in Lvgl_Init();
+// falls back to internal RAM if PSRAM is disabled so the display still works.
+static lv_color_t* buf1 = NULL;
+static lv_color_t* buf2 = NULL;
     
 
 
@@ -53,6 +55,15 @@ void example_increase_lvgl_tick(void *arg)
 void Lvgl_Init(void)
 {
   lv_init();
+
+  // Allocate the draw buffers in PSRAM (keeps internal SRAM free for BLE). Fall
+  // back to internal RAM if PSRAM is unavailable so the screen still comes up.
+  const size_t bufBytes = LVGL_BUF_LEN * sizeof(lv_color_t);
+  buf1 = (lv_color_t*) heap_caps_malloc(bufBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  buf2 = (lv_color_t*) heap_caps_malloc(bufBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (buf1 == NULL) buf1 = (lv_color_t*) heap_caps_malloc(bufBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (buf2 == NULL) buf2 = (lv_color_t*) heap_caps_malloc(bufBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+
   lv_disp_draw_buf_init( &draw_buf, buf1, buf2, LVGL_BUF_LEN);
 
   /*Initialize the display*/

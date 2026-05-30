@@ -53,16 +53,54 @@ Then **Upload**. If it stalls at "Connecting…", hold **BOOT**, tap **RESET**, 
 
 ## Network / pairing
 
-- WiFi + MQTT credentials and the device MAC live in **`secrets.h`** (gitignored;
-  copy `secrets.example.h` → `secrets.h` and fill in). ESP32 is **2.4 GHz only**.
-- It publishes to `alzcare/site1/patient001/total` and identifies itself by the
-  `SECRET_DEVICE_MAC` in `secrets.h`.
+- WiFi + broker credentials and this device's MAC live in `secrets.h`
+  (gitignored). Copy `secrets.example.h` → `secrets.h` and fill in
+  `SECRET_WIFI_SSID` / `SECRET_WIFI_PASS` for your network (ESP32 is
+  **2.4 GHz only**), plus the HiveMQ host/user/pass and `SECRET_DEVICE_MAC`.
+- It publishes to `alzcare/site1/patient001/total` and identifies itself by
+  the `device_mac` from `SECRET_DEVICE_MAC`.
 - **Pair that MAC** in the dashboard ("Set up hardware" → Pair) and run the ingest
   (`cd codebase && SB_SERVICE_KEY=… npm run stack:up`) so the shim/bridge route the
   data to a patient. An unpaired MAC is dropped.
 
-> Broker credentials are embedded in the sketch (as in the original firmware).
-> Keep this folder private if that matters for your repo.
+> Broker credentials are read from `secrets.h` (gitignored), so real values
+> never land in the committed sketch.
+
+## BLE + WiFi + TLS coexistence
+
+The watch runs WiFi, a TLS/MQTT connection, **and** the BLE beacon scanner on
+one ESP32‑S3. All three share the limited internal SRAM, and the TLS handshake
+in particular needs a large **contiguous** free block. If BLE is initialized
+before MQTT connects, it fragments the heap and the TLS handshake fails — the
+watch then publishes **nothing** (every publish is gated on `client.connected()`).
+
+Two things make all three fit on the ESP32‑S3's limited internal SRAM:
+
+1. **NimBLE instead of Bluedroid.** The firmware uses the **NimBLE** BLE stack
+   (`#include <NimBLEDevice.h>`), which is ~50–100 KB lighter than the default
+   Bluedroid stack — the standard fix for BLE + WiFi + TLS coexistence on ESP32.
+   **You must install it:** Arduino IDE → *Tools → Manage Libraries* → search
+   **"NimBLE-Arduino"** → install **version 1.4.x** (the code targets the 1.4.x
+   API: `NimBLEAdvertisedDeviceCallbacks` / `onResult(NimBLEAdvertisedDevice*)`,
+   and `getManufacturerData()` returns `std::string`; 2.x renamed these).
+2. **LVGL draw buffers in PSRAM.** `LVGL_Driver.cpp` allocates the screen
+   buffers from PSRAM (`heap_caps_malloc(..., MALLOC_CAP_SPIRAM)`), freeing the
+   ~11 KB they used to take in internal SRAM. **Enable PSRAM:** Arduino IDE →
+   *Tools → PSRAM → OPI PSRAM*. (If PSRAM is off, it falls back to internal RAM
+   and the display still works, but BLE may be starved again.)
+
+BLE is also brought up **lazily**: `Watch_Setup()` doesn't touch BLE;
+`Watch_Loop()` calls `setup_ble()` ~3 s after the first successful MQTT connect,
+once TLS already holds its contiguous block. `setup_ble()` then checks
+`ESP.getMaxAllocHeap()` and **skips BLE if there still isn't room** (rather than
+crash/reboot), so HR / IMU / GPS / battery / fall keep streaming regardless.
+
+Watch the serial log:
+
+- `[heap@ble] free=… largest=…` then `BLE scanner ready` → BLE is scanning;
+  `ble_status` in the payload reads `SCANNING` and `ble_devices` fills in.
+- `BLE: heap too low — skipping scanner` → still out of internal RAM. Confirm
+  **PSRAM is enabled** (point 2 above); that's the usual cause.
 
 ## Source
 

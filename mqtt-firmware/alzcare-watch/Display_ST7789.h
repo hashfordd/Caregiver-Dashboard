@@ -1,8 +1,8 @@
 #pragma once
 #include <Arduino.h>
 #include <SPI.h>
-#define LCD_WIDTH   172 //LCD width
-#define LCD_HEIGHT  320 //LCD height
+#define LCD_WIDTH   320 // landscape logical width
+#define LCD_HEIGHT  172 // landscape logical height
 
 #define SPIFreq                        80000000
 #define EXAMPLE_PIN_NUM_MISO           -1
@@ -19,8 +19,8 @@
 #define VERTICAL   0
 #define HORIZONTAL 1
 
-#define Offset_X 34
-#define Offset_Y 0
+#define Offset_X 0
+#define Offset_Y 34
 
 extern uint8_t LCD_Backlight;
 

@@ -39,10 +39,10 @@
 #include "MAX30105.h"
 #include "heartRate.h"
 
-#include <BLEDevice.h>
-#include <BLEUtils.h>
-#include <BLEScan.h>
-#include <BLEAdvertisedDevice.h>
+// Lightweight BLE stack. Install "NimBLE-Arduino" (1.4.x) via the Arduino
+// Library Manager. NimBLE uses ~50-100 KB less RAM than the default Bluedroid
+// stack, so the BLE scanner fits alongside WiFi + TLS + LVGL on the ESP32-S3.
+#include <NimBLEDevice.h>
 #include "BAT_Driver.h"
 
 // ==========================================================================
@@ -117,8 +117,17 @@ float gy_dps = 0;
 float gz_dps = 0;
 
 // ================= BLE Scanner Settings =================
-BLEScan* pBLEScan;
+NimBLEScan* pBLEScan;
 bool bleEnabled = false;  // true only if BLE init succeeds; gates the loop scan
+
+// BLE is initialized LAZILY — only after MQTT/TLS has connected once. Bluedroid's
+// BLE stack grabs a large contiguous heap block; bringing it up BEFORE the TLS
+// handshake leaves mbedTLS without the contiguous RAM it needs, so the broker
+// connection never establishes and NOTHING publishes. By deferring BLE until the
+// connection is live, TLS gets its block first and BLE takes what remains (and
+// skips cleanly if there genuinely isn't room — connectivity is never sacrificed).
+bool bleInitDone = false;
+unsigned long firstMqttConnectTime = 0;
 
 #define TARGET_COMPANY_ID 0x0505
 #define MAX_BLE_DEVICES 8
@@ -152,7 +161,11 @@ const unsigned long batteryReadInterval = 1000;
 unsigned long lastBleScanTime = 0;
 const unsigned long bleScanInterval = 5000;
 float localBatteryVolts = 0.0;
+float filteredBatteryVolts = 0.0;
+float lastBatterySampleVolts = 0.0;
 int localBatteryPercent = 0;
+int chargeTrendScore = 0;
+bool localBatteryCharging = false;
 bool lastMqttPublishOk = false;
 unsigned long lastMqttReconnectAttemptTime = 0;
 const unsigned long mqttReconnectInterval = 15000;
@@ -164,11 +177,11 @@ unsigned long lastBootPressTime = 0;
 bool attentionRequestPending = false;
 
 // ================= Utility: Convert Manufacturer Data to HEX =================
-String manufacturerDataToHex(String data) {
+String manufacturerDataToHex(const std::string& data) {
   String hexString = "";
 
-  for (int i = 0; i < data.length(); i++) {
-    uint8_t value = (uint8_t)data.charAt(i);
+  for (size_t i = 0; i < data.length(); i++) {
+    uint8_t value = (uint8_t)data[i];
 
     if (value < 16) {
       hexString += "0";
@@ -176,7 +189,7 @@ String manufacturerDataToHex(String data) {
 
     hexString += String(value, HEX);
 
-    if (i < data.length() - 1) {
+    if (i + 1 < data.length()) {
       hexString += " ";
     }
   }
@@ -242,13 +255,14 @@ void updateBLEDevice(
 }
 
 // ================= BLE Callback =================
-class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
-  void onResult(BLEAdvertisedDevice advertisedDevice) {
-    if (!advertisedDevice.haveManufacturerData()) {
+class MyAdvertisedDeviceCallbacks : public NimBLEAdvertisedDeviceCallbacks {
+  void onResult(NimBLEAdvertisedDevice* advertisedDevice) {
+    if (!advertisedDevice->haveManufacturerData()) {
       return;
     }
 
-    String mData = advertisedDevice.getManufacturerData();
+    // NimBLE returns manufacturer data as std::string (binary-safe).
+    std::string mData = advertisedDevice->getManufacturerData();
 
     if (mData.length() < 4) {
       return;
@@ -257,20 +271,20 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
     // Company ID is little-endian:
     // byte 0 = low byte
     // byte 1 = high byte
-    uint16_t companyID = ((uint8_t)mData.charAt(1) << 8) | (uint8_t)mData.charAt(0);
+    uint16_t companyID = ((uint8_t)mData[1] << 8) | (uint8_t)mData[0];
 
     if (companyID != TARGET_COMPANY_ID) {
       return;
     }
 
     // Raw ADC is also taken from bytes 2 and 3
-    uint16_t rawADC = ((uint8_t)mData.charAt(3) << 8) | (uint8_t)mData.charAt(2);
+    uint16_t rawADC = ((uint8_t)mData[3] << 8) | (uint8_t)mData[2];
 
     if (rawADC > 2047) {
       return;
     }
 
-    int rssi = advertisedDevice.getRSSI();
+    int rssi = advertisedDevice->getRSSI();
 
     float voltage = rawADC * 0.00322019;
 
@@ -281,7 +295,7 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
     );
 
     String rawHex = manufacturerDataToHex(mData);
-    String mac = advertisedDevice.getAddress().toString().c_str();
+    String mac = advertisedDevice->getAddress().toString().c_str();
 
     updateBLEDevice(
       mac,
@@ -412,6 +426,11 @@ void reconnect() {
     Serial.print("MQTT connection confirmed. Client ID: ");
     Serial.println(clientId);
     publishMqttStatus(clientId);
+    // Mark the first live connection so Watch_Loop() can bring BLE up afterwards
+    // (TLS already has its contiguous heap block at this point).
+    if (firstMqttConnectTime == 0) {
+      firstMqttConnectTime = millis();
+    }
   } else {
     int state = client.state();
     Serial.print("failed, rc=");
@@ -566,19 +585,23 @@ void setup_ble() {
     bleDevices[i].valid = false;
   }
 
-  // NimBLE needs a big contiguous heap block. After WiFi+TLS the internal RAM
-  // is tight; if it is too low, SKIP BLE instead of letting init hard-crash and
-  // reboot the watch. HR/IMU/GPS/fall keep publishing; only positioning is lost.
+  // NimBLE's BLE controller still needs a contiguous internal-RAM block, but its
+  // host stack is far lighter than Bluedroid, so this fits where Bluedroid did
+  // not. This runs AFTER MQTT/TLS is connected, so the reading reflects real
+  // steady-state headroom. If the largest free block is still too small, SKIP
+  // BLE rather than let init crash/reboot — HR/IMU/GPS/battery/fall keep
+  // publishing; only BLE positioning is lost. (If this still fires, free more
+  // internal RAM: confirm PSRAM is enabled so the LVGL buffers move off-chip.)
   Serial.printf("[heap@ble] free=%u largest=%u\n", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-  if (ESP.getMaxAllocHeap() < 80000) {
+  if (ESP.getMaxAllocHeap() < 40000) {
     Serial.println("BLE: heap too low — skipping scanner (positioning off, NO reboot).");
     bleEnabled = false;
     return;
   }
 
-  BLEDevice::init("ESP32S3-MQTT-BLE-SCANNER");
+  NimBLEDevice::init("ESP32S3-MQTT-BLE-SCANNER");
 
-  pBLEScan = BLEDevice::getScan();
+  pBLEScan = NimBLEDevice::getScan();
   pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks(), true);
 
   // Passive scan is usually better when you only need advertising data.
@@ -690,6 +713,7 @@ void PM_SetWatchData(
   bool last_publish_ok,
   float battery_volts,
   int battery_percent,
+  bool battery_charging,
   bool sos_prompt_visible,
   bool attention_requested,
   bool sos_confirmed_visible
@@ -725,18 +749,58 @@ void handle_sos_button() {
 }
 
 int localBatteryPercentFromVolts(float volts) {
-  return constrain(
-    (int)(((volts - V_MIN) / (V_MAX - V_MIN)) * 100.0f + 0.5f),
-    0,
-    100
-  );
+  const float voltage_points[] = {
+    3.30f, 3.50f, 3.60f, 3.70f, 3.75f, 3.79f,
+    3.85f, 3.92f, 4.00f, 4.10f, 4.20f
+  };
+  const int percent_points[] = {
+    0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100
+  };
+  const int count = sizeof(percent_points) / sizeof(percent_points[0]);
+
+  if (volts <= voltage_points[0]) return percent_points[0];
+  if (volts >= voltage_points[count - 1]) return percent_points[count - 1];
+
+  for (int i = 1; i < count; i++) {
+    if (volts <= voltage_points[i]) {
+      float span = voltage_points[i] - voltage_points[i - 1];
+      float ratio = (volts - voltage_points[i - 1]) / span;
+      return percent_points[i - 1] + (int)((percent_points[i] - percent_points[i - 1]) * ratio + 0.5f);
+    }
+  }
+
+  return 0;
+}
+
+void updateLocalBatteryState(float measuredVolts) {
+  if (filteredBatteryVolts <= 0.01f) {
+    filteredBatteryVolts = measuredVolts;
+  } else {
+    filteredBatteryVolts = (filteredBatteryVolts * 0.85f) + (measuredVolts * 0.15f);
+  }
+
+  if (lastBatterySampleVolts > 0.01f) {
+    float delta = measuredVolts - lastBatterySampleVolts;
+
+    if (delta > 0.006f) {
+      chargeTrendScore++;
+    } else if (delta < -0.004f) {
+      chargeTrendScore--;
+    }
+
+    chargeTrendScore = constrain(chargeTrendScore, 0, 8);
+  }
+
+  lastBatterySampleVolts = measuredVolts;
+  localBatteryCharging = (chargeTrendScore >= 3) || (measuredVolts >= 4.18f);
+  localBatteryVolts = filteredBatteryVolts;
+  localBatteryPercent = localBatteryPercentFromVolts(filteredBatteryVolts);
 }
 
 void refresh_display_bridge() {
   if (millis() - lastBatteryReadTime >= batteryReadInterval || localBatteryVolts <= 0.01f) {
     lastBatteryReadTime = millis();
-    localBatteryVolts = BAT_Get_Volts();
-    localBatteryPercent = localBatteryPercentFromVolts(localBatteryVolts);
+    updateLocalBatteryState(BAT_Get_Volts());
   }
 
   double latitude = 0.0;
@@ -767,6 +831,7 @@ void refresh_display_bridge() {
     lastMqttPublishOk,
     localBatteryVolts,
     localBatteryPercent,
+    localBatteryCharging,
     isSosPromptVisible(),
     attentionRequestPending,
     isSosConfirmedVisible()
@@ -783,8 +848,7 @@ void Watch_Setup() {
   neogps.begin(9600, SERIAL_8N1, GPS_RXD, GPS_TXD);
   pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
   BAT_Init();
-  localBatteryVolts = BAT_Get_Volts();
-  localBatteryPercent = localBatteryPercentFromVolts(localBatteryVolts);
+  updateLocalBatteryState(BAT_Get_Volts());
 
   setup_max30102();
   setup_imu();
@@ -798,10 +862,9 @@ void Watch_Setup() {
   client.setKeepAlive(60);
   client.setSocketTimeout(15);
 
-  // BLE/positioning DISABLED for stability: NimBLE + WiFi/TLS together overflow
-  // the ESP32-S3 internal RAM (BLE init crashed). With BLE off, MQTT/TLS connects
-  // reliably from loop() once WiFi is up. Re-enable after moving buffers to PSRAM.
-  // setup_ble();
+  // NOTE: BLE is NOT started here. It is brought up lazily from Watch_Loop() a
+  // few seconds after the first successful MQTT/TLS connection, so the TLS
+  // handshake gets its contiguous heap block first. See setup_ble() / bleInitDone.
 
   Serial.println("System ready.");
 }
@@ -829,6 +892,14 @@ void Watch_Loop() {
 
   if (client.connected()) {
     client.loop();
+  }
+
+  // Bring BLE up once, ~3s after MQTT first connects (the heap has settled and we
+  // can measure real headroom). If there isn't room, setup_ble() skips and every
+  // other topic keeps publishing.
+  if (!bleInitDone && firstMqttConnectTime != 0 && millis() - firstMqttConnectTime >= 3000) {
+    bleInitDone = true;
+    setup_ble();
   }
 
   if (millis() - lastPublishTime >= publishInterval) {
@@ -905,6 +976,18 @@ void Watch_Loop() {
     payload += String(localBatteryPercent);
     payload += ",";
 
+    payload += "\"device_battery_charging\":";
+    payload += localBatteryCharging ? "true" : "false";
+    payload += ",";
+
+    payload += "\"device_battery_adc_raw\":";
+    payload += String(BAT_adcRaw);
+    payload += ",";
+
+    payload += "\"device_battery_adc_mv\":";
+    payload += String(BAT_adcMilliVolts);
+    payload += ",";
+
     // ================= PATIENT ATTENTION REQUEST =================
     payload += "\"patient_requests_attention\":";
     payload += attentionRequestPending ? "true" : "false";
@@ -943,7 +1026,9 @@ void Watch_Loop() {
     payload += ",";
 
     // ================= BLE DATA =================
-    payload += "\"ble_status\":\"SCANNING\",";
+    payload += "\"ble_status\":\"";
+    payload += bleEnabled ? "SCANNING" : "DISABLED";
+    payload += "\",";
     payload += "\"ble_company_filter\":\"0x0505\",";
     payload += "\"ble_device_count\":";
     payload += String(countBLEDevices());
