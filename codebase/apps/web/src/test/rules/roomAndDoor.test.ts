@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   evaluateRule,
   pointToSegmentDistance,
+  pointInSegmentRect,
   type AlertRule,
   type DataPoint,
   type DoorProximityRule,
@@ -244,5 +245,95 @@ describe('evaluateRule — door_proximity', () => {
       row: pe({ mode: 'outdoor', x_canvas: null, y_canvas: null, lat: 0, lng: 0 }),
     };
     expect(evaluateRule(rule, dp, HISTORY).fire).toBe(false);
+  });
+});
+
+describe('pointInSegmentRect', () => {
+  // Horizontal segment: A=(0,0) B=(100,0), radius=10.
+  // The oriented rect spans x in [-10, 110], y in [-10, 10].
+
+  it('returns true for a point on the segment interior', () => {
+    expect(pointInSegmentRect(50, 0, 0, 0, 100, 0, 10)).toBe(true);
+  });
+
+  it('returns true for a point inside the perp band beside the middle', () => {
+    expect(pointInSegmentRect(50, 9, 0, 0, 100, 0, 10)).toBe(true);
+    expect(pointInSegmentRect(50, -9, 0, 0, 100, 0, 10)).toBe(true);
+  });
+
+  it('returns false for a point outside the perp band', () => {
+    expect(pointInSegmentRect(50, 11, 0, 0, 100, 0, 10)).toBe(false);
+    expect(pointInSegmentRect(50, -11, 0, 0, 100, 0, 10)).toBe(false);
+  });
+
+  it('returns true inside the end caps (extended by radius past endpoints)', () => {
+    // Left end cap: x in [-10, 0], perp within ±10.
+    expect(pointInSegmentRect(-9, 0, 0, 0, 100, 0, 10)).toBe(true);
+    // Right end cap: x in [100, 110].
+    expect(pointInSegmentRect(109, 0, 0, 0, 100, 0, 10)).toBe(true);
+  });
+
+  it('returns false outside the end caps', () => {
+    expect(pointInSegmentRect(-11, 0, 0, 0, 100, 0, 10)).toBe(false);
+    expect(pointInSegmentRect(111, 0, 0, 0, 100, 0, 10)).toBe(false);
+  });
+
+  it('handles a degenerate (zero-length) segment as a circle', () => {
+    // Point at (3, 4): distance = 5 from origin.
+    expect(pointInSegmentRect(3, 4, 0, 0, 0, 0, 5)).toBe(true);
+    expect(pointInSegmentRect(3, 4, 0, 0, 0, 0, 4)).toBe(false);
+  });
+
+  it('works for a diagonal segment', () => {
+    // Segment A=(0,0) B=(10,10). Unit along = (1/√2, 1/√2).
+    // Point at (5, 5) is the midpoint → on the segment → inside with r=1.
+    expect(pointInSegmentRect(5, 5, 0, 0, 10, 10, 1)).toBe(true);
+    // Point at (5, 7) is 2/√2 ≈ 1.41 px from the line → outside r=1.
+    expect(pointInSegmentRect(5, 7, 0, 0, 10, 10, 1)).toBe(false);
+    // Point at (5, 6) is 1/√2 ≈ 0.71 px from the line → inside r=1.
+    expect(pointInSegmentRect(5, 6, 0, 0, 10, 10, 1)).toBe(true);
+  });
+});
+
+describe('evaluateRule — door_proximity (shape=rectangle)', () => {
+  // FRONT_DOOR: horizontal segment x=[200..220], y=100. scale 0.02 m/px.
+  // radius_m=1.0 → radiusPx=50. Rect spans x=[150..270], y=[50..150].
+
+  it('fires when the position is inside the rectangle zone', () => {
+    const rule: AlertRule = doorProximityRule({
+      params: { connector_id: CONNECTOR_ID, radius_m: 1.0, dwell_seconds: 0, shape: 'rectangle' },
+    });
+    // Position squarely inside the rect (beside the door, within 50 px along).
+    const dp: DataPoint = { kind: 'position_estimate', row: pe({ x_canvas: 210, y_canvas: 130 }) };
+    const result = evaluateRule(rule, dp, HISTORY);
+    expect(result.fire).toBe(true);
+  });
+
+  it('does not fire when the position is outside the rectangle zone', () => {
+    const rule: AlertRule = doorProximityRule({
+      params: { connector_id: CONNECTOR_ID, radius_m: 1.0, dwell_seconds: 0, shape: 'rectangle' },
+    });
+    // y=160 is 60 px from the door (> radiusPx=50) — outside.
+    const dp: DataPoint = { kind: 'position_estimate', row: pe({ x_canvas: 210, y_canvas: 160 }) };
+    expect(evaluateRule(rule, dp, HISTORY).fire).toBe(false);
+  });
+
+  it('fires for a position in the end cap (not within segment distance, but inside rect)', () => {
+    const rule: AlertRule = doorProximityRule({
+      params: { connector_id: CONNECTOR_ID, radius_m: 1.0, dwell_seconds: 0, shape: 'rectangle' },
+    });
+    // x=160 is 40 px left of the segment start (200) — inside the end cap.
+    const dp: DataPoint = { kind: 'position_estimate', row: pe({ x_canvas: 160, y_canvas: 100 }) };
+    expect(evaluateRule(rule, dp, HISTORY).fire).toBe(true);
+  });
+
+  it('does not affect the default segment path (shape omitted)', () => {
+    // The default (no shape) still uses point-to-segment distance.
+    const rule: AlertRule = doorProximityRule({
+      params: { connector_id: CONNECTOR_ID, radius_m: 1.0, dwell_seconds: 0 },
+    });
+    // y=130 is 30 px from the door (within 50 px point-to-segment) → still fires.
+    const dp: DataPoint = { kind: 'position_estimate', row: pe({ x_canvas: 210, y_canvas: 130 }) };
+    expect(evaluateRule(rule, dp, HISTORY).fire).toBe(true);
   });
 });

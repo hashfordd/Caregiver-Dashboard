@@ -13,6 +13,7 @@
 // APP_TIMEZONE (Australia/Sydney) instead of the caller's local zone.
 
 import { APP_TIMEZONE } from '../index.ts';
+import { pointInSegmentRect } from './geofence.ts';
 import type {
   AlertRule,
   DataPoint,
@@ -420,7 +421,12 @@ function evaluateRoomTransition(
  *  connector segment for `dwell_seconds`. Captures "approaching the
  *  door" scenarios. The radius is metres; conversion to canvas pixels
  *  needs the floor plan scale (supplied via history.scaleMetersPerPixel)
- *  because positions are stored in canvas pixels. */
+ *  because positions are stored in canvas pixels.
+ *
+ *  When params.shape === 'rectangle', the proximity test uses an oriented
+ *  rectangle (the connector segment expanded by radiusPx on all four sides)
+ *  instead of point-to-segment distance. The existing 'segment' path is
+ *  unchanged so all current rules continue to behave identically. */
 function evaluateDoorProximity(
   rule: DoorProximityRule,
   dp: DataPoint,
@@ -436,15 +442,28 @@ function evaluateDoorProximity(
   if (scale == null || !Number.isFinite(scale) || scale <= 0) return { fire: false };
 
   const radiusPx = rule.params.radius_m / scale;
+  const useRect = rule.params.shape === 'rectangle';
+
   const within = (px: number, py: number) =>
-    pointToSegmentDistance(
-      px,
-      py,
-      connector.start_x,
-      connector.start_y,
-      connector.end_x,
-      connector.end_y,
-    ) <= radiusPx;
+    useRect
+      ? pointInSegmentRect(
+          px,
+          py,
+          connector.start_x,
+          connector.start_y,
+          connector.end_x,
+          connector.end_y,
+          radiusPx,
+        )
+      : pointToSegmentDistance(
+          px,
+          py,
+          connector.start_x,
+          connector.start_y,
+          connector.end_x,
+          connector.end_y,
+        ) <= radiusPx;
+
   if (!within(row.x_canvas, row.y_canvas)) return { fire: false };
 
   const dwellMs = rule.params.dwell_seconds * 1000;
@@ -464,9 +483,10 @@ function evaluateDoorProximity(
     }
   }
 
-  // Compute the distance at the trigger row so the alert context tells
-  // caregivers how close the patient actually got — useful for tuning
-  // radius_m later.
+  // Compute the point-to-segment distance at the trigger row so the alert
+  // context tells caregivers how close the patient actually got — useful for
+  // tuning radius_m later. This is informational regardless of the shape used
+  // for the zone test.
   const distancePx = pointToSegmentDistance(
     row.x_canvas,
     row.y_canvas,

@@ -115,6 +115,11 @@ export const DoorProximityParams = z.object({
   /** Seconds the condition must hold continuously before firing. */
   dwell_seconds: z.number().int().nonnegative(),
   cooldown_seconds: z.number().int().positive().optional(),
+  /** Proximity test shape:
+   *  - 'segment' (default/undefined): original point-to-segment distance test.
+   *  - 'rectangle': oriented rectangle expanded by radius_m on all four sides
+   *    of the connector segment. Used by door/window proximity zones. */
+  shape: z.enum(['segment', 'rectangle']).optional(),
 });
 export type DoorProximityParams = z.infer<typeof DoorProximityParams>;
 
