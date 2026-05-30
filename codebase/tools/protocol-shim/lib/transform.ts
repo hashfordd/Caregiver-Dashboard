@@ -213,6 +213,9 @@ function normalizedToCanvas(
  *    onto `synth` (the patient's software-placed beacons) and synthesise beacon
  *    RSSI (forward path-loss) so the indoor map dot tracks the patient via the
  *    real positioning pipeline — wherever the beacons are arranged.
+ *    Synthesis is only performed when `allowSynth` is true (controlled by the
+ *    ALZCARE_SHIM_ALLOW_SYNTH env var). It defaults to false so fabricated RSSI
+ *    can never flow into the pipeline in a production deployment.
  *
  * TODO(location-payload): confirm the real on-the-wire ble shape with hardware.
  */
@@ -221,6 +224,7 @@ export function ingestLocation(
   payload: Record<string, unknown>,
   nowIso: string,
   synth: SynthContext = FIXTURE_SYNTH,
+  allowSynth = false,
 ): { signals: SignalsMessage | null; skipReason?: string; error?: string } {
   let ble = Array.isArray(payload.ble)
     ? (payload.ble as unknown[])
@@ -240,7 +244,10 @@ export function ingestLocation(
 
   // No measured RSSI → derive it from a simulated normalised [0,1] walk mapped
   // onto the patient's placed beacons (the software-owned layout).
+  // Guard: only synthesise when explicitly enabled — fabricated RSSI must never
+  // silently masquerade as real hardware data.
   if (
+    allowSynth &&
     ble.length === 0 &&
     synth.beacons.length > 0 &&
     Number.isFinite(num(payload.x)) &&
