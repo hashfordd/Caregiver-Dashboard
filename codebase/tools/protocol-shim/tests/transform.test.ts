@@ -165,7 +165,8 @@ describe('ingestLocation', () => {
   });
 
   it('synthesises beacon RSSI from a normalised [0,1] walk {x,y}', () => {
-    const r = ingestLocation(MAP, { x: 0.5, y: 0.5 }, NOW); // mid-room
+    // allowSynth must be true — without it the x,y path is disabled by design.
+    const r = ingestLocation(MAP, { x: 0.5, y: 0.5 }, NOW, undefined, true); // mid-room
     expect(r.skipReason).toBeUndefined();
     expect(r.signals?.ble).toHaveLength(4); // one per fixture beacon (4 corners)
     for (const sample of r.signals?.ble ?? []) {
@@ -175,9 +176,17 @@ describe('ingestLocation', () => {
     }
   });
 
+  it('does NOT synthesise when allowSynth is false (default)', () => {
+    // An x,y walk without the flag set must produce no signals — the dot holds
+    // last-known rather than getting fabricated RSSI.
+    const r = ingestLocation(MAP, { x: 0.5, y: 0.5 }, NOW); // allowSynth defaults false
+    expect(r.signals).toBeNull();
+    expect(r.skipReason).toMatch(/no usable/);
+  });
+
   it('maps the walk onto the placed-beacon box (corner reads strongest there)', () => {
     // Fixture beacon 1 is the NW corner → normalised (0,0) sits on it.
-    const r = ingestLocation(MAP, { x: 0.02, y: 0.02 }, NOW);
+    const r = ingestLocation(MAP, { x: 0.02, y: 0.02 }, NOW, undefined, true);
     const ble = r.signals?.ble ?? [];
     const near = ble.find((s) => s.mac === 'AA:BB:CC:DD:EE:01')?.rssi ?? -200;
     const far = ble.find((s) => s.mac === 'AA:BB:CC:DD:EE:02')?.rssi ?? -200;
@@ -195,7 +204,7 @@ describe('ingestLocation', () => {
         { mac: 'Z', x: 0, y: 600, rssi1m: -65 },
       ],
     };
-    const r = ingestLocation(MAP, { x: 0.05, y: 0.05 }, NOW, synth);
+    const r = ingestLocation(MAP, { x: 0.05, y: 0.05 }, NOW, synth, true);
     const ble = r.signals?.ble ?? [];
     expect(ble.map((s) => s.mac).sort()).toEqual(['X', 'Y', 'Z']);
     const x = ble.find((s) => s.mac === 'X')?.rssi ?? -200;

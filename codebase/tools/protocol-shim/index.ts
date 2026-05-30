@@ -172,6 +172,14 @@ function isLocalUrl(raw: string): boolean {
 
 // The device row is normally created by `seed:live`, so a missing service key
 // is not fatal — we just skip the redundant ensure rather than refusing to run.
+const ALLOW_SYNTH =
+  process.env.ALZCARE_SHIM_ALLOW_SYNTH === '1' || process.env.ALZCARE_SHIM_ALLOW_SYNTH === 'true';
+if (ALLOW_SYNTH) {
+  console.warn(
+    '[shim] SYNTHETIC BLE enabled (ALZCARE_SHIM_ALLOW_SYNTH) — fabricating RSSI from fixtures; NOT real hardware',
+  );
+}
+
 const CAN_ENSURE_DEVICE = ENSURE_DEVICE && !!SERVICE_KEY;
 if (ENSURE_DEVICE && !SERVICE_KEY) {
   console.warn(
@@ -399,7 +407,7 @@ function handleRaw(
       console.log(`→ event ${map.patient_id} FALL (movement_rate=${mr})`);
     }
   } else if (parsed.kind === 'location') {
-    const r = ingestLocation(map, payload, now, synthByProto.get(parsed.protoId));
+    const r = ingestLocation(map, payload, now, synthByProto.get(parsed.protoId), ALLOW_SYNTH);
     if (r.error) return void console.error(`protocol-shim: signals rejected — ${r.error}`);
     if (r.signals) {
       publishCanonical(buildTopic(map.patient_id, 'signals'), r.signals);

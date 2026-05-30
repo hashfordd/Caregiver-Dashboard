@@ -15,10 +15,12 @@ interface BeaconsRailProps {
   patientId: string;
   beacons: BeaconRow[];
   pairedMacs: Set<string>;
-  /** Both a saved plan and a calibrated scale are required before a
-   *  beacon's (x, y) has real-world meaning. Pairing works without. */
+  /** A drawn floor plan is enough to start placing beacons — placement
+   *  writes canvas pixel coords, which don't need a scale. */
   placementReady: boolean;
-  planExists: boolean;
+  /** Whether a metres-per-pixel scale is calibrated yet. Placement works
+   *  without it, but F8 positioning needs it — so the rail nudges. */
+  scaleSet: boolean;
   deletingId: string | undefined;
   deleteError: string | null;
   onPair: (mac: string) => void;
@@ -36,7 +38,7 @@ export function BeaconsRail({
   beacons,
   pairedMacs,
   placementReady,
-  planExists,
+  scaleSet,
   deletingId,
   deleteError,
   onPair,
@@ -63,17 +65,22 @@ export function BeaconsRail({
           title="Placement"
           subtitle={
             placementReady
-              ? 'Click Place on a beacon, then click the floor plan to drop it. Drag a placed beacon to move it.'
-              : 'Set up a floor plan with a calibrated scale before placing beacons.'
+              ? 'Click Place on a beacon, then click the floor plan to drop it. It snaps to room corners when you click near one; drag a placed beacon to move it.'
+              : 'Draw a floor plan first, then place beacons in it.'
           }
         />
         {!placementReady && (
           <div className="flex items-start gap-3 rounded-md border border-border bg-muted/30 px-3 py-3 text-sm text-muted-foreground">
             <MapPin className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+            <span>Switch to the Floor plan section and draw the patient’s space first.</span>
+          </div>
+        )}
+        {placementReady && !scaleSet && (
+          <div className="flex items-start gap-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-3 text-sm text-amber-700 dark:text-amber-300">
+            <Ruler className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
             <span>
-              {planExists
-                ? 'Switch to the Floor plan section, select a wall and use Set scale to anchor pixels to metres.'
-                : 'Switch to the Floor plan section and draw the patient’s space first.'}
+              You can place beacons now. To turn their positions into live patient tracking, set a
+              scale: Floor plan section → select a wall → Set scale.
             </span>
           </div>
         )}
@@ -277,7 +284,7 @@ function BeaconCard({
                 ? placed
                   ? 'Re-place this beacon — next click on the canvas drops it'
                   : 'Place this beacon — next click on the canvas drops it'
-                : 'Set up a floor plan with a scale first'
+                : 'Draw a floor plan first'
             }
           >
             {placed ? 'Move' : 'Place'}

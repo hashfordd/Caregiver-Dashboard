@@ -203,6 +203,12 @@ export function PlaceWorkspace({ patientId }: PlaceWorkspaceProps) {
   const points = useMemo(() => pointsQuery.data ?? [], [pointsQuery.data]);
   const plan = planQuery.data ?? null;
   const placementReady = plan != null && plan.scale_meters_per_pixel != null;
+  // Beacon placement only writes canvas pixel coords, which don't need a
+  // scale — so a drawn floor plan is enough to start dropping beacons. Scale
+  // only matters later for converting RSSI → metres in F8 positioning, which
+  // the rail nudges about separately. (Calibration still gates on scale.)
+  const beaconPlacementReady = plan != null;
+  const scaleSet = scale != null && scale > 0;
   const placedBeaconCount = beacons.filter(isPlaced).length;
   const pairedMacs = useMemo(() => new Set(beacons.map((b) => b.mac_address)), [beacons]);
 
@@ -678,8 +684,8 @@ export function PlaceWorkspace({ patientId }: PlaceWorkspaceProps) {
                     patientId={patientId}
                     beacons={beacons}
                     pairedMacs={pairedMacs}
-                    placementReady={placementReady}
-                    planExists={plan != null}
+                    placementReady={beaconPlacementReady}
+                    scaleSet={scaleSet}
                     deletingId={
                       deleteBeacon.isPending ? (deleteBeacon.variables as string) : undefined
                     }

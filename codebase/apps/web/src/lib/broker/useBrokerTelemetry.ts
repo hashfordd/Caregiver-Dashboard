@@ -23,7 +23,7 @@ function telemetryToRow(t: TelemetryMessage): SensorReadingRow {
   };
 }
 
-async function fetchDeviceMacs(patientId: string): Promise<string[]> {
+export async function fetchDeviceMacs(patientId: string): Promise<string[]> {
   const { data, error } = await supabase
     .from('devices')
     .select('mac_address')

@@ -1,53 +1,138 @@
-// F8 stage 2: trilateration over the top-3 strongest BLE beacons.
+// F8 stage 2: weighted least-squares multilateration over ALL fresh BLE
+// beacons, with leave-one-out outlier rejection.
 //
 // Mathematics: each beacon is a circle in canvas-pixel space with
-// radius = distance_m / scaleMetersPerPixel. The patient lies at the
-// intersection of the three circles. With perfect measurements the
-// circles meet at one point; with noise we want the least-squares
-// best-fit point.
+// radius = distance_m / scaleMetersPerPixel. The patient lies near the
+// common intersection; with noise we want the best-fit point. Subtracting
+// the strongest beacon's circle equation from every other beacon's
+// linearises the quadratic terms away, leaving an over-determined linear
+// system A·p = b. We solve the RSSI-weighted normal equations
+// (AᵀWA) p = AᵀW b directly as a 2×2 system — so stronger (more reliable)
+// beacons pull harder, and extra beacons average down per-beacon noise
+// instead of being discarded.
 //
-// Reduction: subtract circle 1's equation from circles 2 and 3. The
-// quadratic terms cancel and we're left with two linear equations in
-// (x, y) — solvable as a 2×2 system via Cramer's rule. Returns the
-// recovered position plus the RMS residual of the three measured
-// distances against the recovered point's actual distances; the fusion
-// stage uses the residual to weight trilateration vs. fingerprinting.
+// Leave-one-out: with ≥4 beacons, a plain least-squares fit lets a single
+// NLOS / body-shadowed beacon mask its own residual by dragging the whole
+// solution toward itself. So we also try removing each beacon in turn and
+// keep the subset whose fit is tightest. This catches outliers that RSSI
+// alone can't (a shadowed beacon can still read strong).
 //
-// Pure function. No globals, no logging.
-//
-// Phase G item 59: the colinearity threshold is now expressed in
-// real-world m² and converted to pixels² at solve time, so a
-// 100 px/m floor plan and a 25 px/m floor plan reject the same
-// geometric arrangements. Previously the fixed 1 px² constant
-// over-rejected on dense canvases and under-rejected on sparse ones.
+// Ported from the hardened standalone tracker rig
+// (local_tracker_dashboard.py: _solve_weighted_ls / _solve_subset /
+// _trilaterate), adapted to canvas-pixel geometry + the metres residual
+// the fusion stage expects. Pure function. No globals, no logging.
 
 import type { BeaconDistance, TrilaterationResult } from './types.ts';
 
-/** Minimum triangle area (real-world m²) before the three beacons are
- *  considered colinear and the solve is rejected. 4 cm² (0.04 m × 0.1 m
- *  triangle base × height) gives a hard floor on geometric quality
- *  regardless of canvas scale. The check converts this to canvas-px²
- *  using `scaleMetersPerPixel` at solve time. */
-const COLINEARITY_EPSILON_M2 = 4e-4;
-
 /** Reject solutions whose RMS residual exceeds this many metres. A
- *  residual that high means the three measured distances can't be
- *  satisfied by any point — typical of NLOS, body shadowing, or a
- *  miscalibrated beacon. The fusion stage falls back to fingerprint-
- *  only in that case. */
+ *  residual that high means the measured distances can't be satisfied by
+ *  any point — typical of NLOS, body shadowing, or a miscalibrated
+ *  beacon. The fusion stage falls back to fingerprint-only in that case. */
 const MAX_ACCEPTABLE_RESIDUAL_M = 5.0;
 
-/** Solve for the patient's canvas position from beacon distances.
+/** Floor weight so a barely-heard beacon still contributes a little rather
+ *  than vanishing (mirrors the rig's `max(weight, 1e-3)`). */
+const MIN_WEIGHT = 1e-3;
+
+/** One anchor the solve runs against: position (canvas px), radius (canvas
+ *  px, = distance_m / scale), and reliability weight (from RSSI). */
+interface Anchor {
+  x: number;
+  y: number;
+  r: number;
+  w: number;
+}
+
+/** Map filtered RSSI to a reliability weight. Stronger signal = lower
+ *  distance noise = higher weight; below −95 dBm the reading is too weak to
+ *  trust and contributes nothing. Caps at −35 dBm so an unusually hot
+ *  reading doesn't dominate. Ported verbatim from the rig. */
+function rssiWeight(rssi: number): number {
+  if (rssi < -95) return 0;
+  return 100 + Math.min(rssi, -35);
+}
+
+/** Solve the weighted 2×2 normal equations (AᵀWA) p = AᵀW b directly.
+ *  `rows` are the linearised circle-difference equations
+ *  (a0·x + a1·y = rhs) with per-row weight w. Returns null when the system
+ *  is degenerate (colinear anchors → singular matrix). */
+function solveWeightedLs(
+  rows: { a0: number; a1: number; rhs: number; w: number }[],
+): { x: number; y: number } | null {
+  let s00 = 0;
+  let s01 = 0;
+  let s11 = 0;
+  let t0 = 0;
+  let t1 = 0;
+  for (const { a0, a1, rhs, w } of rows) {
+    s00 += w * a0 * a0;
+    s01 += w * a0 * a1;
+    s11 += w * a1 * a1;
+    t0 += w * a0 * rhs;
+    t1 += w * a1 * rhs;
+  }
+  const det = s00 * s11 - s01 * s01;
+  if (Math.abs(det) < 1e-9) return null;
+  return {
+    x: (t0 * s11 - t1 * s01) / det,
+    y: (s00 * t1 - s01 * t0) / det,
+  };
+}
+
+/** Weighted least-squares fix over `group` (≥3 anchors), linearised
+ *  against the highest-weight (strongest) beacon in the subset. Returns the
+ *  recovered point plus its RMS residual in metres, or null when degenerate. */
+function solveSubset(
+  group: Anchor[],
+  scaleMetersPerPixel: number,
+): { x: number; y: number; residual_m: number } | null {
+  if (group.length < 3) return null;
+
+  // Reference = strongest anchor; its circle is subtracted from the rest.
+  let ref = group[0]!;
+  for (const a of group) if (a.w > ref.w) ref = a;
+
+  const rows: { a0: number; a1: number; rhs: number; w: number }[] = [];
+  for (const a of group) {
+    if (a.x === ref.x && a.y === ref.y) continue;
+    rows.push({
+      a0: 2 * (a.x - ref.x),
+      a1: 2 * (a.y - ref.y),
+      rhs: a.x * a.x - ref.x * ref.x + (a.y * a.y - ref.y * ref.y) - a.r * a.r + ref.r * ref.r,
+      w: Math.min(a.w, ref.w),
+    });
+  }
+  if (rows.length < 2) return null;
+
+  const sol = solveWeightedLs(rows);
+  if (sol == null) return null;
+
+  // Residual: RMS of (recovered distance − measured distance) over the
+  // whole group, converted from canvas px back to metres for the fusion
+  // stage's confidence weighting.
+  let sse = 0;
+  for (const a of group) {
+    const errPx = Math.hypot(sol.x - a.x, sol.y - a.y) - a.r;
+    sse += errPx * errPx;
+  }
+  const rmsPx = Math.sqrt(sse / group.length);
+  return { x: sol.x, y: sol.y, residual_m: rmsPx * scaleMetersPerPixel };
+}
+
+/**
+ * Solve for the patient's canvas position from per-beacon distances.
  *
- *  Picks the top 3 by RSSI (strongest signal = lowest distance noise).
+ *  Uses every supplied beacon (weighted by RSSI), not just the strongest
+ *  three. With ≥4 beacons a leave-one-out search drops the single beacon
+ *  whose removal tightens the fit most (NLOS / shadowing).
+ *
  *  Returns null when:
  *   - Fewer than 3 beacon distances supplied.
- *   - The chosen 3 are colinear (degenerate triangle).
- *   - The least-squares fit is geometrically inconsistent (residual
- *     exceeds MAX_ACCEPTABLE_RESIDUAL_M).
- *
- *  scaleMetersPerPixel converts measured distances (metres) to canvas
- *  units for the solve, and the residual back to metres for the return. */
+ *   - `scaleMetersPerPixel` is non-finite or ≤ 0.
+ *   - The geometry is degenerate (colinear → singular system).
+ *   - The best fit is still geometrically inconsistent (residual exceeds
+ *     MAX_ACCEPTABLE_RESIDUAL_M).
+ */
 export function trilaterate(
   beaconDistances: BeaconDistance[],
   scaleMetersPerPixel: number,
@@ -55,62 +140,27 @@ export function trilaterate(
   if (beaconDistances.length < 3) return null;
   if (!Number.isFinite(scaleMetersPerPixel) || scaleMetersPerPixel <= 0) return null;
 
-  // Top 3 by RSSI (highest = strongest = lowest distance noise).
-  const top3 = [...beaconDistances].sort((a, b) => b.rssi - a.rssi).slice(0, 3);
-  const [b1, b2, b3] = top3 as [BeaconDistance, BeaconDistance, BeaconDistance];
+  const anchors: Anchor[] = beaconDistances.map((b) => ({
+    x: b.x_canvas,
+    y: b.y_canvas,
+    r: b.distance_m / scaleMetersPerPixel,
+    w: Math.max(rssiWeight(b.rssi), MIN_WEIGHT),
+  }));
 
-  // Reject colinear arrangements via signed triangle area. The
-  // threshold is fixed in real-world m² and converted to px² so
-  // canvases with different scales reject the same physical
-  // arrangements (item 59).
-  const epsilonPx2 = COLINEARITY_EPSILON_M2 / (scaleMetersPerPixel * scaleMetersPerPixel);
-  const area2 = Math.abs(
-    b1.x_canvas * (b2.y_canvas - b3.y_canvas) +
-      b2.x_canvas * (b3.y_canvas - b1.y_canvas) +
-      b3.x_canvas * (b1.y_canvas - b2.y_canvas),
-  );
-  if (area2 / 2 < epsilonPx2) return null;
+  let best = solveSubset(anchors, scaleMetersPerPixel);
+  if (best == null) return null;
 
-  // Convert distances to canvas pixels for the solve.
-  const r1 = b1.distance_m / scaleMetersPerPixel;
-  const r2 = b2.distance_m / scaleMetersPerPixel;
-  const r3 = b3.distance_m / scaleMetersPerPixel;
+  // Leave-one-out: drop each beacon in turn; keep the subset whose fit is
+  // tightest. An outlier drags a full-set least-squares fit toward itself,
+  // hiding its own residual — removing it is what exposes the better fit.
+  if (anchors.length >= 4) {
+    for (let i = 0; i < anchors.length; i++) {
+      const subset = anchors.slice(0, i).concat(anchors.slice(i + 1));
+      const cand = solveSubset(subset, scaleMetersPerPixel);
+      if (cand != null && cand.residual_m < best.residual_m) best = cand;
+    }
+  }
 
-  // Subtract circle 1 from circles 2 and 3 to get a 2×2 linear system:
-  //   2(x2-x1) x + 2(y2-y1) y = r1² - r2² + (x2² + y2²) - (x1² + y1²)
-  //   2(x3-x1) x + 2(y3-y1) y = r1² - r3² + (x3² + y3²) - (x1² + y1²)
-  const A11 = 2 * (b2.x_canvas - b1.x_canvas);
-  const A12 = 2 * (b2.y_canvas - b1.y_canvas);
-  const A21 = 2 * (b3.x_canvas - b1.x_canvas);
-  const A22 = 2 * (b3.y_canvas - b1.y_canvas);
-
-  const sq1 = b1.x_canvas * b1.x_canvas + b1.y_canvas * b1.y_canvas;
-  const sq2 = b2.x_canvas * b2.x_canvas + b2.y_canvas * b2.y_canvas;
-  const sq3 = b3.x_canvas * b3.x_canvas + b3.y_canvas * b3.y_canvas;
-
-  const B1 = r1 * r1 - r2 * r2 + sq2 - sq1;
-  const B2 = r1 * r1 - r3 * r3 + sq3 - sq1;
-
-  // Cramer's rule: det must be nonzero (the colinearity check above
-  // already enforces this, but guard against floating-point edges).
-  const det = A11 * A22 - A12 * A21;
-  if (Math.abs(det) < 1e-9) return null;
-
-  const x = (B1 * A22 - B2 * A12) / det;
-  const y = (A11 * B2 - A21 * B1) / det;
-
-  // Residual: compare each beacon's measured distance to its actual
-  // distance from the recovered point. Convert back to metres.
-  const errs = top3.map((b) => {
-    const dx = x - b.x_canvas;
-    const dy = y - b.y_canvas;
-    const actualPx = Math.sqrt(dx * dx + dy * dy);
-    const actualM = actualPx * scaleMetersPerPixel;
-    return actualM - b.distance_m;
-  });
-  const rms = Math.sqrt(errs.reduce((acc, e) => acc + e * e, 0) / errs.length);
-
-  if (rms > MAX_ACCEPTABLE_RESIDUAL_M) return null;
-
-  return { x_canvas: x, y_canvas: y, residual_m: rms };
+  if (best.residual_m > MAX_ACCEPTABLE_RESIDUAL_M) return null;
+  return { x_canvas: best.x, y_canvas: best.y, residual_m: best.residual_m };
 }

@@ -1071,7 +1071,12 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
             const sx = ev.clientX - rect.left;
             const sy = ev.clientY - rect.top;
             const w = worldFromScreen(sx, sy);
-            const target = { x: snap(w.x), y: snap(w.y) };
+            // Same corner-snap as click-to-place: clip to a wall/room corner
+            // when near one, else grid. The snap indicator previews the lock.
+            const gridSnapped = { x: snap(w.x), y: snap(w.y) };
+            const epSnap = trySnapWorld(gridSnapped);
+            const target = epSnap.snapped ? { x: epSnap.x, y: epSnap.y } : gridSnapped;
+            setSnapIndicator(epSnap.snapped ? { x: epSnap.x, y: epSnap.y } : null);
             // Mutate the in-memory sprite + DOM directly during drag so
             // the visual moves smoothly. Persist on pointerup.
             const sprite = beaconSprites.find((s) => s.id === beaconId);
@@ -1088,6 +1093,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
             el.removeEventListener('pointermove', onMove);
             el.removeEventListener('pointerup', onUp);
             el.style.cursor = 'grab';
+            setSnapIndicator(null);
             const sprite = beaconSprites.find((s) => s.id === beaconId);
             if (sprite && sprite.x != null && sprite.y != null) {
               onBeaconUpdateRef.current?.(beaconId, sprite.x, sprite.y);
@@ -1240,10 +1246,16 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         if (modeRef.current === 'beacon-placement') {
           if (!armedBeaconId) return;
           const raw = canvas.getScenePoint(opt.e);
-          const sp = { x: snap(raw.x), y: snap(raw.y) };
+          // Snap to a wall/room corner when the click lands near one (so the
+          // beacon clips to the geometry the caregiver drew); otherwise fall
+          // back to the grid for free placement throughout the room.
+          const gridSnapped = { x: snap(raw.x), y: snap(raw.y) };
+          const epSnap = trySnapWorld(gridSnapped);
+          const sp = epSnap.snapped ? { x: epSnap.x, y: epSnap.y } : gridSnapped;
           const id = armedBeaconId;
           armedBeaconId = null;
           applyArmedCursor();
+          setSnapIndicator(null);
           onBeaconUpdateRef.current?.(id, sp.x, sp.y);
           return;
         }
@@ -1705,6 +1717,21 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       });
 
       const handlePointerMove = (opt: fabric.TPointerEventInfo<fabric.TPointerEvent>) => {
+        // Beacon placement runs on a read-only (non-interactive) canvas, so
+        // this branch sits ahead of the interactive gate. While a beacon is
+        // armed, preview where the next click lands — snapping to a corner
+        // when near one — so the caregiver sees the clip before committing.
+        if (modeRef.current === 'beacon-placement') {
+          if (!armedBeaconId) {
+            setSnapIndicator(null);
+            return;
+          }
+          const raw = canvas.getScenePoint(opt.e);
+          const gridSnapped = { x: snap(raw.x), y: snap(raw.y) };
+          const epSnap = trySnapWorld(gridSnapped);
+          setSnapIndicator(epSnap.snapped ? { x: epSnap.x, y: epSnap.y } : null);
+          return;
+        }
         if (!interactiveRef.current) return;
         const e = opt.e as MouseEvent;
 
