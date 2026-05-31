@@ -141,10 +141,23 @@ export function BrokerProvider({ children }: { children: ReactNode }) {
   // feed is continuous without the caregiver re-clicking every session. The
   // "Connect to server" control still lets them retry after an error.
   useEffect(() => {
-    if (brokerConfig) connect();
+    if (!brokerConfig) return;
+    // Defer the auto-connect by a tick so React StrictMode's dev-only
+    // mount → cleanup → mount double-invoke doesn't open a socket only to
+    // force-close it while it's still connecting (the console's "WebSocket is
+    // closed before the connection is established"). The cleanup cancels the
+    // pending connect before it ever fires; a real unmount still ends an open
+    // client. The manual connect() (Connect-to-server button) is unaffected.
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      if (!cancelled) connect();
+    }, 0);
     return () => {
-      clientRef.current?.end(true);
+      cancelled = true;
+      clearTimeout(timer);
+      const client = clientRef.current;
       clientRef.current = null;
+      if (client) client.end(true);
     };
   }, [connect]);
 

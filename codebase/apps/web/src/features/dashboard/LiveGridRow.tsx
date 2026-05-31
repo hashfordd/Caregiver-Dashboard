@@ -33,12 +33,19 @@ function LiveGridRowInner({
   const lastSeen = formatRelativeAge(patient.last_position_at, now);
 
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={() => onSelect(patient.patient_id)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelect(patient.patient_id);
+        }
+      }}
       aria-pressed={selected}
       className={cn(
-        'group/row flex w-full items-center gap-3 rounded-lg border bg-card px-4 py-3 text-left transition-colors hover:bg-muted/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring',
+        'group/row flex w-full cursor-pointer items-center gap-3 rounded-lg border bg-card px-4 py-3 text-left transition-colors hover:bg-muted/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring',
         latestUnackedAlert?.severity === 'critical' && 'border-red-500/40',
         selected && 'border-primary/60 bg-primary/5',
       )}
@@ -67,7 +74,7 @@ function LiveGridRowInner({
         </span>
       ) : null}
       <ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover/row:translate-x-0.5" />
-    </button>
+    </div>
   );
 }
 

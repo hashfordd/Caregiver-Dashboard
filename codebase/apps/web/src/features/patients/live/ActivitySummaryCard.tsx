@@ -1,4 +1,4 @@
-import { HeartPulse, MapPin } from 'lucide-react';
+import { Footprints, HeartPulse } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useLiveSensorStore } from '@/lib/stores/liveSensorStore';
 import { useNow } from '@/lib/useNow';
@@ -14,11 +14,13 @@ interface ActivitySummaryCardProps {
   className?: string;
 }
 
-/** "What is the patient doing right now" at a glance: the IMU activity class
- *  fused with the floor-plan location ("Resting — In bed"), the containing room
- *  and time in this state, current heart rate, and freshness. Reads only
- *  already-streaming data — no new network calls. Sits to the right of the
- *  Movement card on the Live tab. */
+/** "Where is the patient, and what are they doing" at a glance. Leads with the
+ *  fused floor-plan location ("In bed" / "Near the front door" / the room) so
+ *  it reads differently from the Movement card next to it — that card owns the
+ *  raw motion level + g/°-per-s, this one owns place. The motion class is
+ *  demoted to a one-line "<activity> · <time in state>" qualifier with current
+ *  heart rate beneath. Reads only already-streaming data — no new network
+ *  calls. */
 export function ActivitySummaryCard({ patientId, className }: ActivitySummaryCardProps) {
   const activity = useActivity(patientId);
   const estimate = useGatedPositionMarker();
@@ -31,8 +33,10 @@ export function ActivitySummaryCard({ patientId, className }: ActivitySummaryCar
   const ageSeconds =
     activity.lastReceivedAt != null ? Math.round((now - activity.lastReceivedAt) / 1000) : null;
 
-  const location = context?.text ?? null;
-  const headline = location ? `${ACTIVITY_LABEL[state ?? 'resting']} — ${location}` : null;
+  // Place is the hero: the specific furniture/door context ("In bed", "Near the
+  // front door") when we have it, else the containing room, else unknown.
+  const place = context?.text ?? roomName ?? null;
+  const warn = context?.tone === 'warn';
 
   return (
     <Card size="sm" className={cn('relative overflow-hidden', className)}>
@@ -48,30 +52,27 @@ export function ActivitySummaryCard({ patientId, className }: ActivitySummaryCar
             <p
               className={cn(
                 'font-serif italic text-2xl font-semibold leading-tight',
-                activityColor(state, stale),
+                warn ? 'text-amber-700 dark:text-amber-300' : 'text-foreground',
               )}
             >
-              {headline ?? ACTIVITY_LABEL[state]}
+              {place ?? 'Whereabouts unknown'}
             </p>
 
             <div className="space-y-1 text-sm">
-              {(roomName || activity.since != null) && (
-                <p
-                  className={cn(
-                    'flex items-center gap-1.5',
-                    context?.tone === 'warn'
-                      ? 'text-amber-700 dark:text-amber-300'
-                      : 'text-muted-foreground',
-                  )}
-                >
-                  <MapPin className="h-3.5 w-3.5 shrink-0" />
-                  <span>
-                    {roomName && <span className="text-foreground">{roomName}</span>}
-                    {roomName && activity.since != null && ' · '}
-                    {activity.since != null && timeInState(now - activity.since)}
+              <p className="flex items-center gap-1.5 text-muted-foreground">
+                <Footprints className="h-3.5 w-3.5 shrink-0" />
+                <span>
+                  <span className={cn('font-medium', activityColor(state, stale))}>
+                    {ACTIVITY_LABEL[state]}
                   </span>
-                </p>
-              )}
+                  {activity.since != null && (
+                    <span className="text-muted-foreground">
+                      {' '}
+                      · {timeInState(now - activity.since)}
+                    </span>
+                  )}
+                </span>
+              </p>
               {hr != null && (
                 <p className="flex items-center gap-1.5 text-muted-foreground">
                   <HeartPulse className="h-3.5 w-3.5 shrink-0" />
@@ -100,12 +101,12 @@ export function ActivitySummaryCard({ patientId, className }: ActivitySummaryCar
   );
 }
 
-/** "12 min in this state" / "Less than a minute in this state". */
+/** Compact "time in this state": "<1 min", "12 min", "1 h 5 min". */
 function timeInState(elapsedMs: number): string {
   const mins = Math.floor(elapsedMs / 60_000);
-  if (mins < 1) return 'less than a minute in this state';
-  if (mins < 60) return `${mins} min in this state`;
+  if (mins < 1) return '<1 min';
+  if (mins < 60) return `${mins} min`;
   const hrs = Math.floor(mins / 60);
   const rem = mins % 60;
-  return rem === 0 ? `${hrs} h in this state` : `${hrs} h ${rem} min in this state`;
+  return rem === 0 ? `${hrs} h` : `${hrs} h ${rem} min`;
 }
