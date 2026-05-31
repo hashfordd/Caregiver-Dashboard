@@ -35,8 +35,8 @@ export function ActivitySummaryCard({ patientId, className }: ActivitySummaryCar
   const headline = location ? `${ACTIVITY_LABEL[state ?? 'resting']} — ${location}` : null;
 
   return (
-    <Card className={cn('relative overflow-hidden', className)}>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+    <Card size="sm" className={cn('relative overflow-hidden', className)}>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-0">
         <CardTitle className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
           Current activity
         </CardTitle>
@@ -44,17 +44,17 @@ export function ActivitySummaryCard({ patientId, className }: ActivitySummaryCar
       </CardHeader>
       <CardContent>
         {state != null ? (
-          <div className="space-y-3">
+          <div className="space-y-2">
             <p
               className={cn(
-                'font-serif italic text-3xl font-semibold leading-tight',
+                'font-serif italic text-2xl font-semibold leading-tight',
                 activityColor(state, stale),
               )}
             >
               {headline ?? ACTIVITY_LABEL[state]}
             </p>
 
-            <div className="space-y-1.5 text-sm">
+            <div className="space-y-1 text-sm">
               {(roomName || activity.since != null) && (
                 <p
                   className={cn(
@@ -91,7 +91,7 @@ export function ActivitySummaryCard({ patientId, className }: ActivitySummaryCar
             </p>
           </div>
         ) : (
-          <div className="flex h-24 items-center justify-center text-sm text-muted-foreground">
+          <div className="flex h-16 items-center justify-center text-sm text-muted-foreground">
             Awaiting activity data…
           </div>
         )}

@@ -27,8 +27,8 @@ export function MovementCard({ patientId }: MovementCardProps) {
   const activity = movement?.activityState ?? null;
 
   return (
-    <Card className="relative overflow-hidden">
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+    <Card size="sm" className="relative overflow-hidden">
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-0">
         <CardTitle className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
           Movement
         </CardTitle>
@@ -40,7 +40,7 @@ export function MovementCard({ patientId }: MovementCardProps) {
             <div className="flex items-baseline">
               <span
                 className={cn(
-                  'font-serif italic text-3xl font-semibold leading-none',
+                  'font-serif italic text-2xl font-semibold leading-none',
                   activityColor(activity, isStale),
                 )}
               >
@@ -48,7 +48,10 @@ export function MovementCard({ patientId }: MovementCardProps) {
               </span>
             </div>
             <p
-              className={cn('mt-2 text-xs', isStale ? 'text-destructive' : 'text-muted-foreground')}
+              className={cn(
+                'mt-1.5 text-xs',
+                isStale ? 'text-destructive' : 'text-muted-foreground',
+              )}
             >
               {isStale && ageSeconds != null
                 ? `Stale · ${ageSeconds}s since last reading`
@@ -56,11 +59,12 @@ export function MovementCard({ patientId }: MovementCardProps) {
             </p>
             <Sparkline
               points={movement?.buffer ?? []}
-              className={cn('mt-3 w-full', isStale ? 'text-destructive' : 'text-accent')}
+              height={28}
+              className={cn('mt-2 w-full', isStale ? 'text-destructive' : 'text-accent')}
             />
           </>
         ) : (
-          <div className="flex h-24 items-center justify-center text-sm text-muted-foreground">
+          <div className="flex h-16 items-center justify-center text-sm text-muted-foreground">
             Awaiting motion data…
           </div>
         )}

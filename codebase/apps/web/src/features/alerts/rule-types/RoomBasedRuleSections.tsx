@@ -63,7 +63,7 @@ export function RoomBasedRuleSections({
 
   return (
     <>
-      <section className="space-y-3" aria-labelledby="rules-room-transition-heading">
+      <section className="space-y-2" aria-labelledby="rules-room-transition-heading">
         <div className="flex items-center justify-between">
           <h4
             id="rules-room-transition-heading"
@@ -110,7 +110,7 @@ export function RoomBasedRuleSections({
         )}
       </section>
 
-      <section className="space-y-3" aria-labelledby="rules-door-proximity-heading">
+      <section className="space-y-2" aria-labelledby="rules-door-proximity-heading">
         <div className="flex items-center justify-between">
           <h4
             id="rules-door-proximity-heading"

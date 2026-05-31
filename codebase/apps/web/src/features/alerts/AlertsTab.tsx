@@ -83,7 +83,7 @@ export function AlertsTab({ patientId }: Props) {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <header className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h3 className="text-sm font-semibold text-foreground">Alerts</h3>

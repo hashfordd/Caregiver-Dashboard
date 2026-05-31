@@ -53,19 +53,18 @@ export function RuleSettingsTab({ patientId }: Props) {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <header className="space-y-1">
         <h3 className="text-sm font-semibold text-foreground">Alert rules</h3>
         <p className="text-xs text-muted-foreground">
-          Per-patient rules. Edits take effect within 30 s — the live engine reads rules per
-          evaluation. Each card shows a 24 h dry-run preview so you can tune before saving.
+          Per-patient rules. Edits take effect within 30 s. Each card shows a 24 h dry-run preview.
         </p>
       </header>
 
       {/* Item 138: each section has id + aria-labelledby on the heading
           so screen readers announce the section name when tabbing into
           the first focusable child. */}
-      <section className="space-y-3" aria-labelledby="rules-vitals-heading">
+      <section className="space-y-2" aria-labelledby="rules-vitals-heading">
         <h4
           id="rules-vitals-heading"
           className="text-xs font-semibold uppercase tracking-wide text-muted-foreground"
@@ -101,7 +100,7 @@ export function RuleSettingsTab({ patientId }: Props) {
         )}
       </section>
 
-      <section className="space-y-3" aria-labelledby="rules-zone-heading">
+      <section className="space-y-2" aria-labelledby="rules-zone-heading">
         <h4
           id="rules-zone-heading"
           className="text-xs font-semibold uppercase tracking-wide text-muted-foreground"
@@ -111,7 +110,7 @@ export function RuleSettingsTab({ patientId }: Props) {
         <ZoneRuleCard patientId={patientId} rule={grouped.zone} />
       </section>
 
-      <section className="space-y-3" aria-labelledby="rules-fall-heading">
+      <section className="space-y-2" aria-labelledby="rules-fall-heading">
         <h4
           id="rules-fall-heading"
           className="text-xs font-semibold uppercase tracking-wide text-muted-foreground"
@@ -121,7 +120,7 @@ export function RuleSettingsTab({ patientId }: Props) {
         <FallRuleCard patientId={patientId} rule={grouped.fall} />
       </section>
 
-      <section className="space-y-3" aria-labelledby="rules-inactivity-heading">
+      <section className="space-y-2" aria-labelledby="rules-inactivity-heading">
         <h4
           id="rules-inactivity-heading"
           className="text-xs font-semibold uppercase tracking-wide text-muted-foreground"
@@ -131,7 +130,7 @@ export function RuleSettingsTab({ patientId }: Props) {
         <InactivityRuleCard patientId={patientId} rule={grouped.inactivity} />
       </section>
 
-      <section className="space-y-3" aria-labelledby="rules-device-silence-heading">
+      <section className="space-y-2" aria-labelledby="rules-device-silence-heading">
         <h4
           id="rules-device-silence-heading"
           className="text-xs font-semibold uppercase tracking-wide text-muted-foreground"

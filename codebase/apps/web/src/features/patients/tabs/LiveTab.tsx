@@ -18,13 +18,13 @@ const PatientPositionView = lazy(() =>
 export function LiveTab() {
   const { patientId } = usePatientStreamContext();
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <DevicePairingPanel patientId={patientId} />
       {/* The wearable reports heart rate + a 6-axis IMU (no SpO₂/temperature),
           so the live vitals surface is heart rate + a derived movement card on
           the left half, with the fused Current Activity card spanning the right
           half (full-width beneath them on tablet). */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <SensorCard patientId={patientId} metric="hr" />
         <MovementCard patientId={patientId} />
         <ActivitySummaryCard patientId={patientId} className="sm:col-span-2 lg:col-span-2" />

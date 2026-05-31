@@ -48,8 +48,8 @@ export function RuleCardShell({
   children,
 }: RuleCardShellProps) {
   return (
-    <Card>
-      <CardContent className="space-y-4 pt-4">
+    <Card size="sm">
+      <CardContent className="space-y-3">
         <header className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <h4 className="text-sm font-semibold text-foreground">{title}</h4>
@@ -87,7 +87,7 @@ export function RuleCardShell({
           </FieldLabel>
         </div>
 
-        <div className="space-y-3 border-t border-border/60 pt-3">{children}</div>
+        <div className="space-y-2 border-t border-border/60 pt-2.5">{children}</div>
 
         {preview && (
           <div className="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
@@ -101,7 +101,7 @@ export function RuleCardShell({
           </p>
         )}
 
-        <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-3">
+        <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-2.5">
           <Button size="sm" disabled={saveDisabled || saving} onClick={onSave}>
             {saving ? 'Saving…' : 'Save'}
           </Button>

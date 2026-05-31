@@ -37,8 +37,8 @@ export function SensorCard({ patientId, metric }: SensorCardProps) {
   const ageSeconds = lastReceivedAt != null ? Math.round((now - lastReceivedAt) / 1000) : null;
 
   return (
-    <Card className="relative overflow-hidden">
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+    <Card size="sm" className="relative overflow-hidden">
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-0">
         <CardTitle className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
           {LABELS[metric]}
         </CardTitle>
@@ -48,13 +48,16 @@ export function SensorCard({ patientId, metric }: SensorCardProps) {
         {card?.latest ? (
           <>
             <div className="flex items-baseline gap-1.5">
-              <span className="font-serif italic text-5xl font-semibold tabular-nums leading-none text-foreground">
+              <span className="font-serif italic text-4xl font-semibold tabular-nums leading-none text-foreground">
                 {formatValue(metric, card.latest.value)}
               </span>
               <span className="text-sm font-medium text-muted-foreground">{UNITS[metric]}</span>
             </div>
             <p
-              className={cn('mt-2 text-xs', isStale ? 'text-destructive' : 'text-muted-foreground')}
+              className={cn(
+                'mt-1.5 text-xs',
+                isStale ? 'text-destructive' : 'text-muted-foreground',
+              )}
             >
               {isStale && ageSeconds != null
                 ? `Stale · ${ageSeconds}s since last reading`
@@ -62,11 +65,12 @@ export function SensorCard({ patientId, metric }: SensorCardProps) {
             </p>
             <Sparkline
               points={card.buffer}
-              className={cn('mt-3 w-full', isStale ? 'text-destructive' : 'text-accent')}
+              height={28}
+              className={cn('mt-2 w-full', isStale ? 'text-destructive' : 'text-accent')}
             />
           </>
         ) : (
-          <div className="flex h-24 items-center justify-center text-sm text-muted-foreground">
+          <div className="flex h-16 items-center justify-center text-sm text-muted-foreground">
             Awaiting first reading…
           </div>
         )}
