@@ -22,18 +22,38 @@ export interface ShimState {
   /** Rising-edge latch for the wearable's "patient requests attention" (SOS)
    *  button, so one press emits one event (optional for back-compat). */
   attentionActive?: boolean;
+  /**
+   * Timestamp (ms) of the most recent accel-magnitude dip below FREEFALL_LOW_G.
+   * Used by the balanced fall algorithm: an impact that follows a free-fall dip
+   * within FREEFALL_WINDOW_MS is allowed at the softer IMPACT_SOFT_G threshold.
+   * Null when no recent dip has been observed.
+   */
+  freefallAt: number | null;
 }
 
 export function freshState(): ShimState {
-  return { hr: null, accel: null, fallActive: false, attentionActive: false };
+  return { hr: null, accel: null, fallActive: false, attentionActive: false, freefallAt: null };
 }
 
-// Fall-detection thresholds, ported from D2-Processor.py. movement_rate is the
-// IMU's sqrt(ax² + ay² + az²); a spike past MOVEMENT_HIGH is a fall impact. The
-// reset gate adds hysteresis so one fall emits one event, not one per tick the
-// patient stays down.
-export const MOVEMENT_HIGH = 2.0;
-export const MOVEMENT_RESET = 1.2;
+// Fall-detection thresholds — balanced algorithm.
+//
+// MOVEMENT_HIGH is kept for back-compat (tests import it); it is no longer used
+// as the primary trigger — IMPACT_HIGH_G is the effective hard threshold.
+//
+// Algorithm per accel sample (all values in g):
+//   1. If movement < FREEFALL_LOW_G  → record state.freefallAt = nowMs.
+//   2. recentFreefall = freefallAt != null && (nowMs - freefallAt) <= FREEFALL_WINDOW_MS.
+//   3. effectiveThreshold = recentFreefall ? IMPACT_SOFT_G : IMPACT_HIGH_G.
+//   4. gyroOk = gyro present ? hypot(gx,gy,gz) > GYRO_IMPACT_DPS : true.
+//   5. Fire fall (rising edge, !fallActive) when movement > effectiveThreshold AND gyroOk.
+//   6. Re-arm when movement <= MOVEMENT_RESET.
+export const MOVEMENT_HIGH = 2.0; // kept for test back-compat — not the active trigger
+export const MOVEMENT_RESET = 1.2; // re-arm hysteresis (unchanged)
+export const IMPACT_HIGH_G = 2.7; // primary impact threshold (raised from 2.0 to cut FPs)
+export const IMPACT_SOFT_G = 2.2; // softer threshold, only when free-fall dip just preceded
+export const FREEFALL_LOW_G = 0.6; // magnitude below this = possible free-fall
+export const FREEFALL_WINDOW_MS = 2000; // free-fall dip counts within this window (ms)
+export const GYRO_IMPACT_DPS = 150; // real falls rotate fast; required when gyro is valid
 
 // The combined `.../total` device reports linear acceleration in m/s²; the
 // canonical accel vector and the fall latch both work in g (baseline ~1.0).
@@ -110,8 +130,27 @@ export function ingestImu(
     ? num(payload.movement_rate)
     : Math.sqrt(ax * ax + ay * ay + az * az);
 
-  if (movement > MOVEMENT_HIGH && !next.fallActive) {
+  // Balanced fall algorithm — mirrors ingestTotal's logic (see constant block).
+  const nowMs = new Date(nowIso).getTime();
+
+  // Step 1: track free-fall dip.
+  if (movement < FREEFALL_LOW_G) next.freefallAt = nowMs;
+
+  // Step 2–3: effective threshold.
+  const recentFreefall = next.freefallAt != null && nowMs - next.freefallAt <= FREEFALL_WINDOW_MS;
+  const effectiveThreshold = recentFreefall ? IMPACT_SOFT_G : IMPACT_HIGH_G;
+
+  // Step 4: gyro corroboration. ingestImu payloads carry optional gx/gy/gz.
+  const gx = num(payload.gx);
+  const gy = num(payload.gy);
+  const gz = num(payload.gz);
+  const haveGyro = [gx, gy, gz].every(Number.isFinite);
+  const gyroOk = haveGyro ? Math.hypot(gx, gy, gz) > GYRO_IMPACT_DPS : true;
+
+  // Step 5: rising-edge fall detection.
+  if (movement > effectiveThreshold && gyroOk && !next.fallActive) {
     next.fallActive = true;
+    next.freefallAt = null; // consumed
     const tilt = num(payload.tilt);
     const candidate = {
       v: 1 as const,
@@ -122,6 +161,8 @@ export function ingestImu(
       payload: {
         movement_rate: movement,
         ...(Number.isFinite(tilt) ? { tilt } : {}),
+        freefall_preceded: recentFreefall,
+        ...(haveGyro ? { gyro_dps: Math.round(Math.hypot(gx, gy, gz)) } : {}),
       },
     };
     const parsed = EventMessage.safeParse(candidate);
@@ -131,6 +172,7 @@ export function ingestImu(
     return { state: next, fall: parsed.data };
   }
 
+  // Step 6: re-arm.
   if (movement <= MOVEMENT_RESET && next.fallActive) {
     next.fallActive = false; // movement normalised — re-arm for the next fall
   }
@@ -374,24 +416,46 @@ export function ingestTotal(
     else errors.push(`telemetry: ${parsed.error.issues[0]?.message}`);
   }
 
-  // ---- Fall latch (rising edge on accel magnitude in g) --------------------
+  // ---- Fall latch (balanced algorithm — see constant block) ---------------
   let fall: EventMessage | null = null;
   if (haveAccel) {
     const movement = Math.hypot(axG, ayG, azG); // ~1.0 at rest, spikes on impact
-    if (movement > MOVEMENT_HIGH && !next.fallActive) {
+    const nowMs = new Date(nowIso).getTime();
+
+    // Step 1: track free-fall dip.
+    if (movement < FREEFALL_LOW_G) next.freefallAt = nowMs;
+
+    // Step 2–3: effective threshold — softer when a free-fall dip just preceded.
+    const recentFreefall = next.freefallAt != null && nowMs - next.freefallAt <= FREEFALL_WINDOW_MS;
+    const effectiveThreshold = recentFreefall ? IMPACT_SOFT_G : IMPACT_HIGH_G;
+
+    // Step 4: gyro corroboration — require rotation above GYRO_IMPACT_DPS when gyro
+    // is present; treat missing gyro as permissive (don't block on hardware gaps).
+    const gyroDps = haveGyro ? Math.hypot(gx, gy, gz) : 0;
+    const gyroOk = haveGyro ? gyroDps > GYRO_IMPACT_DPS : true;
+
+    // Step 5: rising-edge fall detection.
+    if (movement > effectiveThreshold && gyroOk && !next.fallActive) {
       next.fallActive = true;
+      next.freefallAt = null; // consumed
       const candidate = {
         v: 1 as const,
         patient_id: map.patient_id,
         device_id: map.device_id,
         occurred_at: nowIso,
         type: 'fall' as const,
-        payload: { movement_rate: round3(movement), tilt: round3(Math.hypot(axG, ayG)) },
+        payload: {
+          movement_rate: round3(movement),
+          tilt: round3(Math.hypot(axG, ayG)),
+          freefall_preceded: recentFreefall,
+          ...(haveGyro ? { gyro_dps: Math.round(gyroDps) } : {}),
+        },
       };
       const parsed = EventMessage.safeParse(candidate);
       if (parsed.success) fall = parsed.data;
       else errors.push(`event: ${parsed.error.issues[0]?.message}`);
     } else if (movement <= MOVEMENT_RESET && next.fallActive) {
+      // Step 6: re-arm.
       next.fallActive = false; // movement normalised — re-arm for the next fall
     }
   }

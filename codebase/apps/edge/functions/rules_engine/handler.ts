@@ -65,7 +65,13 @@ interface WebhookPayload {
 
 interface DispatchOutcome {
   rule_id: string;
-  decision: 'fire' | 'cooldown_suppressed' | 'no_match' | 'inserted' | 'insert_failed';
+  decision:
+    | 'fire'
+    | 'cooldown_suppressed'
+    | 'duplicate_suppressed'
+    | 'no_match'
+    | 'inserted'
+    | 'insert_failed';
   alert_id?: string;
   details?: string;
 }
@@ -221,7 +227,11 @@ export async function handleRulesEngineRequest(
     // Cooldown gap is measured against the event's own timestamp so a
     // replay or backfill respects per-event cooldown semantics; fired_at
     // (the row timestamp) stays at server time per item 90.
-    if (withinCooldown(rule, lastFiredAt, dataPointAt(dataPoint))) {
+    // Cooldown gap is measured against server time so it aligns with
+    // fired_at (also server time). Previously used dataPointAt which
+    // could be a data-point timestamp from a replay, causing the cooldown
+    // to be evaluated against a stale clock reference.
+    if (withinCooldown(rule, lastFiredAt, serverNowIso)) {
       outcomes.push({ rule_id: rule.id, decision: 'cooldown_suppressed' });
       continue;
     }
@@ -240,6 +250,14 @@ export async function handleRulesEngineRequest(
       .select('id')
       .single();
     if (insertRes.error || !insertRes.data) {
+      // A unique_violation means a concurrent invocation already inserted
+      // an active alert for this (patient, rule) — the alerts_active_uidx
+      // partial unique index enforces at-most-one unacked alert per pair.
+      // Treat it as idempotent: suppress silently, same as cooldown.
+      if (insertRes.error?.code === '23505') {
+        outcomes.push({ rule_id: rule.id, decision: 'duplicate_suppressed' });
+        continue;
+      }
       outcomes.push({
         rule_id: rule.id,
         decision: 'insert_failed',

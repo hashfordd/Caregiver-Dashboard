@@ -1,5 +1,6 @@
 import { Outlet } from 'react-router-dom';
 import { AppNavbar } from '@/components/AppNavbar';
+import { AlertBanner } from '@/features/alerts/AlertBanner';
 import { AlertCueHost } from '@/features/alerts/AlertCueHost';
 import { LiveDataLostBanner } from '@/components/LiveDataLostBanner';
 import { useTemperatureUnitSync } from '@/lib/units/temperature';
@@ -17,6 +18,7 @@ export function AppLayout() {
     <div className="min-h-screen bg-background">
       <LiveDataLostBanner />
       <AppNavbar />
+      <AlertBanner />
       <AlertCueHost />
       <Outlet />
     </div>

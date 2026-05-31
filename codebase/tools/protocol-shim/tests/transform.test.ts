@@ -290,9 +290,18 @@ describe('ingestTotal — combined device payload', () => {
     expect(r.fall).toBeNull();
   });
 
-  it('fires one fall on a movement spike, then latches', () => {
-    // ~3 g impact: magnitude sqrt(20²+20²+5²)/g ≈ 2.96 > MOVEMENT_HIGH.
-    const spike = totalPayload({ acc_x_mps2: 20, acc_y_mps2: 20, acc_z_mps2: 5 });
+  it('fires one fall on a movement spike with gyro corroboration, then latches', () => {
+    // ~3 g impact (sqrt(20²+20²+5²)/g ≈ 2.96 > IMPACT_HIGH_G) with rapid rotation
+    // (≈200 dps) satisfying gyro corroboration. Both gates must pass under the new
+    // balanced algorithm (raised threshold + gyro check).
+    const spike = totalPayload({
+      acc_x_mps2: 20,
+      acc_y_mps2: 20,
+      acc_z_mps2: 5,
+      gyro_x_dps: 141,
+      gyro_y_dps: 141,
+      gyro_z_dps: 0, // hypot ≈ 199 dps > GYRO_IMPACT_DPS (150)
+    });
     const first = ingestTotal(MAP, freshState(), spike, NOW);
     expect(first.fall).toMatchObject({ v: 1, type: 'fall', patient_id: MAP.patient_id });
     const mr = (first.fall?.payload as { movement_rate: number }).movement_rate;
