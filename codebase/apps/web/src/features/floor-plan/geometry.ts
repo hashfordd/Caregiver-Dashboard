@@ -49,6 +49,73 @@ export function snapToEndpoint(
   return best ? { x: best.x, y: best.y, snapped: true } : { ...point, snapped: false };
 }
 
+/** A wall/room edge as a world-space line segment. */
+export interface WallSegment {
+  a: WorldPoint;
+  b: WorldPoint;
+}
+
+/** Closest point on the segment a→b to p, clamped to the segment, plus its
+ *  distance to p. Used to drop a door/window opening onto the wall it
+ *  pierces. */
+function closestPointOnSegment(
+  p: WorldPoint,
+  a: WorldPoint,
+  b: WorldPoint,
+): { point: WorldPoint; dist: number } {
+  const abx = b.x - a.x;
+  const aby = b.y - a.y;
+  const lenSq = abx * abx + aby * aby;
+  let t = lenSq === 0 ? 0 : ((p.x - a.x) * abx + (p.y - a.y) * aby) / lenSq;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  const point = { x: a.x + t * abx, y: a.y + t * aby };
+  return { point, dist: Math.hypot(point.x - p.x, point.y - p.y) };
+}
+
+/** Every wall + room edge on the canvas as world-space segments. Doors and
+ *  windows snap onto these so an opening lies along the wall rather than on
+ *  the background grid. Walls are single lines; rooms are polygon loops. */
+export function collectWallSegments(canvas: fabric.Canvas, exclude?: fabric.Object): WallSegment[] {
+  const out: WallSegment[] = [];
+  for (const obj of canvas.getObjects()) {
+    if (obj === exclude) continue;
+    const k = (obj as unknown as { __fpKind?: string }).__fpKind;
+    if (k !== 'wall' && k !== 'room') continue;
+    if (obj instanceof fabric.Line) {
+      const ends = lineWorldEndpoints(obj);
+      out.push({ a: ends.start, b: ends.end });
+    } else if (obj instanceof fabric.Polygon) {
+      const v = polygonWorldVertices(obj);
+      for (let i = 0; i < v.length; i += 1) {
+        const a = v[i];
+        const b = v[(i + 1) % v.length];
+        if (a && b) out.push({ a, b });
+      }
+    }
+  }
+  return out;
+}
+
+/** Project a point onto the nearest wall/room edge within `threshold` world
+ *  px. Returns the projected point (lying exactly on the edge) or the
+ *  original point with snapped=false when no edge is close enough. */
+export function snapToWall(
+  point: WorldPoint,
+  segments: WallSegment[],
+  threshold = SNAP_PX,
+): { x: number; y: number; snapped: boolean } {
+  let bestDist = threshold;
+  let best: WorldPoint | null = null;
+  for (const seg of segments) {
+    const proj = closestPointOnSegment(point, seg.a, seg.b);
+    if (proj.dist < bestDist) {
+      best = proj.point;
+      bestDist = proj.dist;
+    }
+  }
+  return best ? { x: best.x, y: best.y, snapped: true } : { ...point, snapped: false };
+}
+
 /** Read a line's endpoints in world coordinates. After a Fabric drag the
  *  internal x1/y1/x2/y2 are stale relative to the new position; the
  *  transform matrix has the truth. */
@@ -351,4 +418,60 @@ export function rectToPolygonVertices(rect: fabric.Rect): WorldPoint[] {
     { x: left + w, y: top + h },
     { x: left, y: top + h },
   ];
+}
+
+/** If the given wall lines form exactly one simple closed loop, return its
+ *  vertices in walk order (world coords); otherwise null. Lets a caregiver
+ *  rubber-band a ring of walls and promote the area they enclose to a named
+ *  room without redrawing it as a polygon. Endpoints are matched on rounded
+ *  coords, the same key used by findJoins, so a visually-closed ring counts
+ *  as closed. */
+export function orderedLoopVertices(lines: fabric.Line[]): WorldPoint[] | null {
+  if (lines.length < 3) return null;
+  const key = (x: number, y: number) => `${Math.round(x)}:${Math.round(y)}`;
+  interface LoopNode {
+    x: number;
+    y: number;
+    edges: { line: fabric.Line; otherKey: string }[];
+  }
+  const nodes = new Map<string, LoopNode>();
+  const ensure = (p: WorldPoint): LoopNode => {
+    const k = key(p.x, p.y);
+    let n = nodes.get(k);
+    if (!n) {
+      n = { x: p.x, y: p.y, edges: [] };
+      nodes.set(k, n);
+    }
+    return n;
+  };
+  for (const line of lines) {
+    const ends = lineWorldEndpoints(line);
+    const ka = key(ends.start.x, ends.start.y);
+    const kb = key(ends.end.x, ends.end.y);
+    if (ka === kb) return null; // zero-length / degenerate edge
+    ensure(ends.start).edges.push({ line, otherKey: kb });
+    ensure(ends.end).edges.push({ line, otherKey: ka });
+  }
+  // A simple cycle has node count === edge count and every node degree 2.
+  if (nodes.size !== lines.length) return null;
+  for (const n of nodes.values()) {
+    if (n.edges.length !== 2) return null;
+  }
+  const startKey = nodes.keys().next().value as string;
+  const ordered: WorldPoint[] = [];
+  let prevKey: string | null = null;
+  let curKey = startKey;
+  for (let i = 0; i < nodes.size; i += 1) {
+    const node = nodes.get(curKey);
+    if (!node) return null;
+    ordered.push({ x: node.x, y: node.y });
+    const nextEdge = node.edges.find((e) => e.otherKey !== prevKey) ?? node.edges[0];
+    if (!nextEdge) return null;
+    prevKey = curKey;
+    curKey = nextEdge.otherKey;
+    // Returning to the start before visiting every node means the selection
+    // is several disjoint loops, not one room.
+    if (curKey === startKey && i < nodes.size - 1) return null;
+  }
+  return curKey === startKey ? ordered : null;
 }

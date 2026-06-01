@@ -7,16 +7,19 @@ import {
   JOIN_DISCONNECT_NUDGE,
   canonicaliseLine,
   collectEndpoints,
+  collectWallSegments,
   findClosedRooms,
   findConnectedPartners,
   findConnectedWallGroup,
   findJoins,
   lineWorldEndpoints,
+  orderedLoopVertices,
   polygonWorldVertices,
   rectToPolygonVertices,
   setLineEndpoint,
   setPolygonVertices,
   snapToEndpoint,
+  snapToWall,
   type WallJoin,
   type WorldPoint,
 } from './geometry';
@@ -61,6 +64,14 @@ interface FloorPlanCanvasProps {
    *  persists it to room_connectors. */
   onConnectorDrawn?: (
     kind: 'door' | 'window',
+    start: { x: number; y: number },
+    end: { x: number; y: number },
+  ) => void;
+  /** Connector repositioning: fires when a caregiver drags an existing
+   *  door/window/opening line to a new spot on the floor plan. World
+   *  coords; the parent persists the new endpoints to room_connectors. */
+  onConnectorMoved?: (
+    id: string,
     start: { x: number; y: number },
     end: { x: number; y: number },
   ) => void;
@@ -109,12 +120,43 @@ function snap(value: number): number {
   return Math.round(value / GRID_SIZE) * GRID_SIZE;
 }
 
+/** Remove the current selection. An ActiveSelection is a transient wrapper
+ *  around several real canvas objects, so its members are removed
+ *  individually; any single object — a wall line, a room polygon, or a
+ *  furniture group (whose own _objects are its rect + label, NOT canvas
+ *  members) — is removed directly. Returns whether anything was removed. */
+function removeActiveObjects(canvas: fabric.Canvas): boolean {
+  const active = canvas.getActiveObject();
+  if (!active) return false;
+  const targets = active instanceof fabric.ActiveSelection ? [...active.getObjects()] : [active];
+  canvas.discardActiveObject();
+  for (const o of targets) canvas.remove(o);
+  return true;
+}
+
+/** World-space vertices of a promotable "room" in the current selection: a
+ *  single room polygon, or a rubber-banded ring of wall lines that closes
+ *  into exactly one loop. Null when the selection isn't a closed shape. */
+function selectedRoomVertices(canvas: fabric.Canvas): WorldPoint[] | null {
+  const active = canvas.getActiveObject();
+  if (!active) return null;
+  if (active instanceof fabric.Polygon) return polygonWorldVertices(active);
+  const members = active instanceof fabric.ActiveSelection ? active.getObjects() : [active];
+  const walls = members.filter(
+    (o): o is fabric.Line => o instanceof fabric.Line && kindOf(o) === 'wall',
+  );
+  return orderedLoopVertices(walls);
+}
+
 function describeSelection(canvas: fabric.Canvas): SelectionDescriptor {
   const active = canvas.getActiveObject();
   if (!active) return { kind: 'none' };
-  const activeSel = active as unknown as { _objects?: fabric.Object[] };
-  if (Array.isArray(activeSel._objects) && activeSel._objects.length > 1) {
-    return { kind: 'multi', count: activeSel._objects.length };
+  if (active instanceof fabric.ActiveSelection) {
+    return {
+      kind: 'multi',
+      count: active.getObjects().length,
+      canPromoteToRoom: selectedRoomVertices(canvas) != null,
+    };
   }
   if (active instanceof fabric.Line) {
     const ends = lineWorldEndpoints(active);
@@ -162,6 +204,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       onBeaconUpdate,
       onCalibrationClick,
       onConnectorDrawn,
+      onConnectorMoved,
       onDimensionCommit,
       width,
       height,
@@ -231,6 +274,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     const onBeaconUpdateRef = useRef(onBeaconUpdate);
     const onCalibrationClickRef = useRef(onCalibrationClick);
     const onConnectorDrawnRef = useRef(onConnectorDrawn);
+    const onConnectorMovedRef = useRef(onConnectorMoved);
     const onDimensionCommitRef = useRef(onDimensionCommit);
     const scaleRef = useRef(scale);
     const showDimensionsRef = useRef(showDimensions ?? true);
@@ -277,6 +321,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     useEffect(() => {
       onConnectorDrawnRef.current = onConnectorDrawn;
     }, [onConnectorDrawn]);
+    useEffect(() => {
+      onConnectorMovedRef.current = onConnectorMoved;
+    }, [onConnectorMoved]);
     useEffect(() => {
       onDimensionCommitRef.current = onDimensionCommit;
     }, [onDimensionCommit]);
@@ -508,6 +555,18 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         const eps = collectEndpoints(canvas, exclude);
         const zoom = canvas.getZoom() || 1;
         return snapToEndpoint(p, eps, SNAP_PX / zoom);
+      };
+
+      // Door/window snap: an opening belongs ON a wall, not on the grid.
+      // Prefer an exact wall corner when the cursor is near one, else
+      // project onto the nearest wall/room edge so the opening lies along
+      // it. Falls back to snapped=false (grid) only when no wall is close.
+      const trySnapConnector = (p: WorldPoint): { x: number; y: number; snapped: boolean } => {
+        const zoom = canvas.getZoom() || 1;
+        const threshold = SNAP_PX / zoom;
+        const epSnap = snapToEndpoint(p, collectEndpoints(canvas), threshold);
+        if (epSnap.snapped) return epSnap;
+        return snapToWall(p, collectWallSegments(canvas), threshold);
       };
 
       const setSnapIndicator = (world: WorldPoint | null) => {
@@ -1366,7 +1425,11 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           autoRevertToSelect();
           renderLabelsAndJoins();
         } else if (mode === 'door' || mode === 'window') {
-          handleConnectorClick(mode, sp);
+          // Openings snap onto the wall under the cursor, not the grid.
+          const cs = trySnapConnector(raw);
+          const cp = cs.snapped ? { x: cs.x, y: cs.y } : { x: snap(raw.x), y: snap(raw.y) };
+          setSnapIndicator(cs.snapped ? cp : null);
+          handleConnectorClick(mode, cp);
         }
       };
 
@@ -1549,6 +1612,22 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         renderShading();
       };
 
+      // Delete the active selection (toolbar button path). Mirrors the
+      // Backspace/Delete handler so a toolbar delete is dirty-tracked and
+      // undoable, and correctly removes a single furniture group (whose own
+      // children aren't canvas members) as well as a multi-selection.
+      const deleteSelectedObjects = () => {
+        if (!editingRef.current) return;
+        if (!removeActiveObjects(canvas)) return;
+        canvas.requestRenderAll();
+        emitDirty();
+        snapshot();
+        emitSelection();
+        renderHandles();
+        renderLabelsAndJoins();
+        renderShading();
+      };
+
       // ─── Phase B: rooms + connectors overlay ────────────────────────────
       // Single SVG layer for both. World coords pass through
       // screenFromWorld at render time so the overlay rides zoom/pan with
@@ -1559,6 +1638,64 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       const SVG_NS = 'http://www.w3.org/2000/svg';
       let roomSprites: RoomSprite[] = [];
       let connectorSprites: RoomConnectorSprite[] = [];
+      // While a connector line is being dragged (edit + select mode) we render
+      // it at these override coords for instant feedback; the persisted
+      // sprite catches up after onConnectorMoved round-trips through the DB.
+      const connectorDragOverride = new Map<string, { start: WorldPoint; end: WorldPoint }>();
+
+      // Drag an existing door/window/opening line to reposition it. Grabbing
+      // anywhere on the segment translates the whole opening; the moved start
+      // endpoint snaps onto the nearest wall so the opening stays flush, and
+      // the same delta is applied to the end so its length/orientation hold.
+      const beginConnectorDrag = (sprite: RoomConnectorSprite, ev: PointerEvent) => {
+        if (!editingRef.current || modeRef.current !== 'select') return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        const rect = canvas.upperCanvasEl.getBoundingClientRect();
+        const grab = worldFromScreen(ev.clientX - rect.left, ev.clientY - rect.top);
+        const origStart = { x: sprite.start.x, y: sprite.start.y };
+        const origEnd = { x: sprite.end.x, y: sprite.end.y };
+
+        const onMove = (e2: PointerEvent) => {
+          const w = worldFromScreen(e2.clientX - rect.left, e2.clientY - rect.top);
+          let dx = w.x - grab.x;
+          let dy = w.y - grab.y;
+          const threshold = SNAP_PX / (canvas.getZoom() || 1);
+          const movedStart = { x: origStart.x + dx, y: origStart.y + dy };
+          const snapStart = snapToWall(movedStart, collectWallSegments(canvas), threshold);
+          if (snapStart.snapped) {
+            dx = snapStart.x - origStart.x;
+            dy = snapStart.y - origStart.y;
+            setSnapIndicator({ x: snapStart.x, y: snapStart.y });
+          } else {
+            setSnapIndicator(null);
+          }
+          connectorDragOverride.set(sprite.id, {
+            start: { x: origStart.x + dx, y: origStart.y + dy },
+            end: { x: origEnd.x + dx, y: origEnd.y + dy },
+          });
+          canvas.requestRenderAll(); // after:render → renderRoomsAndConnectors
+        };
+        const onUp = () => {
+          window.removeEventListener('pointermove', onMove);
+          window.removeEventListener('pointerup', onUp);
+          setSnapIndicator(null);
+          const ov = connectorDragOverride.get(sprite.id);
+          if (!ov) return;
+          const moved = Math.hypot(ov.start.x - origStart.x, ov.start.y - origStart.y);
+          if (moved >= 1) {
+            // Keep the override in place so the line holds its dropped spot —
+            // it's cleared when the parent feeds back the persisted sprites
+            // (__fpSetRoomConnectors), avoiding a flash back to the old coords.
+            onConnectorMovedRef.current?.(sprite.id, ov.start, ov.end);
+          } else {
+            connectorDragOverride.delete(sprite.id);
+            canvas.requestRenderAll();
+          }
+        };
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+      };
 
       // Soft palette per room_type. Stroke is the strong shade; fill is
       // the same hue at 14% opacity so multiple rooms don't muddy when
@@ -1634,9 +1771,13 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           layer.appendChild(label);
         }
 
+        const connectorsInteractive = editingRef.current && modeRef.current === 'select';
         for (const sprite of connectorSprites) {
-          const s = screenFromWorld(sprite.start);
-          const e = screenFromWorld(sprite.end);
+          const ov = connectorDragOverride.get(sprite.id);
+          const startW = ov ? ov.start : sprite.start;
+          const endW = ov ? ov.end : sprite.end;
+          const s = screenFromWorld(startW);
+          const e = screenFromWorld(endW);
 
           // Proximity zone rectangle — drawn first so it sits under the
           // segment line. Only for door/window that carry a radius.
@@ -1714,6 +1855,26 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           line.appendChild(titleEl);
           layer.appendChild(line);
 
+          // Edit + select mode: lay a fat transparent line over the segment so
+          // the caregiver can grab and drag the opening to reposition it
+          // (no coordinate typing). The visible line stays inert; this hit
+          // line carries the pointer interaction.
+          if (connectorsInteractive) {
+            const hit = document.createElementNS(SVG_NS, 'line');
+            hit.setAttribute('x1', String(s.x));
+            hit.setAttribute('y1', String(s.y));
+            hit.setAttribute('x2', String(e.x));
+            hit.setAttribute('y2', String(e.y));
+            hit.setAttribute('stroke', 'transparent');
+            hit.setAttribute('stroke-width', '14');
+            hit.setAttribute('stroke-linecap', 'round');
+            hit.setAttribute('pointer-events', 'stroke');
+            hit.style.cursor = 'move';
+            hit.setAttribute('data-connector-hit', sprite.id);
+            hit.addEventListener('pointerdown', (pe) => beginConnectorDrag(sprite, pe));
+            layer.appendChild(hit);
+          }
+
           if (sprite.label) {
             const mid = { x: (s.x + e.x) / 2, y: (s.y + e.y) / 2 };
             const label = document.createElementNS(SVG_NS, 'text');
@@ -1736,6 +1897,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
 
       Object.assign(canvas as unknown as Record<string, unknown>, {
         __fpClearAll: clearAll,
+        __fpDeleteSelected: deleteSelectedObjects,
         __fpSetBeacons: (sprites: BeaconSprite[]) => {
           beaconSprites = sprites;
           renderBeacons();
@@ -1765,6 +1927,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         },
         __fpSetRoomConnectors: (sprites: RoomConnectorSprite[]) => {
           connectorSprites = sprites;
+          // Authoritative coords arrived — drop any drag previews so a moved
+          // connector settles on its persisted position.
+          connectorDragOverride.clear();
           renderRoomsAndConnectors();
         },
       });
@@ -1825,10 +1990,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         const connDraft = connectorDraftRef.current;
         if (connDraft && (modeRef.current === 'door' || modeRef.current === 'window')) {
           const raw = canvas.getScenePoint(opt.e);
-          const gridSnapped = { x: snap(raw.x), y: snap(raw.y) };
-          const epSnap = trySnapWorld(gridSnapped);
-          const tip = epSnap.snapped ? { x: epSnap.x, y: epSnap.y } : gridSnapped;
-          setSnapIndicator(epSnap.snapped ? { x: epSnap.x, y: epSnap.y } : null);
+          const cs = trySnapConnector(raw);
+          const tip = cs.snapped ? { x: cs.x, y: cs.y } : { x: snap(raw.x), y: snap(raw.y) };
+          setSnapIndicator(cs.snapped ? tip : null);
           connDraft.previewLine.set({
             x1: connDraft.start.x,
             y1: connDraft.start.y,
@@ -2182,15 +2346,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           return;
         }
         if (e.key === 'Backspace' || e.key === 'Delete') {
-          const active = canvas.getActiveObject();
-          if (!active) return;
-          const asGroup = active as unknown as { _objects?: fabric.Object[] };
-          if (Array.isArray(asGroup._objects) && asGroup._objects.length > 0) {
-            for (const o of asGroup._objects) canvas.remove(o);
-          } else {
-            canvas.remove(active);
-          }
-          canvas.discardActiveObject();
+          if (!removeActiveObjects(canvas)) return;
           canvas.requestRenderAll();
           emitDirty();
           snapshot();
@@ -2336,17 +2492,8 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           return Math.hypot(ends.end.x - ends.start.x, ends.end.y - ends.start.y);
         },
         deleteSelected: () => {
-          const canvas = fabricRef.current;
-          const obj = canvas?.getActiveObject();
-          if (!canvas || !obj) return;
-          const asGroup = obj as unknown as { _objects?: fabric.Object[] };
-          if (Array.isArray(asGroup._objects) && asGroup._objects.length > 0) {
-            for (const o of asGroup._objects) canvas.remove(o);
-          } else {
-            canvas.remove(obj);
-          }
-          canvas.discardActiveObject();
-          canvas.requestRenderAll();
+          const c = fabricRef.current as unknown as { __fpDeleteSelected?: () => void } | null;
+          c?.__fpDeleteSelected?.();
         },
         clearAll: () => {
           const c = fabricRef.current as unknown as { __fpClearAll?: () => void } | null;
@@ -2485,10 +2632,8 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         getSelectedPolygonVertices: () => {
           const c = fabricRef.current;
           if (!c) return null;
-          const active = c.getActiveObject();
-          if (!(active instanceof fabric.Polygon)) return null;
-          const verts = polygonWorldVertices(active);
-          return verts.map((v) => [v.x, v.y] as [number, number]);
+          const verts = selectedRoomVertices(c);
+          return verts ? verts.map((v) => [v.x, v.y] as [number, number]) : null;
         },
       }),
       [],

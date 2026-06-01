@@ -302,7 +302,14 @@ export function Toolbar({
           tape distance you know. Beacon-based is the rigorous default
           once enough beacons are placed because the F8 pipeline already
           treats beacon coords as ground truth. */}
-      <DropdownMenu>
+      {/* modal={false}: a modal dropdown applies a body scroll-lock /
+          pointer-events:none. When a menu item here opens a Dialog (Set
+          scale from a wall / from beacons), the menu unmounts as the dialog
+          mounts and Radix can leave `body { pointer-events: none }` stuck —
+          freezing the whole page (and every later dialog, e.g. Set length).
+          Non-modal removes that lock; the dropdown still closes on outside
+          click and the two items still open their dialogs. */}
+      <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild>
           <Button
             variant="outline"
@@ -377,11 +384,11 @@ export function Toolbar({
         variant="outline"
         size="sm"
         onClick={onPromotePolygonToRoom}
-        disabled={toolsDisabled || selection.kind !== 'polygon'}
+        disabled={toolsDisabled || !(selection.kind === 'polygon' || selection.canPromoteToRoom)}
         title={
-          selection.kind === 'polygon'
-            ? 'Promote this polygon to an addressable room'
-            : 'Draw a polygon and select it first'
+          selection.kind === 'polygon' || selection.canPromoteToRoom
+            ? 'Promote this closed shape to an addressable room'
+            : 'Select a room polygon, or a ring of walls that close into a loop'
         }
       >
         <Pentagon className="h-4 w-4" />

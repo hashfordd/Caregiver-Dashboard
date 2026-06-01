@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -33,18 +33,11 @@ interface RoomConnectorDialogProps {
   submitting?: boolean;
 }
 
-function numberOrNaN(value: string): number {
-  const trimmed = value.trim();
-  if (trimmed === '') return Number.NaN;
-  return Number(trimmed);
-}
-
-/** Add / edit a `room_connectors` row. Endpoints are numeric x/y in
- *  canvas-pixel coordinates, matching the rooms polygon space so the
- *  rules engine can run distance checks against position estimates
- *  without unit conversion. Room A/B are optional joins — the prototype
- *  needs them only for caregiver-language rules like "patient left the
- *  bedroom via the door". */
+/** Edit a `room_connectors` row's metadata — kind, label, and the optional
+ *  room A/B links the rules engine uses for caregiver-language alerts like
+ *  "patient left the bedroom via the door". The segment's position is NOT
+ *  edited here: a care provider drags the door/window line directly on the
+ *  floor plan, so the stored endpoints pass through unchanged. */
 export function RoomConnectorDialog({
   open,
   onOpenChange,
@@ -57,10 +50,6 @@ export function RoomConnectorDialog({
   submitting,
 }: RoomConnectorDialogProps) {
   const [kind, setKind] = useState<ConnectorKind>('door');
-  const [startX, setStartX] = useState('');
-  const [startY, setStartY] = useState('');
-  const [endX, setEndX] = useState('');
-  const [endY, setEndY] = useState('');
   const [roomAId, setRoomAId] = useState<string>('');
   const [roomBId, setRoomBId] = useState<string>('');
   const [label, setLabel] = useState('');
@@ -69,50 +58,33 @@ export function RoomConnectorDialog({
   useEffect(() => {
     if (!open) return;
     setKind(initial?.kind ?? presetKind ?? 'door');
-    setStartX(initial ? String(initial.start_x) : '');
-    setStartY(initial ? String(initial.start_y) : '');
-    setEndX(initial ? String(initial.end_x) : '');
-    setEndY(initial ? String(initial.end_y) : '');
     setRoomAId(initial?.room_a_id ?? '');
     setRoomBId(initial?.room_b_id ?? '');
     setLabel(initial?.label ?? '');
     setSubmitError(null);
   }, [open, initial, presetKind]);
 
-  const sx = numberOrNaN(startX);
-  const sy = numberOrNaN(startY);
-  const ex = numberOrNaN(endX);
-  const ey = numberOrNaN(endY);
-  const endpointsValid = [sx, sy, ex, ey].every(Number.isFinite);
-  const endpointsDistinct = endpointsValid && (sx !== ex || sy !== ey);
-
-  const segmentLengthPx = useMemo(
-    () => (endpointsDistinct ? Math.hypot(ex - sx, ey - sy) : null),
-    [endpointsDistinct, sx, sy, ex, ey],
-  );
-
-  const canSubmit = endpointsValid && endpointsDistinct && !submitting;
+  // Position is owned by the canvas (drag the line), so a connector can only
+  // be edited here once it exists with endpoints to preserve.
+  const canSubmit = initial != null && !submitting;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!endpointsValid) {
-      setSubmitError('All four endpoint coordinates must be numbers.');
-      return;
-    }
-    if (!endpointsDistinct) {
-      setSubmitError('Start and end must be different points (a zero-length segment is invalid).');
+    if (!initial) {
+      setSubmitError('Draw the door or window on the floor plan first, then edit it here.');
       return;
     }
     try {
       await onConfirm({
-        id: initial?.id,
+        id: initial.id,
         patient_id: patientId,
         floor_plan_id: floorPlanId,
         kind,
-        start_x: sx,
-        start_y: sy,
-        end_x: ex,
-        end_y: ey,
+        // Geometry is unchanged — repositioning happens by dragging on canvas.
+        start_x: initial.start_x,
+        start_y: initial.start_y,
+        end_x: initial.end_x,
+        end_y: initial.end_y,
         room_a_id: roomAId === '' ? null : roomAId,
         room_b_id: roomBId === '' ? null : roomBId,
         label: label.trim() === '' ? null : label.trim(),
@@ -127,10 +99,10 @@ export function RoomConnectorDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{initial ? 'Edit connector' : 'Add connector'}</DialogTitle>
+          <DialogTitle>Edit connector</DialogTitle>
           <DialogDescription>
-            Doors, windows and openings are line segments anchored on canvas-pixel coordinates. Link
-            to one or two rooms so rules can say "left bedroom via this door".
+            Set the kind, an optional label, and link to one or two rooms so rules can say "left
+            bedroom via this door". To reposition it, drag the line on the floor plan.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -160,67 +132,6 @@ export function RoomConnectorDialog({
               />
             </div>
           </div>
-
-          <fieldset className="space-y-2">
-            <legend className="text-xs font-medium text-foreground/80">
-              Endpoints (canvas px)
-            </legend>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label htmlFor="connector-sx" className="text-xs">
-                  Start x
-                </Label>
-                <Input
-                  id="connector-sx"
-                  type="number"
-                  inputMode="decimal"
-                  value={startX}
-                  onChange={(e) => setStartX(e.target.value)}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="connector-sy" className="text-xs">
-                  Start y
-                </Label>
-                <Input
-                  id="connector-sy"
-                  type="number"
-                  inputMode="decimal"
-                  value={startY}
-                  onChange={(e) => setStartY(e.target.value)}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="connector-ex" className="text-xs">
-                  End x
-                </Label>
-                <Input
-                  id="connector-ex"
-                  type="number"
-                  inputMode="decimal"
-                  value={endX}
-                  onChange={(e) => setEndX(e.target.value)}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="connector-ey" className="text-xs">
-                  End y
-                </Label>
-                <Input
-                  id="connector-ey"
-                  type="number"
-                  inputMode="decimal"
-                  value={endY}
-                  onChange={(e) => setEndY(e.target.value)}
-                />
-              </div>
-            </div>
-            {segmentLengthPx != null && (
-              <p className="text-[10px] text-muted-foreground">
-                Segment length: {segmentLengthPx.toFixed(0)} px
-              </p>
-            )}
-          </fieldset>
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
@@ -275,7 +186,7 @@ export function RoomConnectorDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={!canSubmit}>
-              {submitting ? 'Saving…' : initial ? 'Save changes' : 'Add connector'}
+              {submitting ? 'Saving…' : 'Save changes'}
             </Button>
           </div>
         </form>

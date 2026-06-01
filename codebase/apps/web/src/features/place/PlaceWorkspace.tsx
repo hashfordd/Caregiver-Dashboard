@@ -513,6 +513,38 @@ export function PlaceWorkspace({ patientId }: PlaceWorkspaceProps) {
     [],
   );
 
+  // Reposition an existing connector by dragging its line on the canvas.
+  // Unsaved draws (`__pending-i`) update the local queue; persisted
+  // connectors upsert their new endpoints, keeping kind/label/room links.
+  const handleConnectorMoved = useCallback(
+    (id: string, start: { x: number; y: number }, end: { x: number; y: number }) => {
+      const pendingMatch = /^__pending-(\d+)$/.exec(id);
+      if (pendingMatch) {
+        const idx = Number(pendingMatch[1]);
+        setPendingConnectors((prev) => prev.map((c, i) => (i === idx ? { ...c, start, end } : c)));
+        setDirty(true);
+        setSavedTone(null);
+        return;
+      }
+      const existing = connectorsQuery.data?.find((c) => c.id === id);
+      if (!existing) return;
+      void upsertConnector.mutateAsync({
+        id: existing.id,
+        patient_id: patientId,
+        floor_plan_id: existing.floor_plan_id,
+        kind: existing.kind,
+        start_x: start.x,
+        start_y: start.y,
+        end_x: end.x,
+        end_y: end.y,
+        room_a_id: existing.room_a_id,
+        room_b_id: existing.room_b_id,
+        label: existing.label,
+      });
+    },
+    [connectorsQuery.data, patientId, upsertConnector],
+  );
+
   const handleDiscard = useCallback(() => {
     void canvasRef.current?.deserialize(planQuery.data?.canvas_json ?? null);
     setPendingConnectors([]); // drop unsaved door/window draws
@@ -648,6 +680,7 @@ export function PlaceWorkspace({ patientId }: PlaceWorkspaceProps) {
               onBeaconUpdate={handleBeaconUpdate}
               onCalibrationClick={handleCalibrationClick}
               onConnectorDrawn={handleConnectorDrawn}
+              onConnectorMoved={handleConnectorMoved}
               onDimensionCommit={handleDimensionMetres}
             />
             {activeSection === 'layout' && isEmpty && (
@@ -692,7 +725,6 @@ export function PlaceWorkspace({ patientId }: PlaceWorkspaceProps) {
                   deleteRoomPending={deleteRoom.isPending}
                   deleteConnectorPending={deleteConnector.isPending}
                   errorMessage={roomsRailError}
-                  onAddRoom={() => setRoomDialog({ open: true, initial: null, seed: null })}
                   onEditRoom={(r) => setRoomDialog({ open: true, initial: r, seed: null })}
                   onDeleteRoom={(r) =>
                     deleteRoom.mutate({ id: r.id, floor_plan_id: r.floor_plan_id })

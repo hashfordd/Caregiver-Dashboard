@@ -24,7 +24,6 @@ interface RoomsRailProps {
   deleteRoomPending: boolean;
   deleteConnectorPending: boolean;
   errorMessage: string | null;
-  onAddRoom: () => void;
   onEditRoom: (row: RoomRow) => void;
   onDeleteRoom: (row: RoomRow) => void;
   onAddConnector: (kind: ConnectorKind) => void;
@@ -99,7 +98,6 @@ export function RoomsRail({
   deleteRoomPending,
   deleteConnectorPending,
   errorMessage,
-  onAddRoom,
   onEditRoom,
   onDeleteRoom,
   onAddConnector,
@@ -112,24 +110,21 @@ export function RoomsRail({
   return (
     <div className="space-y-3">
       <Card>
-        <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
-          <div>
-            <CardTitle>Rooms</CardTitle>
-            <CardDescription>
-              Named polygons. The rules engine uses them for entered/left alerts.
-            </CardDescription>
-          </div>
-          <Button size="sm" onClick={onAddRoom}>
-            <Plus className="h-4 w-4" />
-            Add room
-          </Button>
+        <CardHeader>
+          <CardTitle>Rooms</CardTitle>
+          <CardDescription>
+            Named polygons. The rules engine uses them for entered/left alerts. To add one, select a
+            closed shape (a room polygon or a ring of walls) on the floor plan and use{' '}
+            <span className="font-medium text-foreground">Promote to room</span>.
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-2">
           {roomsLoading ? (
             <Skeleton className="h-20 w-full" />
           ) : rooms.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              No rooms defined yet. Add one to enable room-aware alerts.
+              No rooms defined yet. Select a closed shape on the floor plan and use Promote to room
+              to enable room-aware alerts.
             </p>
           ) : (
             <ul className="divide-y divide-border rounded-md border border-border">
