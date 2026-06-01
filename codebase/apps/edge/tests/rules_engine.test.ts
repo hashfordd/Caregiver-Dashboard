@@ -271,7 +271,10 @@ describe('rules_engine handler — vitals dispatch', () => {
     const res = await handleRulesEngineRequest(
       authed({ type: 'INSERT', table: 'sensor_readings', record: sensorRow }),
       client,
-      { serviceRoleKey: SERVICE_ROLE_KEY },
+      // Pin "now" to the reading's time so the server-time cooldown check is
+      // evaluated against the fixture era (last fired 10:00, reading 10:01)
+      // rather than the real wall clock.
+      { serviceRoleKey: SERVICE_ROLE_KEY, now: '2026-05-06T10:01:00Z' },
     );
     const json = (await res.json()) as { outcomes: { decision: string }[] };
     expect(json.outcomes[0]?.decision).toBe('cooldown_suppressed');

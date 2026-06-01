@@ -51,6 +51,10 @@ function timingSafeEqual(a: string, b: string): boolean {
 
 interface HandlerEnv {
   serviceRoleKey: string;
+  /** Override for "server now" (ISO). Defaults to the real clock; injected
+   *  by tests so cooldown comparisons against fixed fixtures are
+   *  deterministic. */
+  now?: string;
 }
 
 type WebhookTable = 'sensor_readings' | 'position_estimates' | 'events';
@@ -191,7 +195,7 @@ export async function handleRulesEngineRequest(
 
   // Server time captured once per request — used as fired_at so all
   // alerts in this dispatch share a coherent clock reference.
-  const serverNowIso = new Date().toISOString();
+  const serverNowIso = env.now ?? new Date().toISOString();
 
   const outcomes: DispatchOutcome[] = [];
   for (const rule of rules) {
