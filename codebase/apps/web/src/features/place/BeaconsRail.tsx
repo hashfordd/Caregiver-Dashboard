@@ -110,7 +110,7 @@ export function BeaconsRail({
             </CardContent>
           </Card>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             {beacons.map((b) => (
               <BeaconCard
                 key={b.id}
@@ -200,9 +200,9 @@ function BeaconCard({
 
   return (
     <Card>
-      <CardContent className="flex items-center justify-between gap-4 py-4">
+      <CardContent className="flex items-center justify-between gap-3 px-3 py-2">
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
             {editing ? (
               <span className="flex items-center gap-1">
                 <Input
@@ -260,7 +260,7 @@ function BeaconCard({
               </Badge>
             )}
           </div>
-          <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
+          <p className="mt-0.5 truncate font-mono text-[11px] leading-tight text-muted-foreground">
             {beacon.mac_address}
           </p>
         </div>
@@ -268,6 +268,7 @@ function BeaconCard({
           <Button
             size="sm"
             variant="outline"
+            className="h-7 px-2"
             onClick={onCalibrate}
             title="Calibrate path-loss reference RSSI for this beacon"
           >
@@ -277,6 +278,7 @@ function BeaconCard({
           <Button
             size="sm"
             variant="outline"
+            className="h-7 px-2"
             onClick={onPlace}
             disabled={!placementReady}
             title={
@@ -292,6 +294,7 @@ function BeaconCard({
           <Button
             size="sm"
             variant="ghost"
+            className="h-7 px-2"
             onClick={onDelete}
             disabled={deleting}
             aria-label={`Delete beacon ${beacon.label ?? beacon.mac_address}`}

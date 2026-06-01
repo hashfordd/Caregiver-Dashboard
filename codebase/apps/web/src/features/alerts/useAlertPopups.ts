@@ -3,9 +3,11 @@ import type { AlertRow } from '@alzcare/shared';
 import { useAuth } from '@/features/auth/AuthProvider';
 import { useAllocatedAlerts } from './useAllocatedAlerts';
 
-/** Severities prominent enough to interrupt with a modal. `info` only
- *  pulses the bell + bumps the count. */
-const POPUP_SEVERITIES = new Set<AlertRow['severity']>(['warn', 'critical']);
+/** Severities that interrupt with the transient pop-up. Critical is handled
+ *  separately by the persistent full-screen CriticalAlertOverlay, so it's
+ *  excluded here to avoid two competing modals; `info` only pulses the bell
+ *  + bumps the count. */
+const POPUP_SEVERITIES = new Set<AlertRow['severity']>(['warn']);
 
 export interface AlertPopups {
   /** The alert currently shown in the dialog, or null when the queue is empty. */

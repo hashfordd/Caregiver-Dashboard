@@ -2,6 +2,7 @@ import { Outlet } from 'react-router-dom';
 import { AppNavbar } from '@/components/AppNavbar';
 import { AlertBanner } from '@/features/alerts/AlertBanner';
 import { AlertCueHost } from '@/features/alerts/AlertCueHost';
+import { CriticalAlertOverlay } from '@/features/alerts/CriticalAlertOverlay';
 import { LiveDataLostBanner } from '@/components/LiveDataLostBanner';
 import { useTemperatureUnitSync } from '@/lib/units/temperature';
 
@@ -21,6 +22,9 @@ export function AppLayout() {
       <AlertBanner />
       <AlertCueHost />
       <Outlet />
+      {/* Critical (red) alerts take over the whole screen, above the amber
+          under-header banner and any open dialog, until acknowledged. */}
+      <CriticalAlertOverlay />
     </div>
   );
 }

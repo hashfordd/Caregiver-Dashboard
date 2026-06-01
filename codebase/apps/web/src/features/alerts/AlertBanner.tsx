@@ -8,11 +8,16 @@ import { usePatientsLookup } from '@/features/patients/usePatientsLookup';
 import { useLiveSensorStore } from '@/lib/stores/liveSensorStore';
 import { useNow } from '@/lib/useNow';
 
-const SEVERITY_RANK: Record<string, number> = { critical: 3, warn: 2, info: 1 };
+const SEVERITY_RANK: Record<string, number> = { warn: 2, info: 1 };
 
-function pickBannerAlert(unacked: AlertRow[]): AlertRow | null {
-  if (unacked.length === 0) return null;
-  return unacked.reduce((best, curr) => {
+/** The banner is the amber (warn/info) channel that lives under the header
+ *  at all times. Critical (red) alerts are excluded here — they take over
+ *  the whole screen via CriticalAlertOverlay — so the highest-priority
+ *  non-critical unacked alert is the one shown. */
+export function pickBannerAlert(unacked: AlertRow[]): AlertRow | null {
+  const candidates = unacked.filter((a) => a.severity !== 'critical');
+  if (candidates.length === 0) return null;
+  return candidates.reduce((best, curr) => {
     const bRank = SEVERITY_RANK[best.severity] ?? 0;
     const cRank = SEVERITY_RANK[curr.severity] ?? 0;
     if (cRank > bRank) return curr;
@@ -44,7 +49,9 @@ export function AlertBanner() {
 
   if (!alert) return null;
 
-  const moreCount = unacked.length - 1;
+  // Count only the other non-critical alerts — criticals have their own
+  // full-screen surface, so they don't inflate the banner's "+N more".
+  const moreCount = unacked.filter((a) => a.severity !== 'critical').length - 1;
   const { bg, text, Icon } = SEVERITY_STYLE[alert.severity];
 
   return (
