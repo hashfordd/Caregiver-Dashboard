@@ -54,6 +54,10 @@ export interface SelectionDescriptor {
   edgeLengthsPx?: number[];
   /** Number of objects, when kind === 'multi'. */
   count?: number;
+  /** True when the selection is a closed shape that can be promoted to an
+   *  addressable room — a single room polygon, or a ring of selected walls
+   *  that closes into one loop. Drives the "Promote to room" button. */
+  canPromoteToRoom?: boolean;
 }
 
 export interface FloorPlanRow {

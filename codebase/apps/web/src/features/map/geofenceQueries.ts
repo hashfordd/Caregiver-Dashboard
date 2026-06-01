@@ -55,6 +55,39 @@ async function fetchOutdoorZoneRule(patientId: string): Promise<OutdoorZoneRuleR
   return null;
 }
 
+/** All outdoor geofence rules for a patient. Multiple are now supported —
+ *  one may be designated the care-setting boundary, the rest are ordinary
+ *  zones (e.g. a garden, a block, a room). */
+export function useGeofenceRules(patientId: string) {
+  return useQuery({
+    queryKey: ['alert_rules', 'zone', 'outdoor', 'list', patientId],
+    queryFn: () => fetchOutdoorZoneRules(patientId),
+  });
+}
+
+async function fetchOutdoorZoneRules(patientId: string): Promise<OutdoorZoneRuleRow[]> {
+  const { data, error } = await supabase
+    .from('alert_rules')
+    .select('id, patient_id, type, params, severity, enabled')
+    .eq('patient_id', patientId)
+    .eq('type', 'zone')
+    .order('updated_at', { ascending: false });
+  if (error) throw error;
+  const out: OutdoorZoneRuleRow[] = [];
+  for (const row of (data ?? []) as Array<{
+    id: string;
+    patient_id: string;
+    type: 'zone';
+    params: unknown;
+    severity: OutdoorZoneRuleRow['severity'];
+    enabled: boolean;
+  }>) {
+    const parsed = OutdoorZoneParams.safeParse(row.params);
+    if (parsed.success) out.push({ ...row, params: parsed.data });
+  }
+  return out;
+}
+
 export interface UpsertGeofenceInput {
   patientId: string;
   /** Existing rule id when editing; omit when creating. */
@@ -63,6 +96,10 @@ export interface UpsertGeofenceInput {
   direction: 'enter' | 'exit';
   /** Defaults to 0 (immediate). */
   dwell_seconds?: number;
+  /** Caregiver-facing label. */
+  name?: string | null;
+  /** Designate this geofence as the care-setting boundary. */
+  isCareSetting?: boolean;
 }
 
 export function useUpsertGeofence() {
@@ -74,6 +111,8 @@ export function useUpsertGeofence() {
       polygon,
       direction,
       dwell_seconds,
+      name,
+      isCareSetting,
     }: UpsertGeofenceInput) => {
       if (!isClosedPolygon(polygon)) {
         throw new Error('Polygon must have ≥ 3 vertices and be closed.');
@@ -86,6 +125,8 @@ export function useUpsertGeofence() {
         geofence: polygon,
         direction,
         dwell_seconds: dwell_seconds ?? 0,
+        ...(name != null && name.trim() !== '' ? { name: name.trim() } : {}),
+        ...(isCareSetting ? { is_care_setting: true } : {}),
       };
       if (ruleId) {
         const { data, error } = await supabase
@@ -113,6 +154,9 @@ export function useUpsertGeofence() {
     },
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: ['alert_rules', 'zone', 'outdoor', vars.patientId] });
+      qc.invalidateQueries({
+        queryKey: ['alert_rules', 'zone', 'outdoor', 'list', vars.patientId],
+      });
       qc.invalidateQueries({ queryKey: ['alert_rules', 'patient', vars.patientId] });
     },
   });
@@ -128,6 +172,9 @@ export function useDeleteGeofence() {
     },
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['alert_rules', 'zone', 'outdoor', data.patientId] });
+      qc.invalidateQueries({
+        queryKey: ['alert_rules', 'zone', 'outdoor', 'list', data.patientId],
+      });
       qc.invalidateQueries({ queryKey: ['alert_rules', 'patient', data.patientId] });
     },
   });

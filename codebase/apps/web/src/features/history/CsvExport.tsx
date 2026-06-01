@@ -94,20 +94,20 @@ export function CsvExport({ patientId }: Props) {
 
   const handleVitals = useCallback(() => {
     if (!vitals.data?.length) return;
-    triggerDownload(vitalsRowsToCsv(vitals.data), `alzcare-${patientId}-vitals-${date}.csv`);
+    triggerDownload(vitalsRowsToCsv(vitals.data), `neuroguard-${patientId}-vitals-${date}.csv`);
   }, [vitals.data, patientId, date]);
 
   const handlePositions = useCallback(() => {
     if (!positions.data?.length) return;
     triggerDownload(
       positionRowsToCsv(positions.data),
-      `alzcare-${patientId}-positions-${date}.csv`,
+      `neuroguard-${patientId}-positions-${date}.csv`,
     );
   }, [positions.data, patientId, date]);
 
   const handleAlerts = useCallback(() => {
     if (!alerts.data?.length) return;
-    triggerDownload(alertRowsToCsv(alerts.data), `alzcare-${patientId}-alerts-${date}.csv`);
+    triggerDownload(alertRowsToCsv(alerts.data), `neuroguard-${patientId}-alerts-${date}.csv`);
   }, [alerts.data, patientId, date]);
 
   return (

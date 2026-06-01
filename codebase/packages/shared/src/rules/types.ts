@@ -46,6 +46,12 @@ export const OutdoorZoneParams = z.object({
   /** Seconds the condition must hold continuously before firing. 0 = immediate. */
   dwell_seconds: z.number().int().nonnegative().default(0),
   cooldown_seconds: z.number().int().positive().optional(),
+  /** Caregiver-facing label for this geofence — multiple geofences per
+   *  patient are now supported, so each one carries its own name. */
+  name: z.string().trim().max(80).optional(),
+  /** Marks this geofence as the patient's care-setting boundary (the
+   *  enclosing area). At most one geofence per patient should carry this. */
+  is_care_setting: z.boolean().optional(),
 });
 export type OutdoorZoneParams = z.infer<typeof OutdoorZoneParams>;
 

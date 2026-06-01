@@ -252,8 +252,10 @@ describe('PlaceWorkspace', () => {
     expect(screen.getByRole('tab', { name: /floor plan & rooms/i })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /beacons & calibration/i })).toBeInTheDocument();
     // Layout bundle shows the drawing toolbar + the rooms controls together.
+    // Rooms are created by promoting a selected closed shape, not via an
+    // "Add room" button (removed) — so the Promote-to-room control is present.
     expect(screen.getByRole('button', { name: /^edit$/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^add room$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /promote to room/i })).toBeInTheDocument();
     expect(capturedCanvasProps.current?.editing).toBe(false);
   });
 
@@ -414,9 +416,12 @@ describe('PlaceWorkspace', () => {
     expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'place-tab-devices');
   });
 
-  it('the layout bundle opens the Add room dialog without leaving the editor', () => {
+  it('promotes rooms from the canvas selection, not a standalone Add room button', () => {
     renderWorkspace();
-    fireEvent.click(screen.getByRole('button', { name: /^add room$/i }));
-    expect(screen.getByRole('heading', { name: /add room/i })).toBeInTheDocument();
+    // The "Add room" affordance is gone; rooms come from selecting a closed
+    // shape and using Promote to room. With nothing selected the control is
+    // disabled.
+    expect(screen.queryByRole('button', { name: /^add room$/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /promote to room/i })).toBeDisabled();
   });
 });
